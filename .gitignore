@@ -1,0 +1,20 @@
+# Historial de ejecuciones del pipeline — estado local, no artefacto del plugin
+executions/
+
+# Permisos y ajustes locales de la sesión de Claude Code de cada mantenedor
+.claude/settings.local.json
+scripts/.claude/settings.local.json
+
+# Planes/specs de sesiones de desarrollo del propio plugin: no los usa nadie en runtime
+# y contienen datos internos (hosts de BD, usuarios, nombres de proyecto de cliente).
+docs/superpowers/
+.superpowers/
+
+# Bytecode Python
+__pycache__/
+*.pyc
+
+# Restos de SVN y temporales
+.svn/
+*.bak
+*.tmp

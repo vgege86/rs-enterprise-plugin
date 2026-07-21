@@ -1,0 +1,750 @@
+<!--
+  Widget ERD inline para show_widget.
+  El agente inyecta el contenido JSON del modelo en MODEL_JSON_PLACEHOLDER antes de usar show_widget.
+  El widget permite editar descripciones, gestionar subvistas y exportar cambios como JSON descargable.
+-->
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: var(--background, #1e1e2e); color: var(--text, #cdd6f4); overflow: hidden; }
+#toolbar { position: fixed; top: 0; left: 0; right: 0; height: 44px; background: var(--surface, #181825);
+           display: flex; align-items: center; gap: 8px; padding: 0 14px; z-index: 100;
+           border-bottom: 1px solid #313244; flex-wrap: nowrap; overflow-x: auto; }
+#toolbar h1 { font-size: 13px; color: #89b4fa; margin-right: 8px; white-space: nowrap; flex-shrink: 0; }
+button { background: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 5px;
+         padding: 5px 10px; cursor: pointer; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+button:hover { background: #45475a; }
+button.primary { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+button.green { background: #a6e3a1; color: #1e1e2e; border-color: #a6e3a1; }
+button.accent { background: #cba6f7; color: #1e1e2e; border-color: #cba6f7; }
+#search { background: #313244; border: 1px solid #45475a; color: #cdd6f4; border-radius: 5px;
+          padding: 5px 9px; font-size: 11px; width: 130px; flex-shrink: 0; }
+#subview-sel { background: #313244; border: 1px solid #45475a; color: #cdd6f4; border-radius: 5px;
+               padding: 5px 8px; font-size: 11px; cursor: pointer; flex-shrink: 0; max-width: 160px; }
+#canvas-wrap { position: fixed; top: 44px; left: 0; right: 320px; bottom: 0; overflow: hidden; cursor: grab; }
+#canvas-wrap.grabbing { cursor: grabbing; }
+#canvas { position: relative; width: 4000px; height: 3000px; }
+.table-box { position: absolute; background: #181825; border: 2px solid #45475a;
+             border-radius: 7px; min-width: 180px; max-width: 260px;
+             box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+.table-box:hover, .table-box.selected { border-color: #89b4fa; z-index: 10; }
+.table-header { background: #313244; padding: 7px 10px; border-radius: 5px 5px 0 0;
+                font-weight: 600; font-size: 12px; cursor: move; }
+.table-body { padding: 3px 0; }
+.col-row { padding: 3px 10px; font-size: 11px; display: flex; gap: 6px;
+           align-items: baseline; border-bottom: 1px solid #1e1e2e; cursor: pointer; }
+.col-row:last-child { border-bottom: none; }
+.col-row:hover { background: #313244; }
+.col-row.is-pk { background: rgba(249,226,175,0.07); }
+.col-name { color: #cdd6f4; font-weight: 500; min-width: 80px; }
+.col-type { color: #6c7086; font-size: 10px; flex: 1; }
+.col-pk { color: #f9e2af; font-size: 9px; }
+svg#rels { position: absolute; top: 0; left: 0; width: 4000px; height: 3000px; pointer-events: none; z-index: 0; }
+.rel-line { fill: none; stroke-width: 1.5; transition: opacity 0.15s; cursor: pointer; pointer-events: stroke; }
+.rel-line.high { stroke: #89b4fa; }
+.rel-line.medium { stroke: #fab387; stroke-dasharray: 4 3; }
+.rel-line.low { stroke: #6c7086; stroke-dasharray: 2 4; }
+.rel-line.manual { stroke: #a6e3a1; }
+.rel-line.dimmed { opacity: 0.1; }
+.rel-line.highlighted { stroke-width: 3; filter: drop-shadow(0 0 4px currentColor); }
+#panel { position: fixed; right: 0; top: 44px; bottom: 0; width: 320px; background: #181825;
+         border-left: 1px solid #313244; padding: 14px; overflow-y: auto; z-index: 50; }
+#panel h2 { font-size: 13px; color: #89b4fa; margin-bottom: 10px; }
+#panel label { font-size: 11px; color: #6c7086; display: block; margin-top: 10px; }
+#panel textarea, #panel input[type=text] { width: 100%; background: #313244; border: 1px solid #45475a;
+  color: #cdd6f4; border-radius: 4px; padding: 5px 7px; font-size: 11px; margin-top: 3px; }
+#panel textarea { height: 70px; resize: vertical; }
+.badge { display: inline-block; border-radius: 3px; padding: 1px 5px; font-size: 10px; }
+.badge.high { background: #89b4fa; color: #1e1e2e; }
+.badge.medium { background: #fab387; color: #1e1e2e; }
+.badge.low { background: #45475a; color: #cdd6f4; }
+.badge.manual { background: #a6e3a1; color: #1e1e2e; }
+.rel-item { padding: 5px 7px; background: #313244; border-radius: 4px; margin-top: 4px;
+            font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
+/* Subview manager panel styles */
+.sv-row { display: flex; align-items: center; justify-content: space-between;
+          padding: 5px 7px; background: #313244; border-radius: 4px; margin-top: 4px; font-size: 11px; }
+.sv-row button { padding: 2px 7px; font-size: 10px; }
+.sv-new { display: flex; gap: 5px; margin-top: 8px; }
+.sv-new input { flex: 1; }
+.sv-checklist { margin-top: 6px; max-height: 300px; overflow-y: auto; }
+.sv-check-row { display: flex; align-items: center; gap: 7px; padding: 4px 7px;
+                background: #313244; border-radius: 4px; margin-top: 3px; font-size: 11px; cursor: pointer;
+                color: #cdd6f4; /* override #panel label gray */ }
+.sv-check-row:hover { background: #45475a; }
+.sv-check-row input[type=checkbox] { accent-color: #cba6f7; cursor: pointer; }
+.table-desc { padding: 2px 10px 4px; font-size: 10px; color: #a6adc8; font-style: italic;
+              border-bottom: 1px solid #313244; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { position: fixed; bottom: 8px; left: 10px; font-size: 10px; color: #6c7086; }
+#minimap { position: fixed; bottom: 28px; left: 10px; background: #13131f; border: 1px solid #313244;
+           border-radius: 6px; z-index: 90; padding: 4px; display: none; }
+#minimap canvas { display: block; cursor: crosshair; border-radius: 3px; }
+</style>
+
+<div id="toolbar">
+  <h1 id="title">ERD</h1>
+  <select id="subview-sel" onchange="filterBySubview(this.value)" title="Filtrar por subvista">
+    <option value="">Todas las tablas</option>
+  </select>
+  <button class="accent" onclick="openSubviewManager()">Subvistas</button>
+  <input id="search" type="text" placeholder="Buscar tabla...">
+  <button onclick="autoLayout()">Auto</button>
+  <button onclick="fitView()">Fit</button>
+  <button class="green" onclick="saveChanges()">Guardar JSON</button>
+  <button onclick="exportSQL('ORACLE')">SQL Oracle</button>
+  <button onclick="exportSQL('SQLSERVER')">SQL Server</button>
+  <button onclick="exportSVG()">SVG</button>
+  <button onclick="toggleMinimap()">Mapa</button>
+</div>
+
+<div id="canvas-wrap">
+  <div id="canvas">
+    <svg id="rels"></svg>
+  </div>
+</div>
+
+<div id="panel">
+  <h2 id="panel-title">Selecciona una tabla</h2>
+  <div id="panel-body"><p style="font-size:11px;color:#6c7086;margin-top:8px">Haz click en una tabla o columna para editar su descripción.</p></div>
+</div>
+<div id="minimap"><canvas id="minimap-canvas" width="160" height="100"></canvas></div>
+<div id="status"></div>
+
+<script>
+const MODEL = MODEL_JSON_PLACEHOLDER;
+if (!MODEL.subviews) MODEL.subviews = {};
+if (!MODEL.positions) MODEL.positions = {};
+const pos = {};
+let scale = 1, panX = 0, panY = 0;
+let dragging = null, dragStart = {};
+let panning = false, panStart = {};
+let selectedTable = null;
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+
+function init() {
+  document.getElementById('title').textContent = 'ERD — ' + (MODEL.project || '');
+  const canvas = document.getElementById('canvas');
+  const names = Object.keys(MODEL.tables || {});
+  const cols = Math.ceil(Math.sqrt(names.length)) || 1;
+  names.forEach((n, i) => {
+    const el = makeTable(n, MODEL.tables[n]);
+    canvas.appendChild(el);
+    const saved = MODEL.positions[n];
+    const x = saved ? saved.x : 30 + (i % cols) * 290;
+    const y = saved ? saved.y : 30 + Math.floor(i / cols) * 260;
+    pos[n] = {x, y};
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+  });
+  initSubviewSelector();
+  drawRels();
+  fitView();
+
+  const wrap = document.getElementById('canvas-wrap');
+  wrap.addEventListener('mousedown', e => {
+    if (!e.target.closest('.table-box')) {
+      panning = true;
+      panStart = {x: e.clientX - panX, y: e.clientY - panY};
+      wrap.classList.add('grabbing');
+      if (!e.target.closest('path')) {
+        selectedTable = null;
+        document.querySelectorAll('.table-box').forEach(el => el.classList.remove('selected'));
+        drawRels(null);
+      }
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (panning) { panX = e.clientX - panStart.x; panY = e.clientY - panStart.y; applyTransform(); }
+    if (dragging) {
+      const nx = dragStart.ox + (e.clientX - dragStart.mx) / scale;
+      const ny = dragStart.oy + (e.clientY - dragStart.my) / scale;
+      dragging.style.left = nx + 'px'; dragging.style.top = ny + 'px';
+      pos[dragging.dataset.t] = {x: nx, y: ny};
+      MODEL.positions[dragging.dataset.t] = {x: nx, y: ny};
+      drawRels(selectedTable);
+    }
+  });
+  document.addEventListener('mouseup', () => {
+    panning = false; dragging = null;
+    document.getElementById('canvas-wrap').classList.remove('grabbing');
+  });
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    scale = Math.max(0.15, Math.min(3, scale * (e.deltaY > 0 ? 0.9 : 1.1)));
+    applyTransform();
+  }, {passive: false});
+
+  document.getElementById('search').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    const sv = document.getElementById('subview-sel').value;
+    const svSet = sv ? new Set(MODEL.subviews[sv] || []) : null;
+    document.querySelectorAll('.table-box').forEach(el => {
+      const t = el.dataset.t;
+      const inSv = !svSet || svSet.has(t);
+      const matchQ = !q || t.toLowerCase().includes(q);
+      el.style.display = (inSv && matchQ) ? '' : 'none';
+    });
+    drawRels();
+  });
+}
+
+function applyTransform() {
+  const c = document.getElementById('canvas');
+  c.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  c.style.transformOrigin = '0 0';
+  updateMinimap();
+}
+
+// ─── Table box ───────────────────────────────────────────────────────────────
+
+function makeTable(name, def) {
+  const div = document.createElement('div');
+  div.className = 'table-box'; div.dataset.t = name;
+  const hdr = document.createElement('div');
+  hdr.className = 'table-header'; hdr.textContent = name;
+  hdr.addEventListener('mousedown', e => {
+    e.stopPropagation();
+    dragging = div;
+    dragStart = {mx: e.clientX, my: e.clientY, ox: pos[name].x, oy: pos[name].y};
+    div.style.zIndex = 20;
+  });
+  hdr.addEventListener('click', () => openTable(name));
+  div.appendChild(hdr);
+  // Descripción visible en la tarjeta (se actualiza con updateTableDesc)
+  const descEl = document.createElement('div');
+  descEl.className = 'table-desc';
+  descEl.textContent = def.description || '';
+  descEl.style.display = def.description ? '' : 'none';
+  div.appendChild(descEl);
+  const body = document.createElement('div');
+  body.className = 'table-body';
+  const cols = Object.entries(def.columns || {});
+  cols.slice(0, 12).forEach(([cn, cd]) => {
+    const row = document.createElement('div');
+    row.className = 'col-row' + (cd.pk ? ' is-pk' : '');
+    row.innerHTML = `<span class="col-name">${cn}</span><span class="col-type">${cd.type||''}</span>${cd.pk?'<span class="col-pk">PK</span>':''}`;
+    row.addEventListener('click', e => { e.stopPropagation(); openCol(name, cn); });
+    body.appendChild(row);
+  });
+  if (cols.length > 12) {
+    const more = document.createElement('div');
+    more.className = 'col-row'; more.style.color = '#6c7086';
+    more.textContent = `+${cols.length-12} más`;
+    body.appendChild(more);
+  }
+  div.appendChild(body);
+  return div;
+}
+
+// ─── Relations ───────────────────────────────────────────────────────────────
+
+function getVisibleSet() {
+  const sv = document.getElementById('subview-sel').value;
+  if (!sv) return null; // null = all visible
+  return new Set(MODEL.subviews[sv] || []);
+}
+
+function drawRels(highlightTable) {
+  const svg = document.getElementById('rels');
+  svg.innerHTML = '';
+  const visible = getVisibleSet();
+  const hasHL = highlightTable != null;
+  Object.entries(MODEL.tables || {}).forEach(([src, def]) => {
+    if (visible && !visible.has(src)) return;
+    const sp = pos[src]; if (!sp) return;
+    const se = document.querySelector(`[data-t="${src}"]`);
+    const sw2 = se ? se.offsetWidth/2 : 100, sh2 = se ? se.offsetHeight/2 : 60;
+    (def.relations || []).forEach(rel => {
+      if (visible && !visible.has(rel.target_table)) return;
+      const tp = pos[rel.target_table]; if (!tp) return;
+      const te = document.querySelector(`[data-t="${rel.target_table}"]`);
+      const tw2 = te ? te.offsetWidth/2 : 100, th2 = te ? te.offsetHeight/2 : 60;
+      const x1 = sp.x + sw2, y1 = sp.y + sh2, x2 = tp.x + tw2, y2 = tp.y + th2;
+      const cx = (x1+x2)/2;
+      const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+      p.setAttribute('d', `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`);
+      const cls = rel.source === 'manual' ? 'manual' : (rel.confidence || 'low');
+      const connected = src === highlightTable || rel.target_table === highlightTable;
+      const hlCls = hasHL ? (connected ? ' highlighted' : ' dimmed') : '';
+      p.setAttribute('class', `rel-line ${cls}${hlCls}`);
+      p.dataset.src = src; p.dataset.tgt = rel.target_table;
+      p.addEventListener('click', e => { e.stopPropagation(); highlightRelLine(src, rel.target_table); });
+      svg.appendChild(p);
+    });
+  });
+  updateMinimap();
+}
+
+function highlightRelLine(src, tgt) {
+  selectedTable = null;
+  document.querySelectorAll('.table-box').forEach(el => el.classList.remove('selected'));
+  [src, tgt].forEach(n => {
+    const el = document.querySelector(`[data-t="${n}"]`);
+    if (el) el.classList.add('selected');
+  });
+  drawRels();
+  // Pan to midpoint
+  const sp = pos[src], tp = pos[tgt];
+  if (sp && tp) {
+    const mx = (sp.x + tp.x) / 2, my = (sp.y + tp.y) / 2;
+    const wrap = document.getElementById('canvas-wrap');
+    panX = wrap.offsetWidth / 2 - mx * scale;
+    panY = wrap.offsetHeight / 2 - my * scale;
+    applyTransform();
+  }
+  // Show relation info in panel
+  const relDef = (MODEL.tables[src]?.relations || []).find(r => r.target_table === tgt);
+  document.getElementById('panel-title').textContent = `${src} → ${tgt}`;
+  document.getElementById('panel-body').innerHTML = relDef ? `
+    <label style="margin-top:8px">Columna origen</label>
+    <div style="color:#cdd6f4;font-size:12px;margin-top:3px">${relDef.source_column}</div>
+    <label style="margin-top:8px">Tabla destino</label>
+    <div style="color:#cdd6f4;font-size:12px;margin-top:3px">${relDef.target_table}.${relDef.target_column}</div>
+    <label style="margin-top:8px">Confianza</label>
+    <span class="badge ${relDef.source==='manual'?'manual':(relDef.confidence||'low')}" style="margin-top:4px;display:inline-block">
+      ${relDef.source==='manual'?'manual':relDef.confidence}
+    </span>
+  ` : `<p style="font-size:11px;color:#6c7086;margin-top:8px">Relación de ${src} → ${tgt}</p>`;
+}
+
+// ─── Panel: tabla / columna ───────────────────────────────────────────────────
+
+function openTable(name) {
+  const t = MODEL.tables[name];
+  document.getElementById('panel-title').textContent = name;
+  const rels = t.relations || [];
+  const svNames = Object.keys(MODEL.subviews || {});
+  const svSection = svNames.length ? `
+    <label style="margin-top:12px;color:#cba6f7;font-weight:600">Subvistas</label>
+    ${svNames.map(sv => {
+      const inSv = (MODEL.subviews[sv]||[]).includes(name);
+      const svSafe = sv.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const nameSafe = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      return `<label class="sv-check-row"><input type="checkbox" ${inSv?'checked':''} onchange="toggleTableInSubview('${svSafe}','${nameSafe}',this.checked)"> ${sv}</label>`;
+    }).join('')}` : '';
+  document.getElementById('panel-body').innerHTML = `
+    <label style="color:#89b4fa;font-weight:600">Descripción</label>
+    <textarea placeholder="Describe la tabla..." oninput="updateTableDesc('${name.replace(/'/g,"\\'")}',this.value)">${t.description||''}</textarea>
+    <label>Fuente: ${t.source||'db'} &nbsp; Columnas: ${Object.keys(t.columns||{}).length}</label>
+    <label style="margin-top:10px">Relaciones (${rels.length}) <button onclick="showAddRelForm('${name.replace(/'/g,"\\'")}',this)" style="padding:2px 7px;font-size:10px;margin-left:6px">＋</button></label>
+    <div id="add-rel-form" style="display:none"></div>
+    ${rels.map((r,i)=>`<div class="rel-item">
+      <span>${r.source_column} → ${r.target_table}.${r.target_column}</span>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span class="badge ${r.source==='manual'?'manual':(r.confidence||'low')}">${r.source==='manual'?'manual':r.confidence}</span>
+        ${r.source==='manual'?`<button onclick="deleteRelation('${name.replace(/'/g,"\\'")}',${i})" style="padding:1px 5px;font-size:10px" title="Eliminar">✕</button>`:''}
+      </div>
+    </div>`).join('')}
+    ${svSection}
+  `;
+  selectedTable = name;
+  document.querySelectorAll('.table-box').forEach(e => e.classList.remove('selected'));
+  const el = document.querySelector(`[data-t="${name}"]`);
+  if (el) el.classList.add('selected');
+  drawRels(name);
+}
+
+function updateTableDesc(name, val) {
+  MODEL.tables[name].description = val;
+  const card = document.querySelector(`[data-t="${name}"] .table-desc`);
+  if (card) { card.textContent = val; card.style.display = val ? '' : 'none'; }
+}
+
+function openCol(tname, cname) {
+  const col = (MODEL.tables[tname]?.columns||{})[cname] || {};
+  document.getElementById('panel-title').textContent = `${tname}.${cname}`;
+  document.getElementById('panel-body').innerHTML = `
+    <label>Tipo: <strong style="color:#cdd6f4">${col.type||''}</strong> &nbsp; PK: ${col.pk?'Sí':'No'} &nbsp; Nullable: ${col.nullable!==false?'Sí':'No'}</label>
+    <label>Descripción</label>
+    <textarea onchange="MODEL.tables['${tname}'].columns['${cname}'].description=this.value">${col.description||''}</textarea>
+  `;
+}
+
+function showAddRelForm(tableName, btn) {
+  const form = document.getElementById('add-rel-form');
+  if (form.style.display !== 'none') { form.style.display = 'none'; return; }
+  const srcCols = Object.keys(MODEL.tables[tableName]?.columns || {});
+  const allTables = Object.keys(MODEL.tables).sort().filter(t => t !== tableName);
+  form.innerHTML = `
+    <div style="background:#1e1e2e;border:1px solid #45475a;border-radius:5px;padding:8px;margin-top:6px">
+      <label style="color:#cba6f7;font-weight:600;margin-top:0">Nueva relación manual</label>
+      <label>Columna origen</label>
+      <select id="rel-src-col" style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:4px;font-size:11px;margin-top:3px">
+        ${srcCols.map(c=>`<option value="${c}">${c}</option>`).join('')}
+      </select>
+      <label>Tabla destino</label>
+      <select id="rel-tgt-tbl" onchange="loadTgtCols('${tableName.replace(/'/g,"\\'")}',this.value)" style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:4px;font-size:11px;margin-top:3px">
+        ${allTables.map(t=>`<option value="${t}">${t}</option>`).join('')}
+      </select>
+      <label>Columna destino</label>
+      <select id="rel-tgt-col" style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:4px;font-size:11px;margin-top:3px">
+        ${Object.keys(MODEL.tables[allTables[0]]?.columns||{}).map(c=>`<option value="${c}">${c}</option>`).join('')}
+      </select>
+      <button class="accent" onclick="addRelation('${tableName.replace(/'/g,"\\'")}',document.getElementById('rel-src-col').value,document.getElementById('rel-tgt-tbl').value,document.getElementById('rel-tgt-col').value)" style="margin-top:8px;width:100%">Añadir</button>
+    </div>`;
+  form.style.display = '';
+}
+
+function loadTgtCols(srcTable, tgtTable) {
+  const sel = document.getElementById('rel-tgt-col');
+  if (!sel) return;
+  const cols = Object.keys(MODEL.tables[tgtTable]?.columns || {});
+  sel.innerHTML = cols.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function addRelation(srcTable, srcCol, tgtTable, tgtCol) {
+  if (!MODEL.tables[srcTable]) return;
+  if (!MODEL.tables[srcTable].relations) MODEL.tables[srcTable].relations = [];
+  MODEL.tables[srcTable].relations.push({
+    source_column: srcCol, target_table: tgtTable,
+    target_column: tgtCol, source: 'manual', confidence: 'high'
+  });
+  openTable(srcTable);
+}
+
+function deleteRelation(tableName, idx) {
+  if (!MODEL.tables[tableName]?.relations) return;
+  MODEL.tables[tableName].relations.splice(idx, 1);
+  openTable(tableName);
+}
+
+// ─── Subvistas ────────────────────────────────────────────────────────────────
+
+function initSubviewSelector() {
+  const sel = document.getElementById('subview-sel');
+  // remove all options except first
+  while (sel.options.length > 1) sel.remove(1);
+  Object.keys(MODEL.subviews).forEach(sv => {
+    const opt = document.createElement('option');
+    opt.value = sv; opt.textContent = `${sv} (${(MODEL.subviews[sv]||[]).length})`;
+    sel.appendChild(opt);
+  });
+}
+
+function filterBySubview(name) {
+  const svSet = name ? new Set(MODEL.subviews[name] || []) : null;
+  document.querySelectorAll('.table-box').forEach(el => {
+    el.style.display = (!svSet || svSet.has(el.dataset.t)) ? '' : 'none';
+  });
+  drawRels();
+  fitVisibleView();
+  // If subview manager is open, refresh it
+  if (document.getElementById('panel-title').textContent === 'Subvistas') {
+    openSubviewManager();
+  }
+}
+
+function fitVisibleView() {
+  const visible = Array.from(document.querySelectorAll('.table-box'))
+    .filter(el => el.style.display !== 'none')
+    .map(el => el.dataset.t);
+  if (!visible.length) { fitView(); return; }
+  const xs = visible.map(n=>pos[n].x), ys = visible.map(n=>pos[n].y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs)+260, minY=Math.min(...ys), maxY=Math.max(...ys)+200;
+  const wrap = document.getElementById('canvas-wrap');
+  const ww = wrap.offsetWidth, wh = wrap.offsetHeight;
+  scale = Math.min(ww/(maxX-minX+80), wh/(maxY-minY+80), 1.4)*0.85;
+  panX = (ww-(maxX-minX)*scale)/2 - minX*scale;
+  panY = (wh-(maxY-minY)*scale)/2 - minY*scale;
+  applyTransform();
+}
+
+function openSubviewManager() {
+  const sv = document.getElementById('subview-sel').value;
+  document.getElementById('panel-title').textContent = 'Subvistas';
+  const svNames = Object.keys(MODEL.subviews);
+
+  let checklistHtml = '';
+  if (sv) {
+    const assigned = new Set(MODEL.subviews[sv] || []);
+    const allTables = Object.keys(MODEL.tables || {}).sort();
+    checklistHtml = `
+      <label style="margin-top:12px;color:#cba6f7">Tablas en "${sv}"</label>
+      <input type="text" id="sv-filter" placeholder="Filtrar tablas..." oninput="filterSvChecklist(this.value)" style="width:100%;margin-top:6px">
+      <div class="sv-checklist">
+        ${allTables.map(t => `
+          <label class="sv-check-row">
+            <input type="checkbox" ${assigned.has(t)?'checked':''} onchange="toggleTableInSubview('${sv}','${t}',this.checked)">
+            ${t}
+          </label>`).join('')}
+      </div>`;
+  }
+
+  document.getElementById('panel-body').innerHTML = `
+    <label>Subvistas existentes</label>
+    ${svNames.length === 0 ? '<p style="font-size:11px;color:#6c7086;margin-top:6px">Ninguna — crea una abajo.</p>' : ''}
+    ${svNames.map(s => `
+      <div class="sv-row">
+        <span style="color:${s===sv?'#cba6f7':'#cdd6f4'}">${s} <span style="color:#6c7086">(${(MODEL.subviews[s]||[]).length})</span></span>
+        <button onclick="deleteSubview('${s}')" title="Eliminar subvista">✕</button>
+      </div>`).join('')}
+    <div class="sv-new">
+      <input type="text" id="sv-name-input" placeholder="Nombre nueva subvista..." onkeydown="if(event.key==='Enter')createSubview()">
+      <button class="accent" onclick="createSubview()">Crear</button>
+    </div>
+    ${checklistHtml}
+  `;
+}
+
+function createSubview() {
+  const inp = document.getElementById('sv-name-input');
+  const name = (inp ? inp.value : '').trim();
+  if (!name) return;
+  if (MODEL.subviews[name]) { inp.value = ''; return; }
+  MODEL.subviews[name] = [];
+  initSubviewSelector();
+  // Select the new subview
+  document.getElementById('subview-sel').value = name;
+  filterBySubview(name);
+  openSubviewManager();
+}
+
+function deleteSubview(name) {
+  delete MODEL.subviews[name];
+  const sel = document.getElementById('subview-sel');
+  initSubviewSelector();
+  if (sel.value === name) {
+    sel.value = '';
+    filterBySubview('');
+  }
+  openSubviewManager();
+}
+
+function filterSvChecklist(q) {
+  document.querySelectorAll('.sv-check-row').forEach(row => {
+    row.style.display = row.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+function toggleTableInSubview(sv, table, checked) {
+  if (!MODEL.subviews[sv]) MODEL.subviews[sv] = [];
+  if (checked) {
+    if (!MODEL.subviews[sv].includes(table)) MODEL.subviews[sv].push(table);
+  } else {
+    MODEL.subviews[sv] = MODEL.subviews[sv].filter(t => t !== table);
+  }
+  // Update selector label count
+  initSubviewSelector();
+  document.getElementById('subview-sel').value = sv;
+  // Refresh filter
+  filterBySubview(sv);
+}
+
+// ─── Layout / fit ─────────────────────────────────────────────────────────────
+
+function autoLayout() {
+  const names = Object.keys(MODEL.tables||{}).filter(n => {
+    const el = document.querySelector(`[data-t="${n}"]`);
+    return !el || el.style.display !== 'none';
+  });
+  const cols = Math.ceil(Math.sqrt(names.length))||1;
+  names.forEach((n,i) => {
+    const x = 30+(i%cols)*290, y = 30+Math.floor(i/cols)*260;
+    pos[n]={x,y};
+    const el = document.querySelector(`[data-t="${n}"]`);
+    if (el) { el.style.left=x+'px'; el.style.top=y+'px'; }
+  });
+  drawRels();
+}
+
+function fitView() {
+  const ns = Object.keys(pos);
+  if (!ns.length) return;
+  const xs = ns.map(n=>pos[n].x), ys = ns.map(n=>pos[n].y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs)+260, minY=Math.min(...ys), maxY=Math.max(...ys)+200;
+  const wrap = document.getElementById('canvas-wrap');
+  const ww = wrap.offsetWidth, wh = wrap.offsetHeight;
+  scale = Math.min(ww/(maxX-minX+60), wh/(maxY-minY+60), 1.4)*0.85;
+  panX = (ww-(maxX-minX)*scale)/2 - minX*scale;
+  panY = (wh-(maxY-minY)*scale)/2 - minY*scale;
+  applyTransform();
+}
+
+// ─── Export ──────────────────────────────────────────────────────────────────
+
+function saveChanges() {
+  const json = JSON.stringify(MODEL, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (MODEL.project||'model') + '-model.json';
+  a.click();
+  document.getElementById('status').textContent = 'JSON descargado — copia a BD/ del proyecto';
+  sendPrompt('Modelo BD actualizado — he descargado el JSON con los cambios. Por favor cópialo a BD/' + (MODEL.project||'') + '-model.json');
+}
+
+function exportSQL(engine) {
+  const sv = document.getElementById('subview-sel').value;
+  const svSet = sv ? new Set(MODEL.subviews[sv] || []) : null;
+  const lines = [`-- DDL ${engine} | ${MODEL.project||''} | ${new Date().toISOString().slice(0,10)}`, ''];
+  if (sv) lines.push(`-- Subvista: ${sv}`, '');
+  Object.entries(MODEL.tables||{}).forEach(([tn, td]) => {
+    if (svSet && !svSet.has(tn)) return;
+    if (td.description) lines.push(`-- ${td.description}`);
+    lines.push(`CREATE TABLE ${tn} (`);
+    const cols = Object.entries(td.columns||{});
+    const pks = cols.filter(([,d])=>d.pk).map(([n])=>n);
+    const clines = cols.map(([cn,cd]) => {
+      let t = cd.type||'VARCHAR2(100)';
+      if (engine==='SQLSERVER') {
+        // VARCHAR2(n) / VARCHAR2(n CHAR) → VARCHAR(n)
+        t = t.replace(/VARCHAR2\((\d+)(?:\s+CHAR)?\)/gi, 'VARCHAR($1)')
+             .replace(/NUMBER/g,'DECIMAL');
+      } else if (engine==='ORACLE') {
+        // Garantizar semántica CHAR en VARCHAR2: VARCHAR2(n) → VARCHAR2(n CHAR)
+        // evita truncamientos silenciosos con UTF-8 (Oracle usa semántica de bytes por defecto)
+        t = t.replace(/VARCHAR2\((\d+)\)(?!\s*CHAR)/gi, 'VARCHAR2($1 CHAR)');
+      }
+      const nn = cd.nullable===false ? ' NOT NULL' : '';
+      return `  ${cn} ${t}${nn}`;
+    });
+    if (pks.length) clines.push(`  CONSTRAINT PK_${tn} PRIMARY KEY (${pks.join(', ')})`);
+    lines.push(clines.join(',\n'));
+    lines.push(');\n');
+  });
+  const blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (MODEL.project||'model') + (sv?`-${sv}`:'') + '-ddl-' + engine.toLowerCase() + '.sql';
+  a.click();
+}
+
+// ─── Export SVG ───────────────────────────────────────────────────────────────
+
+function escSvg(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function relStrokeAttr(cls) {
+  if (cls.includes('high'))   return 'stroke="#89b4fa"';
+  if (cls.includes('medium')) return 'stroke="#fab387" stroke-dasharray="4 3"';
+  if (cls.includes('manual')) return 'stroke="#a6e3a1"';
+  return 'stroke="#6c7086" stroke-dasharray="2 4"';
+}
+
+function exportSVG() {
+  const visible = Array.from(document.querySelectorAll('.table-box'))
+    .filter(el => el.style.display !== 'none');
+  if (!visible.length) return;
+  const TW = 200, HDR = 28, CH = 17;
+  const xs = visible.map(el => pos[el.dataset.t].x);
+  const ys = visible.map(el => pos[el.dataset.t].y);
+  const minX = Math.min(...xs)-20, minY = Math.min(...ys)-20;
+  const maxX = Math.max(...xs)+TW+20, maxY = Math.max(...ys)+320;
+  const W = maxX-minX, H = maxY-minY;
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${W} ${H}" font-family="Segoe UI,sans-serif">`;
+  out += `<rect x="${minX}" y="${minY}" width="${W}" height="${H}" fill="#1e1e2e"/>`;
+  document.getElementById('rels').querySelectorAll('path').forEach(p => {
+    out += `<path d="${p.getAttribute('d')}" fill="none" stroke-width="1.5" ${relStrokeAttr(p.getAttribute('class')||'')}/>`;
+  });
+  visible.forEach(el => {
+    const n = el.dataset.t, {x,y} = pos[n];
+    const cols = Object.entries(MODEL.tables[n]?.columns||{}).slice(0,12);
+    const h = HDR + cols.length*CH + 6;
+    out += `<rect x="${x}" y="${y}" width="${TW}" height="${h}" rx="6" fill="#181825" stroke="#45475a" stroke-width="1.5"/>`;
+    out += `<rect x="${x}" y="${y}" width="${TW}" height="${HDR}" rx="4" fill="#313244"/>`;
+    out += `<rect x="${x}" y="${y+HDR-4}" width="${TW}" height="4" fill="#313244"/>`;
+    out += `<text x="${x+9}" y="${y+HDR-8}" fill="#cdd6f4" font-size="12" font-weight="600">${escSvg(n)}</text>`;
+    cols.forEach(([cn,cd],i) => {
+      const cy = y+HDR+4+i*CH;
+      out += `<text x="${x+9}" y="${cy+12}" fill="${cd.pk?'#f9e2af':'#cdd6f4'}" font-size="11">${escSvg(cn)}</text>`;
+      out += `<text x="${x+TW-6}" y="${cy+12}" fill="#6c7086" font-size="10" text-anchor="end">${escSvg(cd.type||'')}</text>`;
+    });
+  });
+  out += '</svg>';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out],{type:'image/svg+xml'}));
+  a.download = (MODEL.project||'erd')+'-erd.svg';
+  a.click();
+}
+
+// ─── Minimap ──────────────────────────────────────────────────────────────────
+
+function toggleMinimap() {
+  const mm = document.getElementById('minimap');
+  mm.style.display = mm.style.display === 'none' ? '' : 'none';
+  if (mm.style.display !== 'none') updateMinimap();
+}
+
+function updateMinimap() {
+  const mm = document.getElementById('minimap');
+  if (!mm || mm.style.display === 'none') return;
+  const cv = document.getElementById('minimap-canvas');
+  const ctx = cv.getContext('2d');
+  const MW = cv.width, MH = cv.height;
+  ctx.clearRect(0, 0, MW, MH);
+  ctx.fillStyle = '#13131f';
+  ctx.fillRect(0, 0, MW, MH);
+  const ns = Object.keys(pos);
+  if (!ns.length) return;
+  const xs = ns.map(n=>pos[n].x), ys = ns.map(n=>pos[n].y);
+  const minX=Math.min(...xs), minY=Math.min(...ys);
+  const maxX=Math.max(...xs)+260, maxY=Math.max(...ys)+200;
+  const bw = maxX-minX||1, bh = maxY-minY||1;
+  const scX = (MW-8)/bw, scY = (MH-8)/bh, sc = Math.min(scX,scY);
+  const offX = 4, offY = 4;
+  const toMX = x => offX+(x-minX)*sc;
+  const toMY = y => offY+(y-minY)*sc;
+  // Draw relations
+  const svg = document.getElementById('rels');
+  svg.querySelectorAll('path').forEach(p => {
+    const cls = p.getAttribute('class')||'';
+    ctx.strokeStyle = cls.includes('high')?'#89b4fa':cls.includes('medium')?'#fab387':cls.includes('manual')?'#a6e3a1':'#45475a';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    const m = p.getAttribute('d').match(/M([\d.]+),([\d.]+) C([\d.]+),([\d.]+) ([\d.]+),([\d.]+) ([\d.]+),([\d.]+)/);
+    if (m) {
+      ctx.moveTo(toMX(+m[1]),toMY(+m[2]));
+      ctx.bezierCurveTo(toMX(+m[3]),toMY(+m[4]),toMX(+m[5]),toMY(+m[6]),toMX(+m[7]),toMY(+m[8]));
+    }
+    ctx.stroke();
+  });
+  // Draw tables
+  ns.forEach(n => {
+    const {x,y} = pos[n];
+    const el = document.querySelector(`[data-t="${n}"]`);
+    if (el && el.style.display === 'none') return;
+    const w = 260*sc, h = (el?el.offsetHeight:100)*sc;
+    ctx.fillStyle = n === selectedTable ? '#89b4fa' : '#313244';
+    ctx.fillRect(toMX(x), toMY(y), Math.max(w,3), Math.max(h,3));
+  });
+  // Draw viewport rect
+  const wrap = document.getElementById('canvas-wrap');
+  const vx = (-panX)/scale, vy = (-panY)/scale;
+  const vw = wrap.offsetWidth/scale, vh = wrap.offsetHeight/scale;
+  ctx.strokeStyle = '#cba6f7';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(toMX(vx), toMY(vy), vw*sc, vh*sc);
+}
+
+// Minimap click → pan canvas
+(function() {
+  let mmDragging = false;
+  document.addEventListener('DOMContentLoaded', () => {});
+  window.addEventListener('load', () => {
+    const cv = document.getElementById('minimap-canvas');
+    const panTo = e => {
+      const rect = cv.getBoundingClientRect();
+      const mx = e.clientX-rect.left, my = e.clientY-rect.top;
+      const ns = Object.keys(pos);
+      if (!ns.length) return;
+      const xs = ns.map(n=>pos[n].x), ys = ns.map(n=>pos[n].y);
+      const minX=Math.min(...xs), minY=Math.min(...ys);
+      const maxX=Math.max(...xs)+260, maxY=Math.max(...ys)+200;
+      const bw=maxX-minX||1, bh=maxY-minY||1;
+      const MW=cv.width, MH=cv.height;
+      const sc=Math.min((MW-8)/bw,(MH-8)/bh);
+      const worldX = (mx-4)/sc+minX, worldY = (my-4)/sc+minY;
+      const wrap = document.getElementById('canvas-wrap');
+      panX = wrap.offsetWidth/2 - worldX*scale;
+      panY = wrap.offsetHeight/2 - worldY*scale;
+      applyTransform();
+      updateMinimap();
+    };
+    cv.addEventListener('mousedown', e => { mmDragging=true; panTo(e); });
+    cv.addEventListener('mousemove', e => { if (mmDragging) panTo(e); });
+    cv.addEventListener('mouseup', () => { mmDragging=false; });
+  });
+})();
+
+window.addEventListener('load', init);
+</script>

@@ -1,0 +1,2519 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>ERD - {proyecto}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #1e1e2e; color: #cdd6f4; overflow: hidden; }
+  #toolbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; background: #181825;
+              display: flex; align-items: center; gap: 6px; padding: 0 12px; z-index: 100;
+              border-bottom: 1px solid #313244; flex-wrap: nowrap; overflow-x: auto; }
+  #toolbar h1 { font-size: 14px; color: #89b4fa; margin-right: 12px; white-space: nowrap; flex-shrink: 0; }
+  button { background: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 6px;
+            padding: 6px 12px; cursor: pointer; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+  button:hover { background: #45475a; }
+  button.primary { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+  button.accent { background: #cba6f7; color: #1e1e2e; border-color: #cba6f7; }
+  #search { background: #313244; border: 1px solid #45475a; color: #cdd6f4; border-radius: 6px;
+             padding: 6px 10px; font-size: 12px; width: 150px; flex-shrink: 0; }
+  #subview-sel { background: #313244; border: 1px solid #45475a; color: #cdd6f4; border-radius: 6px;
+                  padding: 6px 10px; font-size: 12px; cursor: pointer; flex-shrink: 0; max-width: 180px; }
+  #canvas-wrap { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; overflow: hidden; cursor: grab; }
+  #canvas-wrap.grabbing { cursor: grabbing; }
+  /* Dimensiones de #canvas y svg#relations las fija resizeCanvas() en JS — dependen del modelo cargado */
+  #canvas { position: relative; }
+  .table-box { position: absolute; background: #181825; border: 2px solid #45475a;
+                border-radius: 8px; min-width: 200px; max-width: 280px;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.4); user-select: none; }
+  .table-box:hover { border-color: #89b4fa; z-index: 10; }
+  .table-header { background: #313244; padding: 8px 12px; border-radius: 6px 6px 0 0;
+                   font-weight: 600; font-size: 13px; cursor: move; }
+  .table-body { padding: 4px 0; }
+  .col-row { padding: 4px 12px; font-size: 12px; display: flex; gap: 8px;
+              align-items: baseline; border-bottom: 1px solid #313244; }
+  .col-row:last-child { border-bottom: none; }
+  .col-name { color: #cdd6f4; font-weight: 500; min-width: 90px; }
+  .col-type { color: #6c7086; font-size: 11px; flex: 1; }
+  .col-pk { color: #f9e2af; font-size: 10px; }
+  .col-row.is-pk { background: rgba(249,226,175,0.06); }
+  .col-row:hover { background: #313244; cursor: pointer; }
+  .col-count { color: #6c7086; font-size: 11px; padding: 5px 12px; font-style: italic; cursor: pointer; }
+  svg#relations { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; }
+  .rel-line { stroke: #45475a; stroke-width: 1.5; fill: none; }
+  .rel-line.high { stroke: #89b4fa; }
+  .rel-line.manual { stroke: #a6e3a1; }
+  .rel-line.medium { stroke: #fab387; stroke-dasharray: 4 3; }
+  .rel-line.low { stroke: #6c7086; stroke-dasharray: 2 4; }
+  #panel { position: fixed; right: 0; top: 48px; bottom: 0; width: 320px; background: #181825;
+             border-left: 1px solid #313244; padding: 16px; overflow-y: auto;
+             transform: translateX(100%); transition: transform 0.2s; z-index: 50; }
+  #panel.open { transform: translateX(0); }
+  #canvas-wrap.panel-open { right: 320px; }
+  #panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 12px; }
+  #panel label { font-size: 12px; color: #6c7086; display: block; margin-top: 12px; }
+  #panel textarea, #panel input[type=text] { width: 100%; background: #313244; border: 1px solid #45475a;
+    color: #cdd6f4; border-radius: 4px; padding: 6px 8px; font-size: 12px; margin-top: 4px; }
+  #panel textarea { height: 80px; resize: vertical; }
+  .rel-item { padding: 6px; background: #313244; border-radius: 4px; margin-top: 4px;
+               display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+  .badge { display: inline-block; border-radius: 3px; padding: 1px 5px; font-size: 10px; }
+  .badge.high { background: #89b4fa; color: #1e1e2e; }
+  .badge.medium { background: #fab387; color: #1e1e2e; }
+  .badge.low { background: #45475a; color: #cdd6f4; }
+  .badge.manual { background: #a6e3a1; color: #1e1e2e; }
+  /* Subview manager */
+  .sv-row { display: flex; align-items: center; justify-content: space-between;
+             padding: 6px 8px; background: #313244; border-radius: 4px; margin-top: 4px; font-size: 12px; }
+  .sv-row button { padding: 3px 8px; font-size: 11px; }
+  .sv-new { display: flex; gap: 6px; margin-top: 10px; }
+  .sv-new input { flex: 1; }
+  .sv-checklist { margin-top: 8px; max-height: 320px; overflow-y: auto; }
+  .sv-check-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+                   background: #313244; border-radius: 4px; margin-top: 3px; font-size: 12px; cursor: pointer;
+                   color: #cdd6f4; }
+  .sv-check-row:hover { background: #45475a; }
+  .sv-check-row input[type=checkbox] { accent-color: #cba6f7; cursor: pointer; }
+  /* Highlight */
+  .table-box.dimmed { opacity: 0.1; transition: opacity 0.15s; pointer-events: none; }
+  .table-box.highlighted { border-color: #89b4fa !important; opacity: 1 !important; transition: opacity 0.15s; }
+  .table-box.focused { border-color: #f9e2af !important; opacity: 1 !important; z-index: 15 !important; }
+  .table-box.selected { outline: 2px solid #cba6f7; outline-offset: 1px; }
+  .col-fk  { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #45475a; color: #fab387; font-weight: bold; margin-left: 2px; }
+  .col-idx { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #45475a; color: #a6e3a1; font-weight: bold; margin-left: 2px; }
+  .col-drag-handle { display:none; margin-left:auto; cursor:crosshair; color:#6c7086; font-size:10px; padding:0 4px; flex-shrink:0; user-select:none; }
+  .col-row:hover .col-drag-handle { display:inline; }
+  body.linking * { cursor:crosshair !important; }
+  #toast { position:fixed; bottom:24px; right:24px; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:10px 16px; border-radius:8px; font-size:13px; z-index:1100; opacity:0; transform:translateY(8px); transition:opacity .25s,transform .25s; pointer-events:none; max-width:380px; line-height:1.5; white-space:pre-wrap; }
+  #toast.show { opacity:1; transform:translateY(0); }
+  #toast.ok   { border-color:#a6e3a1; }
+  #toast.warn { border-color:#f9e2af; }
+  #toast.err  { border-color:#f38ba8; }
+  #rel-tooltip { position: fixed; background: #313244; border: 1px solid #45475a; color: #cdd6f4; font-size: 11px; padding: 5px 8px; border-radius: 4px; pointer-events: none; z-index: 500; display: none; white-space: nowrap; }
+  /* Mini-map */
+  #minimap-wrap { position: fixed; bottom: 40px; right: 16px; z-index: 200; }
+  #minimap { display: block; background: rgba(24,24,37,0.92); border: 1px solid #45475a; border-radius: 6px; cursor: crosshair; }
+  #minimap-toggle { display: block; margin-bottom: 4px; width: 100%; font-size: 10px; padding: 2px 6px; }
+  #status { position: fixed; bottom: 12px; left: 16px; font-size: 11px; color: #6c7086; z-index: 200; }
+  #close-panel { position: absolute; top: 12px; right: 12px; background: none; border: none;
+                  color: #6c7086; font-size: 16px; cursor: pointer; padding: 0; }
+  #close-panel:hover { color: #cdd6f4; background: none; }
+  .col-row.col-match { background: rgba(137,180,250,0.15); }
+  .col-row.col-match .col-name { color: #89b4fa; }
+  .table-box.locked { border-color: #f9e2af !important; }
+  .lock-btn { margin-left: auto; cursor: pointer; font-size: 11px; opacity: 0.4; flex-shrink: 0; user-select: none; padding-left: 6px; }
+  .lock-btn:hover { opacity: 1; }
+  .table-box.locked .lock-btn { opacity: 1; }
+  #rubber-band { position: fixed; border: 2px dashed #cba6f7; background: rgba(203,166,247,0.08);
+                  pointer-events: none; z-index: 90; display: none; }
+  /* Presentation mode */
+  body.presentation #toolbar  { display:none !important; }
+  body.presentation #panel    { display:none !important; }
+  body.presentation #minimap-wrap { display:none !important; }
+  body.presentation #canvas-wrap { top:0 !important; right:0 !important; }
+  #btn-present.active { background:#a6e3a1; color:#1e1e2e; font-weight:bold; }
+  /* Menús de la toolbar */
+  .tb-sep { width:1px; height:22px; background:#313244; flex-shrink:0; margin:0 2px; }
+  button.menu-btn.open { background:#45475a; border-color:#89b4fa; }
+  .menu-popup { display:none; position:fixed; background:#1e1e2e; border:1px solid #45475a;
+                 border-radius:8px; padding:10px; z-index:600; min-width:220px; max-width:340px;
+                 box-shadow:0 4px 20px rgba(0,0,0,0.5); }
+  .menu-popup .menu-item { display:block; width:100%; text-align:left; padding:6px 8px;
+                            font-size:11px; margin-bottom:3px; }
+  .menu-popup .menu-item:last-child { margin-bottom:0; }
+  .menu-label { font-size:10px; color:#6c7086; margin:8px 0 4px; }
+  .menu-label:first-child { margin-top:0; }
+  .menu-sep { border:none; border-top:1px solid #313244; margin:8px 0 4px; }
+  #filter-chip { display:none; align-items:center; gap:6px; flex-shrink:0; font-size:10px;
+                  background:#313244; border:1px solid #89b4fa; color:#89b4fa;
+                  border-radius:12px; padding:3px 6px 3px 9px; white-space:nowrap; }
+  #filter-chip.show { display:inline-flex; }
+  #filter-chip button { background:none; border:none; color:#89b4fa; padding:0 3px;
+                         font-size:12px; line-height:1; cursor:pointer; }
+  #filter-chip button:hover { color:#f38ba8; background:none; }
+  /* Al estrechar, primero se va la información (contadores, título largo), nunca los controles.
+     Va después de #search/#subview-sel: misma especificidad, gana la regla posterior. */
+  @media (max-width: 1150px) {
+    #erd-counts { display: none; }
+    #erd-title { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #search { width: 120px; }
+    #subview-sel { max-width: 120px; }
+  }
+  /* Shortcuts modal */
+  #shortcuts-modal { position:fixed; inset:0; z-index:3000; display:none; align-items:center;
+                      justify-content:center; background:rgba(0,0,0,0.6); }
+  #shortcuts-modal.open { display:flex; }
+  #sk-box { background:#1e1e2e; border:1px solid #45475a; border-radius:10px; padding:20px;
+             min-width:380px; max-width:520px; width:90vw; max-height:80vh; overflow-y:auto; }
+  #sk-box h3 { color:#89b4fa; font-size:13px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #313244; }
+  .sk-section { color:#6c7086; font-size:10px; font-weight:bold; margin:10px 0 4px; text-transform:uppercase; letter-spacing:.05em; }
+  .sk-row { display:flex; align-items:center; gap:10px; padding:4px 0; font-size:11px; }
+  .sk-key { background:#313244; border:1px solid #45475a; border-radius:4px; padding:2px 7px;
+             font-family:monospace; color:#cba6f7; white-space:nowrap; flex-shrink:0; }
+  .sk-desc { color:#a6adc8; }
+  #ddl-modal { position:fixed; inset:0; z-index:2000; display:none; align-items:center;
+                justify-content:center; background:rgba(0,0,0,0.65); }
+  #ddl-modal.open { display:flex; }
+  #ddl-modal-box { background:#1e1e2e; border:1px solid #45475a; border-radius:10px; padding:20px;
+                    min-width:460px; max-width:700px; width:90vw; max-height:72vh;
+                    display:flex; flex-direction:column; gap:12px; box-shadow:0 8px 40px rgba(0,0,0,0.6); }
+  #ddl-modal-title { font-size:13px; font-weight:bold; color:#89b4fa; }
+  #ddl-modal-sql { background:#11111b; border:1px solid #313244; border-radius:6px; padding:12px;
+                    font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#cdd6f4;
+                    overflow:auto; flex:1; white-space:pre; max-height:300px; line-height:1.6; }
+  #ddl-modal-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1 id="erd-title">ERD — {proyecto}</h1>
+  <select id="subview-sel" onchange="filterBySubview(this.value)" title="Filtrar por subvista">
+    <option value="">Todas las tablas</option>
+  </select>
+  <input id="search" type="text" placeholder="Buscar tabla o columna..." title="Busca por nombre de tabla o columna. Prefix col: para buscar solo columnas.">
+  <span id="search-count" style="font-size:10px;color:#6c7086;white-space:nowrap"></span>
+  <button id="btn-patfilter" onclick="toggleMenu(this,'pat-filter-popup')" title="Filtrar tablas por patrón (wildcards *)">Filtro ▾</button>
+  <span id="filter-chip"><span id="filter-chip-text"></span><button onclick="clearAllFilters()" title="Quitar filtros">✕</button></span>
+  <div class="tb-sep"></div>
+  <button onclick="fitView()" title="Ajustar todas las tablas en vista (F)">Fit view</button>
+  <button id="btn-pkonly" onclick="togglePkOnly()" title="Mostrar solo columnas clave">PKs</button>
+  <button class="primary" onclick="saveModel()">Guardar</button>
+  <div class="tb-sep"></div>
+  <button class="menu-btn" id="btn-menu-vista"    onclick="toggleMenu(this,'menu-vista')">Vista ▾</button>
+  <button class="menu-btn" id="btn-menu-modelo"   onclick="toggleMenu(this,'menu-modelo')">Modelo ▾</button>
+  <button class="menu-btn" id="btn-menu-exportar" onclick="toggleMenu(this,'menu-exportar')">Exportar ▾</button>
+  <button class="menu-btn" id="btn-menu-importar" onclick="toggleMenu(this,'menu-importar')">Importar ▾</button>
+  <input id="model-file-input" type="file" accept=".json,application/json" style="display:none" onchange="onModelFileInput(this)">
+  <button onclick="toggleShortcutsModal()" title="Atajos de teclado (?)">?</button>
+  <span id="erd-counts" style="margin-left:auto;font-size:11px;color:#6c7086;flex-shrink:0">{table_count} tablas · {rel_count} relaciones</span>
+</div>
+
+<div id="canvas-wrap">
+  <div id="canvas">
+    <svg id="relations">
+      <defs>
+        <marker id="arr-high"   markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 z" fill="#89b4fa"/></marker>
+        <marker id="arr-medium" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 z" fill="#fab387"/></marker>
+        <marker id="arr-low"    markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 z" fill="#6c7086"/></marker>
+        <marker id="arr-manual" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 z" fill="#a6e3a1"/></marker>
+      </defs>
+    </svg>
+  </div>
+</div>
+
+<div id="panel">
+  <button id="close-panel" onclick="closePanel()" title="Cerrar">✕</button>
+  <h2 id="panel-title">Selecciona tabla o columna</h2>
+  <div id="panel-content"></div>
+</div>
+
+<div id="rubber-band"></div>
+<div id="rel-tooltip"></div>
+<div id="status">Arrastra para mover · Scroll para zoom · Click tabla para detalles</div>
+<div id="minimap-wrap">
+  <button id="minimap-toggle" onclick="toggleMinimap()">mapa</button>
+  <canvas id="minimap" width="200" height="120"></canvas>
+</div>
+
+<script>
+// Modelo embebido en generación. Reemplazable en caliente con "Abrir modelo…" (openModelFile)
+// — así el HTML no caduca cuando cambia BD/<proyecto>-model.json.
+let MODEL = {model_json};
+if (!MODEL.subviews) MODEL.subviews = {};
+const positions = {};
+let scale = 1, panX = 0, panY = 0;
+let dragging = null, dragStart = {};
+let panningCanvas = false, panStart = {};
+// COMPACT/gaps/canvas se recalculan por modelo en resizeCanvas() — misma fórmula que render-erd.py
+let COMPACT = false;
+let COL_GAP = 310;
+let ROW_GAP = 280;
+let _elCache = new Map();
+const adjacency = new Map();
+let minimapVisible = true;
+const fkMap = new Map();
+let pkOnlyMode = false;
+let selected = new Set();
+let dragOrigins = new Map();
+let linking = null;
+let currentPanel = null;
+let searchIdx = 0;
+let modelFileHandle = null;
+let _autoSaveTimer = null;
+const relFilter = new Set(['manual','high','medium','low']);
+let RENDER_TS = '{render_ts}';
+let PRJ       = '{proyecto}';   // proyecto activo; cambia al abrir otro -model.json
+let LS_KEY    = 'erd_' + PRJ;
+const locked = new Set();
+let rubberbanding = false, rubberStart = {};
+let patternFilter = '';
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+// Dimensiona el lienzo según el nº de tablas — misma fórmula que render-erd.py, aquí en cliente
+// para que el HTML sirva a cualquier modelo que se cargue después.
+function resizeCanvas(n) {
+  COMPACT = n > 80;
+  COL_GAP = COMPACT ? 240 : 310;
+  ROW_GAP = 280;
+  const colsN = Math.max(1, Math.ceil(Math.sqrt(n)));
+  const rowsN = Math.max(1, Math.ceil(n / colsN));
+  const w = Math.max(4000, 40 + colsN * COL_GAP + 300);
+  const h = Math.max(3000, 40 + rowsN * ROW_GAP + 300);
+  const canvas = document.getElementById('canvas');
+  canvas.style.width  = w + 'px';
+  canvas.style.height = h + 'px';
+  const svg = document.getElementById('relations');
+  svg.style.width  = w + 'px';
+  svg.style.height = h + 'px';
+}
+
+// Construye (o reconstruye) todo lo que depende de MODEL. Re-entrante: se llama en init() y
+// cada vez que se carga un modelo nuevo desde fichero.
+function renderModel() {
+  const canvas = document.getElementById('canvas');
+  canvas.querySelectorAll('.table-box').forEach(el => el.remove());
+  Object.keys(positions).forEach(k => delete positions[k]);
+  _elCache.clear();
+  selected.clear();
+  locked.clear();
+  dragOrigins.clear();
+  dragging = null; linking = null; currentPanel = null; searchIdx = 0;
+
+  document.getElementById('erd-title').textContent = 'ERD — ' + PRJ;
+  document.title = 'ERD - ' + PRJ;
+
+  const tableNames = Object.keys(MODEL.tables);
+  resizeCanvas(tableNames.length);
+  const relTotal = tableNames.reduce((s, n) => s + (MODEL.tables[n].relations || []).length, 0);
+  document.getElementById('erd-counts').textContent =
+    tableNames.length + ' tablas · ' + relTotal + ' relaciones';
+
+  const cols = Math.ceil(Math.sqrt(tableNames.length));
+  if (!MODEL.table_positions) MODEL.table_positions = {};
+  tableNames.forEach((name, i) => {
+    const el = createTableBox(name, MODEL.tables[name]);
+    canvas.appendChild(el);
+    const saved = MODEL.table_positions[name];
+    const x = saved ? saved.x : 40 + (i % cols) * COL_GAP;
+    const y = saved ? saved.y : 40 + Math.floor(i / cols) * ROW_GAP;
+    positions[name] = {x, y};
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+  });
+  _elCache = new Map(Array.from(canvas.querySelectorAll('.table-box')).map(el => [el.dataset.table, el]));
+  // Restaurar estado locked desde MODEL
+  Object.entries(MODEL.table_positions || {}).forEach(([name, pos]) => {
+    if (pos && pos.locked) {
+      locked.add(name);
+      const el = _elCache.get(name);
+      if (el) el.classList.add('locked');
+    }
+  });
+  adjacency.clear();
+  Object.entries(MODEL.tables).forEach(([name, tdef]) => {
+    if (!adjacency.has(name)) adjacency.set(name, new Set());
+    (tdef.relations || []).forEach(r => {
+      adjacency.get(name).add(r.target_table);
+      if (!adjacency.has(r.target_table)) adjacency.set(r.target_table, new Set());
+      adjacency.get(r.target_table).add(name);
+    });
+  });
+  buildFkMap();
+  initSubviewSelector();
+  drawRelations();
+  fitView();
+  updateMinimap();
+  updateFilterChip();
+}
+
+function init() {
+  checkLocalStorage();
+  renderModel();
+  const canvas = document.getElementById('canvas');
+  document.getElementById('minimap').addEventListener('click', e => {
+    const mm = e.currentTarget;
+    if (!mm._mmParams) return;
+    const {minX, minY, s, offX, offY} = mm._mmParams;
+    const rect = mm.getBoundingClientRect();
+    const worldX = (e.clientX - rect.left - offX) / s + minX;
+    const worldY = (e.clientY - rect.top  - offY) / s + minY;
+    const wrap = document.getElementById('canvas-wrap');
+    panX = wrap.offsetWidth  / 2 - worldX * scale;
+    panY = wrap.offsetHeight / 2 - worldY * scale;
+    applyTransform();
+  });
+
+  const wrap = document.getElementById('canvas-wrap');
+  wrap.addEventListener('mousedown', e => {
+    if (e.target === wrap || e.target === canvas || e.target.tagName === 'svg') {
+      if (e.shiftKey) {
+        // Rubber band selection
+        rubberbanding = true;
+        rubberStart = {x: e.clientX, y: e.clientY};
+        const rb = document.getElementById('rubber-band');
+        rb.style.left = e.clientX + 'px'; rb.style.top = e.clientY + 'px';
+        rb.style.width = '0'; rb.style.height = '0'; rb.style.display = 'block';
+        e.preventDefault();
+      } else {
+        selected.forEach(n => { const el = _elCache.get(n); if (el) el.classList.remove('selected'); });
+        selected.clear();
+        panningCanvas = true;
+        panStart = {x: e.clientX - panX, y: e.clientY - panY};
+        wrap.classList.add('grabbing');
+      }
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (rubberbanding) {
+      const rb = document.getElementById('rubber-band');
+      const x = Math.min(e.clientX, rubberStart.x), y = Math.min(e.clientY, rubberStart.y);
+      const w = Math.abs(e.clientX - rubberStart.x), h = Math.abs(e.clientY - rubberStart.y);
+      rb.style.left = x + 'px'; rb.style.top = y + 'px';
+      rb.style.width = w + 'px'; rb.style.height = h + 'px';
+    }
+    if (panningCanvas) {
+      panX = e.clientX - panStart.x;
+      panY = e.clientY - panStart.y;
+      applyTransform();
+    }
+    if (dragging) {
+      const dx = (e.clientX - dragStart.mx) / scale;
+      const dy = (e.clientY - dragStart.my) / scale;
+      const nx = dragStart.ox + dx;
+      const ny = dragStart.oy + dy;
+      dragging.style.left = nx + 'px';
+      dragging.style.top = ny + 'px';
+      positions[dragging.dataset.table] = {x: nx, y: ny};
+      MODEL.table_positions[dragging.dataset.table] = {x: nx, y: ny};
+      if (selected.has(dragging.dataset.table)) {
+        selected.forEach(n => {
+          if (n === dragging.dataset.table) return;
+          const orig = dragOrigins.get(n); if (!orig) return;
+          const nx2 = orig.x + dx, ny2 = orig.y + dy;
+          positions[n] = {x: nx2, y: ny2};
+          MODEL.table_positions[n] = {x: nx2, y: ny2};
+          const el2 = _elCache.get(n);
+          if (el2) { el2.style.left = nx2 + 'px'; el2.style.top = ny2 + 'px'; }
+        });
+      }
+      drawRelations();
+      updateMinimap();
+    }
+    if (linking) {
+      const wr = document.getElementById('canvas-wrap').getBoundingClientRect();
+      const x2 = (e.clientX - wr.left - panX) / scale;
+      const y2 = (e.clientY - wr.top  - panY) / scale;
+      let ln = document.getElementById('link-line');
+      if (!ln) {
+        ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+        ln.id = 'link-line';
+        ln.setAttribute('stroke','#cba6f7'); ln.setAttribute('stroke-width','2');
+        ln.setAttribute('stroke-dasharray','6 3'); ln.setAttribute('pointer-events','none');
+        document.getElementById('relations').appendChild(ln);
+      }
+      ln.setAttribute('x1', linking.x1); ln.setAttribute('y1', linking.y1);
+      ln.setAttribute('x2', x2);         ln.setAttribute('y2', y2);
+    }
+  });
+  document.addEventListener('mouseup', e => {
+    if (rubberbanding) {
+      rubberbanding = false;
+      const rb = document.getElementById('rubber-band');
+      rb.style.display = 'none';
+      const rbRect = {
+        left: parseInt(rb.style.left), top: parseInt(rb.style.top),
+        right: parseInt(rb.style.left) + parseInt(rb.style.width),
+        bottom: parseInt(rb.style.top) + parseInt(rb.style.height)
+      };
+      if (rbRect.right - rbRect.left > 4 || rbRect.bottom - rbRect.top > 4) {
+        selected.forEach(n => { const el = _elCache.get(n); if (el) el.classList.remove('selected'); });
+        selected.clear();
+        document.querySelectorAll('.table-box').forEach(el => {
+          if (el.style.display === 'none') return;
+          const r = el.getBoundingClientRect();
+          if (r.left < rbRect.right && r.right > rbRect.left && r.top < rbRect.bottom && r.bottom > rbRect.top) {
+            selected.add(el.dataset.table);
+            el.classList.add('selected');
+          }
+        });
+        if (selected.size) showToast(selected.size + ' tabla(s) seleccionadas', 'ok', 1500);
+      }
+      return;
+    }
+    panningCanvas = false;
+    dragging = null;
+    document.getElementById('canvas-wrap').classList.remove('grabbing');
+    if (linking) {
+      const ln = document.getElementById('link-line');
+      if (ln) ln.parentNode.removeChild(ln);
+      document.body.classList.remove('linking');
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      let tgtEl = hit;
+      while (tgtEl && !tgtEl.classList?.contains('table-box')) tgtEl = tgtEl.parentElement;
+      if (tgtEl && tgtEl.dataset.table !== linking.srcTable) {
+        const tgtTable = tgtEl.dataset.table;
+        let colEl = hit;
+        while (colEl && !colEl.classList?.contains('col-row')) colEl = colEl.parentElement;
+        const tgtCol = colEl?.dataset?.col;
+        if (tgtCol) confirmLinkDrag(linking.srcTable, linking.srcCol, tgtTable, tgtCol);
+        else showLinkTargetPicker(linking.srcTable, linking.srcCol, tgtTable, e.clientX, e.clientY);
+      }
+      linking = null;
+    }
+  });
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    scale = Math.max(0.2, Math.min(3, scale * delta));
+    applyTransform();
+  }, {passive: false});
+
+  document.getElementById('search').addEventListener('input', () => {
+    searchIdx = 0;
+    applyAllFilters();
+    const vis2 = [...document.querySelectorAll('.table-box')].filter(el => el.style.display !== 'none');
+    if (vis2.length === 1) centerOnTable(vis2[0].dataset.table);
+  });
+  document.getElementById('search').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const vis3 = [...document.querySelectorAll('.table-box')].filter(el => el.style.display !== 'none');
+    if (!vis3.length) return;
+    searchIdx = searchIdx % vis3.length;
+    const tname = vis3[searchIdx].dataset.table;
+    centerOnTable(tname);
+    const hi = _elCache.get(tname);
+    if (hi) { const ob = hi.style.boxShadow; hi.style.boxShadow = '0 0 0 3px #cba6f7'; setTimeout(() => hi.style.boxShadow = ob, 900); }
+    searchIdx = (searchIdx + 1) % vis3.length;
+  });
+}
+
+// ─── DDL modal ────────────────────────────────────────────────────────────────
+
+function _sch() { return ((MODEL.schema||'MIPROYECTO')+'').toUpperCase(); }
+function _eng() { return ((MODEL.engine||'ORACLE')+'').toUpperCase(); }
+
+function _tref(t)  { return _eng()==='ORACLE' ? _sch()+'.'+t              : '['+_sch()+'].['+t+']'; }
+function _cref(c)  { return _eng()==='ORACLE' ? c                          : '['+c+']'; }
+
+// Garantiza semántica CHAR en VARCHAR2/NVARCHAR2/CHAR de Oracle: VARCHAR2(n) → VARCHAR2(n CHAR).
+// Sin CHAR, Oracle usa semántica de bytes y trunca UTF-8. Idempotente (el `)` tras \d+ excluye
+// el caso ya-CHAR). ⚠ Aplicar SOLO cuando el motor es ORACLE: sobre un tipo SQL Server
+// `VARCHAR(50)` el substring `CHAR(50)` matchearía y lo ensuciaría.
+function ensureOracleChar(type) {
+  return (type||'').replace(/(VARCHAR2|NVARCHAR2|CHAR)\((\d+)\)/gi, '$1($2 CHAR)');
+}
+
+function ddlAddColumn(tbl, col, cd) {
+  const type = cd.type || 'VARCHAR2(50 CHAR)';
+  const nn   = (cd.nullable===false || cd.pk) ? ' NOT NULL' : '';
+  return _eng()==='ORACLE'
+    ? 'ALTER TABLE '+_tref(tbl)+' ADD ('+col+' '+ensureOracleChar(type)+nn+');'
+    : 'ALTER TABLE '+_tref(tbl)+' ADD '+_cref(col)+' '+type+nn+';';
+}
+
+function ddlDropColumn(tbl, col) {
+  return 'ALTER TABLE '+_tref(tbl)+' DROP COLUMN '+_cref(col)+';';
+}
+
+function ddlModifyColumn(tbl, col, cd) {
+  const type = cd.type || 'VARCHAR2(50 CHAR)';
+  const nn   = cd.nullable===false ? ' NOT NULL' : ' NULL';
+  return _eng()==='ORACLE'
+    ? 'ALTER TABLE '+_tref(tbl)+' MODIFY ('+col+' '+ensureOracleChar(type)+nn+');'
+    : 'ALTER TABLE '+_tref(tbl)+' ALTER COLUMN '+_cref(col)+' '+type+nn+';';
+}
+
+function ddlRenameColumn(tbl, oldCol, newCol) {
+  return _eng()==='ORACLE'
+    ? 'ALTER TABLE '+_tref(tbl)+' RENAME COLUMN '+oldCol+' TO '+newCol+';'
+    : "EXEC sp_rename '"+_sch()+'.'+tbl+'.'+oldCol+"', '"+newCol+"', 'COLUMN';";
+}
+
+function ddlTogglePK(tbl, col, isPk) {
+  const pk = 'PK_'+tbl;
+  if (isPk) {
+    return _eng()==='ORACLE'
+      ? 'ALTER TABLE '+_tref(tbl)+' ADD CONSTRAINT '+pk+' PRIMARY KEY ('+col+');'
+      : 'ALTER TABLE '+_tref(tbl)+' ADD CONSTRAINT '+pk+' PRIMARY KEY ('+_cref(col)+');';
+  } else {
+    return 'ALTER TABLE '+_tref(tbl)+' DROP CONSTRAINT '+pk+';';
+  }
+}
+
+function ddlRenameTable(oldT, newT) {
+  return _eng()==='ORACLE'
+    ? 'ALTER TABLE '+_tref(oldT)+' RENAME TO '+newT+';'
+    : "EXEC sp_rename '"+_sch()+'.'+oldT+"', '"+newT+"';";
+}
+
+function ddlCreateTable(tbl, tdef) {
+  const cols = Object.entries(tdef.columns||{});
+  const pks  = cols.filter(([,cd])=>cd.pk).map(([cn])=>cn);
+  const lines = cols.map(([cn,cd]) => {
+    let type = cd.type||'VARCHAR2(50 CHAR)';
+    if (_eng()==='ORACLE') type = ensureOracleChar(type);
+    const nn   = (cd.nullable===false||cd.pk) ? ' NOT NULL' : '';
+    return '  '+cn+' '+type+nn;
+  });
+  if (pks.length) lines.push('  CONSTRAINT PK_'+tbl+' PRIMARY KEY ('+pks.join(', ')+')');
+  return 'CREATE TABLE '+_tref(tbl)+' (\n'+lines.join(',\n')+'\n);';
+}
+
+function ddlDropTable(tbl) {
+  return 'DROP TABLE '+_tref(tbl)+';';
+}
+
+let _ddlFilename = 'cambio.sql';
+
+function showDDLModal(title, sql, filename) {
+  _ddlFilename = filename || 'cambio.sql';
+  document.getElementById('ddl-modal-title').textContent = title;
+  document.getElementById('ddl-modal-sql').textContent   = sql;
+  document.getElementById('ddl-modal').classList.add('open');
+}
+
+function closeDDLModal() {
+  document.getElementById('ddl-modal').classList.remove('open');
+}
+
+function copyDDLSql() {
+  const sql = document.getElementById('ddl-modal-sql').textContent;
+  navigator.clipboard.writeText(sql).then(
+    () => showToast('SQL copiado al portapapeles', 'ok', 2000),
+    () => { /* fallback */ const ta = document.createElement('textarea'); ta.value=sql; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); showToast('SQL copiado', 'ok', 2000); }
+  );
+}
+
+function downloadDDLSql() {
+  downloadText(document.getElementById('ddl-modal-sql').textContent, _ddlFilename);
+}
+
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeDDLModal(); }, {capture: true});
+
+// ─── Visibility filters ───────────────────────────────────────────────────────
+
+function applyAllFilters() {
+  const sv  = document.getElementById('subview-sel').value;
+  const svSet = sv ? new Set(MODEL.subviews[sv] || []) : null;
+  const raw = (document.getElementById('search').value || '').toLowerCase().trim();
+  const isCol = raw.startsWith('col:');
+  const q = isCol ? raw.slice(4) : raw;
+  let re = null;
+  if (patternFilter) {
+    try {
+      const esc = patternFilter.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+      re = new RegExp(esc, 'i');
+    } catch(e) {}
+  }
+  document.querySelectorAll('.table-box').forEach(el => {
+    const t = el.dataset.table;
+    const inSv  = !svSet || svSet.has(t);
+    const colNames = Object.keys((MODEL.tables[t]||{}).columns || {});
+    let matchQ = !q;
+    if (q) {
+      const nameMatch = !isCol && t.toLowerCase().includes(q);
+      const colMatch  = colNames.some(c => c.toLowerCase().includes(q));
+      matchQ = nameMatch || colMatch;
+    }
+    const matchPat = !re || re.test(t);
+    el.style.display = (inSv && matchQ && matchPat) ? '' : 'none';
+    // Resaltar columnas que coinciden
+    el.querySelectorAll('.col-row').forEach(row => {
+      const col = (row.dataset.col || '').toLowerCase();
+      row.classList.toggle('col-match', !!(q && col.includes(isCol ? q : q)));
+    });
+  });
+  drawRelations();
+  updateMinimap();
+  const vis = [...document.querySelectorAll('.table-box')].filter(el => el.style.display !== 'none');
+  const badge = document.getElementById('search-count');
+  if (badge) badge.textContent = (q || patternFilter) ? vis.length + '/' + Object.keys(MODEL.tables).length : '';
+}
+
+// ─── Lock ─────────────────────────────────────────────────────────────────────
+
+function toggleLock(name) {
+  if (locked.has(name)) {
+    locked.delete(name);
+    if (MODEL.table_positions[name]) MODEL.table_positions[name].locked = false;
+  } else {
+    locked.add(name);
+    if (!MODEL.table_positions[name]) MODEL.table_positions[name] = { x: positions[name]?.x || 0, y: positions[name]?.y || 0 };
+    MODEL.table_positions[name].locked = true;
+  }
+  const el = _elCache.get(name);
+  if (el) {
+    el.classList.toggle('locked', locked.has(name));
+    const btn = el.querySelector('.lock-btn');
+    if (btn) { btn.textContent = locked.has(name) ? '🔒' : '🔓'; btn.title = locked.has(name) ? 'Desbloquear posición' : 'Bloquear posición'; }
+  }
+  scheduleAutoSave();
+}
+
+// ─── Pattern filter popup ─────────────────────────────────────────────────────
+
+// ─── Menús de la toolbar ─────────────────────────────────────────────────────
+// Un único mecanismo para todos los desplegables (Vista/Modelo/Exportar/Importar, filtro por
+// patrón y confianza de relaciones): posiciona bajo el botón, cierra el que hubiera abierto y
+// se cierra con clic fuera o Esc.
+
+let _openMenu = null;
+
+function _menuOutsideClick(e) {
+  if (!_openMenu) return;
+  if (_openMenu.popup.contains(e.target) || _openMenu.btn.contains(e.target)) return;
+  closeMenu();
+}
+
+function closeMenu() {
+  if (!_openMenu) return;
+  _openMenu.popup.style.display = 'none';
+  _openMenu.btn.classList.remove('open');
+  document.removeEventListener('mousedown', _menuOutsideClick);
+  _openMenu = null;
+}
+
+function toggleMenu(btn, popupId, align = 'left') {
+  const popup = document.getElementById(popupId);
+  const wasOpen = _openMenu && _openMenu.popup === popup;
+  // El rect se toma ANTES de cerrar: "Relaciones…" vive dentro del menú Vista y closeMenu()
+  // lo ocultaría, dejando un rect a cero.
+  const r = btn.getBoundingClientRect();
+  closeMenu();
+  if (wasOpen) return;
+  popup.style.display = 'block';
+  const w = popup.offsetWidth;
+  const left = align === 'right' ? r.right - w : r.left;
+  popup.style.left = Math.max(4, Math.min(left, window.innerWidth - w - 4)) + 'px';
+  popup.style.top  = (r.bottom + 4) + 'px';
+  btn.classList.add('open');
+  _openMenu = { popup, btn };
+  const focusable = popup.querySelector('input[type=text]');
+  if (focusable) focusable.focus();
+  setTimeout(() => document.addEventListener('mousedown', _menuOutsideClick), 50);
+}
+
+// Ejecuta la acción de un item y cierra el menú
+function runFromMenu(fn) {
+  closeMenu();
+  fn();
+}
+
+// ─── Chip de filtro activo ───────────────────────────────────────────────────
+// Los controles de filtro viven en menús, así que la barra necesita decir qué hay filtrado.
+
+function updateFilterChip() {
+  const chip = document.getElementById('filter-chip');
+  if (!chip) return;
+  const parts = [];
+  if (patternFilter)     parts.push('Patrón: ' + patternFilter);
+  if (relFilter.size < 4) parts.push('Relaciones: ' + relFilter.size + ' de 4');
+  if (!parts.length) { chip.classList.remove('show'); return; }
+  document.getElementById('filter-chip-text').textContent = parts.join(' · ');
+  chip.classList.add('show');
+}
+
+function clearAllFilters() {
+  patternFilter = '';
+  const pi = document.getElementById('pat-input');
+  if (pi) pi.value = '';
+  document.getElementById('btn-patfilter').style.color = '';
+  ['manual','high','medium','low'].forEach(k => relFilter.add(k));
+  document.querySelectorAll('#rel-filter-popup input[type=checkbox]').forEach(cb => cb.checked = true);
+  const rb = document.getElementById('btn-relfilter');
+  if (rb) rb.style.color = '';
+  applyAllFilters();
+  drawRelations();
+  updateFilterChip();
+}
+
+function applyPatternFilter() {
+  patternFilter = (document.getElementById('pat-input').value || '').trim();
+  document.getElementById('btn-patfilter').style.color = patternFilter ? '#89b4fa' : '';
+  applyAllFilters();
+  updateFilterChip();
+  closeMenu();
+}
+
+function clearPatternFilter() {
+  patternFilter = '';
+  document.getElementById('pat-input').value = '';
+  document.getElementById('btn-patfilter').style.color = '';
+  applyAllFilters();
+  updateFilterChip();
+  closeMenu();
+}
+
+function applyTransform() {
+  const c = document.getElementById('canvas');
+  c.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  c.style.transformOrigin = '0 0';
+  updateMinimap();
+}
+
+// ─── Table box ────────────────────────────────────────────────────────────────
+
+function createTableBox(name, tableDef) {
+  const div = document.createElement('div');
+  div.className = 'table-box';
+  div.dataset.table = name;
+  div.style.zIndex = 1;
+
+  const header = document.createElement('div');
+  header.className = 'table-header';
+  header.style.display = 'flex'; header.style.alignItems = 'center';
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = name; titleSpan.style.flex = '1'; titleSpan.style.overflow = 'hidden'; titleSpan.style.textOverflow = 'ellipsis';
+  const lockBtn = document.createElement('span');
+  lockBtn.className = 'lock-btn';
+  lockBtn.textContent = locked.has(name) ? '🔒' : '🔓';
+  lockBtn.title = locked.has(name) ? 'Desbloquear posición' : 'Bloquear posición';
+  lockBtn.addEventListener('click', e => { e.stopPropagation(); toggleLock(name); });
+  header.appendChild(titleSpan); header.appendChild(lockBtn);
+  header.addEventListener('mousedown', e => {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      if (selected.has(name)) { selected.delete(name); div.classList.remove('selected'); }
+      else { selected.add(name); div.classList.add('selected'); }
+      return;
+    }
+    if (locked.has(name)) return;
+    pushUndo();
+    dragging = div;
+    dragStart = { mx: e.clientX, my: e.clientY, ox: positions[name].x, oy: positions[name].y };
+    dragOrigins.clear();
+    selected.forEach(n => { if (positions[n] && !locked.has(n)) dragOrigins.set(n, { ...positions[n] }); });
+    div.style.zIndex = 20;
+  });
+  header.addEventListener('click', () => openPanel('table', name));
+  header.addEventListener('dblclick', e => { e.stopPropagation(); centerOnTable(name); });
+  div.addEventListener('mouseenter', () => highlightTable(name));
+  div.addEventListener('mouseleave', clearHighlight);
+  div.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'table-body';
+  const cols = tableDef.columns || {};
+  if (COMPACT) {
+    div.style.maxWidth = '200px';
+    div.style.minWidth = '160px';
+  }
+  const _idxCols = new Set();
+  (MODEL.tables[name].indexes||[]).forEach(idx => (idx.columns||[]).forEach(c => _idxCols.add(c)));
+  Object.entries(cols).slice(0, 15).forEach(([colName, colDef]) => {
+    const row = document.createElement('div');
+    row.className = 'col-row' + (colDef.pk ? ' is-pk' : '');
+    row.dataset.col = colName;
+    if (colDef.description) row.title = colDef.description;
+    const isFk  = (fkMap.get(name)||new Set()).has(colName);
+    const isIdx = _idxCols.has(colName);
+    row.innerHTML = `<span class="col-name">${colName}</span><span class="col-type">${colDef.type || ''}</span>${colDef.pk ? '<span class="col-pk">PK</span>' : ''}<span class="col-fk" style="display:${isFk?'inline':'none'}">FK</span><span class="col-idx" style="display:${isIdx?'inline':'none'}">IDX</span><span class="col-drag-handle" title="Arrastrar para crear FK">⬤</span>`;
+    row.addEventListener('click', e => { e.stopPropagation(); openPanel('column', name, colName); });
+    row.querySelector('.col-drag-handle').addEventListener('mousedown', e => {
+      e.stopPropagation(); e.preventDefault();
+      const wrap = document.getElementById('canvas-wrap');
+      const wr = wrap.getBoundingClientRect(), hr = e.target.getBoundingClientRect();
+      linking = { srcTable: name, srcCol: colName,
+        x1: (hr.left + 4 - wr.left - panX) / scale,
+        y1: (hr.top + hr.height/2 - wr.top  - panY) / scale };
+      document.body.classList.add('linking');
+    });
+    body.appendChild(row);
+  });
+  if (Object.keys(cols).length > 15) {
+    const more = document.createElement('div');
+    more.className = 'col-row';
+    more.style.color = '#6c7086';
+    more.textContent = `... ${Object.keys(cols).length - 15} más`;
+    body.appendChild(more);
+  }
+  div.appendChild(body);
+  return div;
+}
+
+// ─── Relations ────────────────────────────────────────────────────────────────
+
+function getVisibleSet() {
+  const sv = document.getElementById('subview-sel').value;
+  if (!sv) return null;
+  return new Set(MODEL.subviews[sv] || []);
+}
+
+function drawRelations() {
+  const svg = document.getElementById('relations');
+  Array.from(svg.children).forEach(child => { if (child.tagName !== 'defs') svg.removeChild(child); });
+  const visible = getVisibleSet();
+  Object.entries(MODEL.tables).forEach(([srcName, srcDef]) => {
+    if (visible && !visible.has(srcName)) return;
+    const srcPos = positions[srcName];
+    if (!srcPos) return;
+    const rels = srcDef.relations || [];
+    rels.forEach(rel => {
+      if (visible && !visible.has(rel.target_table)) return;
+      const tgtPos = positions[rel.target_table];
+      if (!tgtPos) return;
+      const _conf = rel.source === 'manual' ? 'manual' : (rel.confidence || 'medium');
+      if (!relFilter.has(_conf)) return;
+      const srcEl = _elCache.get(srcName);
+      const tgtEl = _elCache.get(rel.target_table);
+      const sw = srcEl ? srcEl.offsetWidth : 200, sh = srcEl ? srcEl.offsetHeight : 100;
+      const tw = tgtEl ? tgtEl.offsetWidth : 200, th = tgtEl ? tgtEl.offsetHeight : 100;
+      const c1x = srcPos.x + sw/2, c1y = srcPos.y + sh/2;
+      const c2x = tgtPos.x + tw/2, c2y = tgtPos.y + th/2;
+      const ep1 = clipToBox(c2x, c2y, c1x, c1y, srcPos.x, srcPos.y, sw, sh);
+      const ep2 = clipToBox(c1x, c1y, c2x, c2y, tgtPos.x, tgtPos.y, tw, th);
+      const cx = (ep1.x + ep2.x) / 2;
+      const pathD = `M${ep1.x},${ep1.y} C${cx},${ep1.y} ${cx},${ep2.y} ${ep2.x},${ep2.y}`;
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d', pathD);
+      const cls = rel.source === 'manual' ? 'manual' : (rel.confidence || 'medium');
+      path.setAttribute('class', `rel-line ${cls}`);
+      const arrId = rel.source==='manual'?'arr-manual':rel.confidence==='high'?'arr-high':rel.confidence==='low'?'arr-low':'arr-medium';
+      path.setAttribute('marker-end', `url(#${arrId})`);
+      svg.appendChild(path);
+      const hit = document.createElementNS('http://www.w3.org/2000/svg','path');
+      hit.setAttribute('d', pathD);
+      hit.setAttribute('stroke', 'transparent');
+      hit.setAttribute('stroke-width', '12');
+      hit.setAttribute('fill', 'none');
+      hit.style.cursor = 'pointer';
+      const mkCard = (x, y, lbl) => {
+        const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+        t.setAttribute('x', x); t.setAttribute('y', y);
+        t.setAttribute('font-size','10'); t.setAttribute('font-family','monospace');
+        t.setAttribute('fill','#6c7086'); t.setAttribute('pointer-events','none');
+        t.textContent = lbl; svg.appendChild(t);
+      };
+      const mx = (ep1.x+ep2.x)/2, my = (ep1.y+ep2.y)/2;
+      const off = 14;
+      mkCard(ep1.x + (mx-ep1.x)*off/Math.max(1,Math.hypot(mx-ep1.x,my-ep1.y)),
+             ep1.y + (my-ep1.y)*off/Math.max(1,Math.hypot(mx-ep1.x,my-ep1.y)) - 3, 'N');
+      mkCard(ep2.x + (mx-ep2.x)*off/Math.max(1,Math.hypot(mx-ep2.x,my-ep2.y)),
+             ep2.y + (my-ep2.y)*off/Math.max(1,Math.hypot(mx-ep2.x,my-ep2.y)) - 3, '1');
+      hit.addEventListener('mouseenter', ev => showRelTooltip(ev, srcName, rel, path));
+      hit.addEventListener('mousemove',  ev => { const t=document.getElementById('rel-tooltip'); t.style.left=(ev.clientX+14)+'px'; t.style.top=(ev.clientY+10)+'px'; });
+      hit.addEventListener('mouseleave', () => hideRelTooltip(path));
+      svg.appendChild(hit);
+    });
+  });
+}
+
+// ─── Panel ────────────────────────────────────────────────────────────────────
+
+function openPanel(type, tableName, colName) {
+  const panel = document.getElementById('panel');
+  const title = document.getElementById('panel-title');
+  const content = document.getElementById('panel-content');
+  panel.classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  currentPanel = type === 'table' ? {type:'table', table:tableName} : type === 'column' ? {type:'column', table:tableName, col:colName} : null;
+
+  if (type === 'table') {
+    const t = MODEL.tables[tableName];
+    title.textContent = tableName;
+    const rels = t.relations || [];
+    content.innerHTML = `
+      <label>Descripción</label>
+      <textarea id="edit-desc" onchange="MODEL.tables['${tableName}'].description=this.value">${t.description || ''}</textarea>
+      <label style="margin-top:10px;display:flex;align-items:center;justify-content:space-between">
+        Columnas (${Object.keys(t.columns||{}).length})
+        <button onclick="openAddColumnForm('${tableName}')" style="padding:1px 7px;font-size:11px">+ Col</button>
+      </label>
+      ${Object.entries(t.columns||{}).map(([cn,cd])=>`
+        <div class="col-row ${cd.pk?'is-pk':''}" style="cursor:pointer" onclick="openPanel('column','${tableName}','${cn}')">
+          <span class="col-name">${cn}</span><span class="col-type">${cd.type||''}</span>
+          ${cd.pk?'<span class="col-pk">PK</span>':''}
+          <input type="checkbox" ${cd.pk?'checked':''} title="Toggle PK" style="margin-left:auto;cursor:pointer"
+            onclick="event.stopPropagation()" onchange="toggleColumnPk('${tableName}','${cn}',this.checked)">
+        </div>`).join('')}
+      <label style="margin-top:12px">Relaciones (${rels.length})</label>
+      ${rels.map(r=>`<div class="rel-item">
+        <span>${r.source_column} → ${r.target_table}.${r.target_column}</span>
+        <span class="badge ${r.source==='manual'?'manual':(r.confidence||'low')}">${r.source==='manual'?'manual':r.confidence}</span>
+        ${r.source==='manual'?`<button onclick="deleteRelation('${tableName}','${r.source_column}','${r.target_table}','${r.target_column}')" style="padding:0 5px;color:#f38ba8;background:none;border:none;cursor:pointer">✕</button>`:''}
+      </div>`).join('')}
+      <label style="margin-top:12px;display:flex;align-items:center;justify-content:space-between">
+        Índices (${(t.indexes||[]).length})
+        <button onclick="openAddIndexForm('${tableName}')" style="padding:1px 7px;font-size:11px">+ Índice</button>
+      </label>
+      ${(t.indexes||[]).map(idx => `
+        <div class="rel-item" style="flex-direction:column;align-items:flex-start;gap:2px">
+          <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
+            <span style="font-size:11px;font-weight:bold;color:#cdd6f4">${idx.name}</span>
+            <div style="display:flex;gap:4px;align-items:center">
+              ${idx.unique?'<span style="font-size:9px;color:#cba6f7;font-weight:bold">UNIQUE</span>':''}
+              <button onclick="deleteIndex('${tableName}','${idx.name}')" style="color:#f38ba8;background:none;border:none;cursor:pointer;font-size:13px;padding:0 3px">✕</button>
+            </div>
+          </div>
+          <span style="font-size:10px;color:#6c7086">${idx.columns.join(', ')}</span>
+        </div>
+      `).join('')}
+      ${renderSubvistasForTable(tableName)}
+      <div style="margin-top:12px;display:flex;gap:4px;flex-wrap:wrap">
+        <button onclick="generateTableSQL('${tableName}')" style="flex:1">DDL</button>
+        <button onclick="renameTable('${tableName}')" style="flex:1">Renombrar</button>
+        <button onclick="deleteTable('${tableName}')" style="flex:1;color:#f38ba8">Eliminar</button>
+      </div>
+    `;
+  } else if (type === 'column') {
+    const col = (MODEL.tables[tableName]?.columns||{})[colName] || {};
+    title.textContent = `${tableName}.${colName}`;
+    content.innerHTML = `
+      <label style="display:flex;align-items:center;gap:14px;margin-bottom:8px">
+        <span>PK <input type="checkbox" ${col.pk?'checked':''}
+          onchange="toggleColumnPk('${tableName}','${colName}',this.checked);openPanel('column','${tableName}','${colName}')"></span>
+        <span>Nullable <input type="checkbox" ${col.nullable!==false?'checked':''}
+          onchange="pushUndo();MODEL.tables['${tableName}'].columns['${colName}'].nullable=this.checked;showDDLModal('Modificar nullable — ${tableName}.${colName}',ddlModifyColumn('${tableName}','${colName}',MODEL.tables['${tableName}'].columns['${colName}']),'${tableName}-MOD-${colName}.sql')"></span>
+      </label>
+      <label>Tipo</label>
+      <input type="text" value="${col.type||''}"
+        style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:5px 8px;font-size:12px;margin-top:4px"
+        oninput="MODEL.tables['${tableName}'].columns['${colName}'].type=this.value;refreshTableBox('${tableName}')">
+      <button style="width:100%;margin-top:4px;font-size:11px" onclick="pushUndo();showDDLModal('Modificar tipo — ${tableName}.${colName}',ddlModifyColumn('${tableName}','${colName}',MODEL.tables['${tableName}'].columns['${colName}']),'${tableName}-MOD-${colName}.sql')">Aplicar cambio en BD</button>
+      <label style="margin-top:8px">Descripción</label>
+      <textarea onchange="MODEL.tables['${tableName}'].columns['${colName}'].description=this.value">${col.description||''}</textarea>
+      <button style="margin-top:10px;width:100%" onclick="startLinkRelation('${tableName}','${colName}')">Vincular FK →</button>
+      <button style="margin-top:6px;width:100%" onclick="renameColumn('${tableName}','${colName}')">Renombrar columna</button>
+      <button style="margin-top:6px;width:100%;color:#f38ba8" onclick="deleteColumn('${tableName}','${colName}')">Eliminar columna</button>
+    `;
+  }
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('canvas-wrap').classList.remove('panel-open');
+  currentPanel = null;
+}
+
+// ─── Subvistas ────────────────────────────────────────────────────────────────
+
+function initSubviewSelector() {
+  const sel = document.getElementById('subview-sel');
+  while (sel.options.length > 1) sel.remove(1);
+  Object.keys(MODEL.subviews).forEach(sv => {
+    const opt = document.createElement('option');
+    opt.value = sv;
+    opt.textContent = `${sv} (${(MODEL.subviews[sv]||[]).length})`;
+    sel.appendChild(opt);
+  });
+}
+
+function filterBySubview(name) {
+  applyAllFilters();
+  fitVisibleView();
+  if (document.getElementById('panel-title').textContent === 'Subvistas') {
+    openSubviewManager();
+  }
+}
+
+function fitVisibleView() {
+  const visible = Array.from(document.querySelectorAll('.table-box'))
+    .filter(el => el.style.display !== 'none')
+    .map(el => el.dataset.table);
+  if (!visible.length) { fitView(); return; }
+  const xs = visible.map(n => positions[n].x), ys = visible.map(n => positions[n].y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs)+280, minY=Math.min(...ys), maxY=Math.max(...ys)+250;
+  const wrap = document.getElementById('canvas-wrap');
+  const ww = wrap.offsetWidth, wh = wrap.offsetHeight;
+  scale = Math.min(ww/(maxX-minX+80), wh/(maxY-minY+80), 1.5)*0.85;
+  panX = (ww-(maxX-minX)*scale)/2 - minX*scale;
+  panY = (wh-(maxY-minY)*scale)/2 - minY*scale;
+  applyTransform();
+}
+
+function openSubviewManager() {
+  const panel = document.getElementById('panel');
+  panel.classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  document.getElementById('panel-title').textContent = 'Subvistas';
+  const sv = document.getElementById('subview-sel').value;
+  const svNames = Object.keys(MODEL.subviews);
+
+  let checklistHtml = '';
+  if (sv) {
+    const assigned = new Set(MODEL.subviews[sv] || []);
+    const allTables = Object.keys(MODEL.tables || {}).sort();
+    checklistHtml = `
+      <label style="margin-top:14px;color:#cba6f7">Tablas en "${sv}"</label>
+      <input type="text" id="sv-filter" placeholder="Filtrar tabla..."
+             oninput="filterSvChecklist(this.value)"
+             style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:6px 8px;font-size:12px;margin-top:6px">
+      <div class="sv-checklist" id="sv-checklist">
+        ${allTables.map(t => `
+          <label class="sv-check-row" data-table="${t.toLowerCase()}">
+            <input type="checkbox" ${assigned.has(t)?'checked':''} onchange="toggleTableInSubview('${sv}','${t}',this.checked)">
+            ${t}
+          </label>`).join('')}
+      </div>`;
+  }
+
+  document.getElementById('panel-content').innerHTML = `
+    <label>Subvistas existentes</label>
+    ${svNames.length === 0 ? '<p style="font-size:12px;color:#6c7086;margin-top:6px">Ninguna — crea una abajo.</p>' : ''}
+    ${svNames.map(s => `
+      <div class="sv-row">
+        <span style="color:${s===sv?'#cba6f7':'#cdd6f4'}">${s} <span style="color:#6c7086">(${(MODEL.subviews[s]||[]).length})</span></span>
+        <button onclick="deleteSubview('${s}')" title="Eliminar">✕</button>
+      </div>`).join('')}
+    <div class="sv-new">
+      <input type="text" id="sv-name-input" placeholder="Nombre nueva subvista..." onkeydown="if(event.key==='Enter')createSubview()">
+      <button class="accent" onclick="createSubview()">Crear</button>
+    </div>
+    ${checklistHtml}
+  `;
+}
+
+function createSubview() {
+  const inp = document.getElementById('sv-name-input');
+  const name = inp ? inp.value.trim() : '';
+  if (!name || MODEL.subviews[name]) return;
+  MODEL.subviews[name] = [];
+  initSubviewSelector();
+  document.getElementById('subview-sel').value = name;
+  filterBySubview(name);
+  openSubviewManager();
+}
+
+function deleteSubview(name) {
+  delete MODEL.subviews[name];
+  const sel = document.getElementById('subview-sel');
+  initSubviewSelector();
+  if (sel.value === name) {
+    sel.value = '';
+    filterBySubview('');
+  }
+  openSubviewManager();
+}
+
+function renderSubvistasForTable(tableName) {
+  const svNames = Object.keys(MODEL.subviews || {});
+  if (!svNames.length) return '<label style="margin-top:14px;color:#6c7086">Sin subvistas — créalas desde el botón Subvistas.</label>';
+  const rows = svNames.map(sv => {
+    const inSv = (MODEL.subviews[sv] || []).includes(tableName);
+    const checked = inSv ? 'checked' : '';
+    const count = (MODEL.subviews[sv] || []).length;
+    return `<label class="sv-check-row"><input type="checkbox" ${checked} onchange="toggleTableInSubview('${sv}','${tableName}',this.checked);openPanel('table','${tableName}')"> ${sv} <span style="color:#6c7086;font-size:11px">(${count})</span></label>`;
+  });
+  return '<label style="margin-top:14px;color:#cba6f7">Subvistas</label>' + rows.join('');
+}
+
+function filterSvChecklist(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('#sv-checklist .sv-check-row').forEach(row => {
+    row.style.display = (!q || row.dataset.table.includes(q)) ? '' : 'none';
+  });
+}
+
+function toggleTableInSubview(sv, table, checked) {
+  if (!MODEL.subviews[sv]) MODEL.subviews[sv] = [];
+  if (checked) {
+    if (!MODEL.subviews[sv].includes(table)) MODEL.subviews[sv].push(table);
+  } else {
+    MODEL.subviews[sv] = MODEL.subviews[sv].filter(t => t !== table);
+  }
+  initSubviewSelector();
+  document.getElementById('subview-sel').value = sv;
+  filterBySubview(sv);
+}
+
+// ─── Layout / fit ─────────────────────────────────────────────────────────────
+
+function autoLayout() {
+  pushUndo();
+  const names = Object.keys(MODEL.tables).filter(n => {
+    const el = _elCache.get(n);
+    return (!el || el.style.display !== 'none') && !locked.has(n);
+  });
+  const cols = Math.ceil(Math.sqrt(names.length)) || 1;
+  names.forEach((name, i) => {
+    const x = 40 + (i % cols) * COL_GAP;
+    const y = 40 + Math.floor(i / cols) * ROW_GAP;
+    positions[name] = {x, y};
+    MODEL.table_positions[name] = {x, y};
+    const el = _elCache.get(name);
+    if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+  });
+  drawRelations();
+}
+
+function fitView() {
+  const ns = Object.keys(positions);
+  if (!ns.length) return;
+  const xs = ns.map(n => positions[n].x), ys = ns.map(n => positions[n].y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs)+280, minY=Math.min(...ys), maxY=Math.max(...ys)+250;
+  const wrap = document.getElementById('canvas-wrap');
+  const ww = wrap.offsetWidth, wh = wrap.offsetHeight;
+  scale = Math.min(ww/(maxX-minX+80), wh/(maxY-minY+80), 1.5)*0.85;
+  panX = (ww-(maxX-minX)*scale)/2 - minX*scale;
+  panY = (wh-(maxY-minY)*scale)/2 - minY*scale;
+  applyTransform();
+}
+
+// ─── Delete column ────────────────────────────────────────────────────────────
+
+function deleteColumn(tableName, colName) {
+  if (!confirm('¿Eliminar columna ' + colName + ' de ' + tableName + '?')) return;
+  const sql = ddlDropColumn(tableName, colName);
+  pushUndo();
+  delete MODEL.tables[tableName].columns[colName];
+  MODEL.tables[tableName].relations = (MODEL.tables[tableName].relations||[]).filter(r => r.source_column !== colName);
+  Object.values(MODEL.tables).forEach(td => {
+    td.relations = (td.relations||[]).filter(r => !(r.target_table===tableName && r.target_column===colName));
+  });
+  refreshTableBox(tableName); buildFkMap(); rebuildAdjacency(); drawRelations();
+  openPanel('table', tableName);
+  showDDLModal('Eliminar columna — '+tableName+'.'+colName, sql, tableName+'-DROP-'+colName+'.sql');
+}
+
+// ─── Drag to create relation ──────────────────────────────────────────────────
+
+function showLinkTargetPicker(srcTable, srcCol, tgtTable, cx, cy) {
+  const existing = document.getElementById('link-picker');
+  if (existing) existing.remove();
+  const cols = Object.keys((MODEL.tables[tgtTable]||{}).columns||{});
+  const popup = document.createElement('div');
+  popup.id = 'link-picker';
+  popup.style.cssText = 'position:fixed;background:#313244;border:1px solid #cba6f7;border-radius:6px;padding:8px;z-index:600;left:'+cx+'px;top:'+cy+'px;max-height:220px;overflow-y:auto;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,0.4)';
+  popup.innerHTML = '<div style="font-size:11px;color:#cba6f7;margin-bottom:6px;font-weight:bold">'+srcCol+' → '+tgtTable+'.</div>' +
+    (cols.length ? cols.map(c =>
+      '<div style="padding:4px 8px;cursor:pointer;font-size:12px;border-radius:3px" onmouseover="this.style.background=\'#45475a\'" onmouseout="this.style.background=\'\'" onclick="confirmLinkDrag(\''+srcTable+'\',\''+srcCol+'\',\''+tgtTable+'\',\''+c+'\');document.getElementById(\'link-picker\').remove()">'+c+'</div>'
+    ).join('') : '<div style="font-size:11px;color:#6c7086">Sin columnas</div>');
+  document.body.appendChild(popup);
+  setTimeout(() => {
+    const close = ev => { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('mousedown', close); } };
+    document.addEventListener('mousedown', close);
+  }, 80);
+}
+
+function confirmLinkDrag(srcTable, srcCol, tgtTable, tgtCol) {
+  if (!MODEL.tables[srcTable]) return;
+  pushUndo();
+  if (!MODEL.tables[srcTable].relations) MODEL.tables[srcTable].relations = [];
+  const dup = MODEL.tables[srcTable].relations.some(r => r.source_column===srcCol && r.target_table===tgtTable && r.target_column===tgtCol);
+  if (dup) return;
+  MODEL.tables[srcTable].relations.push({source_column:srcCol, target_table:tgtTable, target_column:tgtCol, source:'manual', confidence:'high'});
+  buildFkMap(); rebuildAdjacency(); refreshTableBox(srcTable); drawRelations();
+}
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+function validateModel() {
+  const errs = [], warns = [];
+  const tableNames = new Set(Object.keys(MODEL.tables));
+  Object.entries(MODEL.tables).forEach(([tname, tdef]) => {
+    const cols = Object.keys(tdef.columns||{});
+    if (!cols.length) errs.push({table:tname, msg:'Tabla sin columnas'});
+    const pkCols = Object.values(tdef.columns||{}).filter(d => d.pk);
+    if (!pkCols.length) warns.push({table:tname, msg:'Sin PK definida'});
+    Object.entries(tdef.columns||{}).forEach(([cn, cd]) => {
+      if (!cd.type||!cd.type.trim()) warns.push({table:tname, col:cn, msg:'Columna sin tipo'});
+    });
+    const relKeys = new Set();
+    (tdef.relations||[]).forEach(r => {
+      if (!tableNames.has(r.target_table)) { errs.push({table:tname, msg:'FK a tabla inexistente: '+r.target_table}); return; }
+      if (!(MODEL.tables[r.target_table].columns||{})[r.target_column])
+        warns.push({table:tname, msg:'FK a columna inexistente: '+r.target_table+'.'+r.target_column});
+      if (!(tdef.columns||{})[r.source_column])
+        errs.push({table:tname, msg:'FK desde columna inexistente: '+r.source_column});
+      const key = r.source_column+'|'+r.target_table+'|'+r.target_column;
+      if (relKeys.has(key)) errs.push({table:tname, msg:'FK duplicada: '+r.source_column+' → '+r.target_table+'.'+r.target_column});
+      relKeys.add(key);
+    });
+  });
+  window._valItems = [...errs.map(i=>({...i,type:'error'})), ...warns.map(i=>({...i,type:'warn'}))];
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  currentPanel = null;
+  document.getElementById('panel-title').textContent = 'Validación — '+errs.length+' errores, '+warns.length+' avisos';
+  if (!errs.length && !warns.length) {
+    document.getElementById('panel-content').innerHTML = '<p style="color:#a6e3a1;margin-top:8px">✓ Modelo sin problemas detectados.</p>';
+    return;
+  }
+  document.getElementById('panel-content').innerHTML =
+    window._valItems.map(item =>
+      '<div class="rel-item" style="flex-direction:column;align-items:flex-start;gap:2px;cursor:pointer" onclick="openPanel(\'table\',\''+item.table+'\')">' +
+      '<span style="color:'+(item.type==='error'?'#f38ba8':'#f9e2af')+'">'+(item.type==='error'?'✕':'⚠')+' '+item.table+(item.col?'.'+item.col:'')+'</span>' +
+      '<span style="font-size:11px;color:#6c7086">'+item.msg+'</span></div>'
+    ).join('') +
+    '<button style="width:100%;margin-top:10px" onclick="downloadValidationReport()">Descargar informe</button>';
+}
+
+function downloadValidationReport() {
+  const items = window._valItems || [];
+  const errs = items.filter(i=>i.type==='error'), warns = items.filter(i=>i.type==='warn');
+  const lines = ['Validación ERD — ' + PRJ + ' — ' + new Date().toISOString().slice(0,19), ''];
+  if (errs.length)  { lines.push('ERRORES ('+errs.length+')');  errs.forEach(i  => lines.push('  ✕ '+i.table+(i.col?'.'+i.col:'')+' — '+i.msg));  lines.push(''); }
+  if (warns.length) { lines.push('AVISOS ('+warns.length+')');  warns.forEach(i => lines.push('  ⚠ '+i.table+(i.col?'.'+i.col:'')+' — '+i.msg)); }
+  downloadText(lines.join('\n'), PRJ + '-validation.txt');
+}
+
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
+  const panelOpen = document.getElementById('panel').classList.contains('open');
+
+  if (e.key === 'Escape') {
+    if (_openMenu) { closeMenu(); e.preventDefault(); return; }
+    if (panelOpen) closePanel();
+    selected.forEach(n => { const el=_elCache.get(n); if(el) el.classList.remove('selected'); });
+    selected.clear();
+    e.preventDefault();
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey) {
+    if (currentPanel?.type === 'column') {
+      deleteColumn(currentPanel.table, currentPanel.col); e.preventDefault();
+    } else if (selected.size > 0) {
+      if (confirm('¿Eliminar '+selected.size+' tabla(s)?')) [...selected].forEach(n => deleteTable(n));
+      e.preventDefault();
+    }
+  }
+  if (e.ctrlKey && e.key === 'a') {
+    e.preventDefault();
+    selected.clear();
+    document.querySelectorAll('.table-box').forEach(el => {
+      if (el.style.display !== 'none') { selected.add(el.dataset.table); el.classList.add('selected'); }
+    });
+  }
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveModel(); }
+  if (e.ctrlKey && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redo(); }
+  if ((e.key==='f'||e.key==='F') && !e.ctrlKey && !panelOpen) { fitView(); e.preventDefault(); }
+  if (e.key==='p'||e.key==='P') { if(!e.ctrlKey && !panelOpen) { togglePresentation(); e.preventDefault(); } }
+  if (e.key==='?') { toggleShortcutsModal(); e.preventDefault(); }
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) && selected.size > 0) {
+    e.preventDefault();
+    const step = e.shiftKey ? 100 : 10;
+    const dx = e.key==='ArrowLeft'?-step : e.key==='ArrowRight'?step : 0;
+    const dy = e.key==='ArrowUp'  ?-step : e.key==='ArrowDown' ?step : 0;
+    selected.forEach(n => {
+      if (!positions[n]) return;
+      const x=positions[n].x+dx, y=positions[n].y+dy;
+      positions[n]={x,y}; MODEL.table_positions[n]={x,y};
+      const el=_elCache.get(n); if(el) { el.style.left=x+'px'; el.style.top=y+'px'; }
+    });
+    drawRelations(); updateMinimap();
+  }
+});
+
+// ─── Indexes ─────────────────────────────────────────────────────────────────
+
+function openAddIndexForm(tableName) {
+  const existing = document.getElementById('add-idx-form');
+  if (existing) { existing.remove(); return; }
+  const colNames = Object.keys((MODEL.tables[tableName]||{}).columns||{}).join(', ');
+  const form = document.createElement('div');
+  form.id = 'add-idx-form';
+  form.style.cssText = 'margin-top:10px;padding:10px;background:#181825;border:1px solid #45475a;border-radius:6px';
+  form.innerHTML = `
+    <label>Nombre</label>
+    <input id="idx-iname" type="text" placeholder="IDX_${tableName}_..." style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:5px 8px;font-size:12px;margin-top:3px">
+    <label style="margin-top:6px;display:block">Columnas</label>
+    <input id="idx-icols" type="text" placeholder="${colNames||'COL1, COL2'}" style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:5px 8px;font-size:12px;margin-top:3px">
+    <label style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:12px">
+      <input type="checkbox" id="idx-iuniq"> Único (UNIQUE)
+    </label>
+    <button style="margin-top:8px;width:100%" onclick="confirmAddIndex('${tableName}')">Añadir índice</button>
+  `;
+  document.getElementById('panel-content').appendChild(form);
+  document.getElementById('idx-iname').focus();
+}
+
+function confirmAddIndex(tableName) {
+  const iname = (document.getElementById('idx-iname')?.value||'').trim().toUpperCase();
+  const icols = (document.getElementById('idx-icols')?.value||'').split(',').map(c=>c.trim().toUpperCase()).filter(Boolean);
+  const unique = document.getElementById('idx-iuniq')?.checked||false;
+  if (!iname||!icols.length) return;
+  pushUndo();
+  if (!MODEL.tables[tableName].indexes) MODEL.tables[tableName].indexes = [];
+  MODEL.tables[tableName].indexes = MODEL.tables[tableName].indexes.filter(i => i.name !== iname);
+  MODEL.tables[tableName].indexes.push({name:iname, columns:icols, unique});
+  refreshTableBox(tableName); scheduleAutoSave();
+  openPanel('table', tableName);
+}
+
+function deleteIndex(tableName, idxName) {
+  if (!MODEL.tables[tableName]) return;
+  pushUndo();
+  MODEL.tables[tableName].indexes = (MODEL.tables[tableName].indexes||[]).filter(i => i.name !== idxName);
+  refreshTableBox(tableName); scheduleAutoSave();
+  openPanel('table', tableName);
+}
+
+function openImportIndexes() {
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  currentPanel = null;
+  document.getElementById('panel-title').textContent = 'Importar Índices';
+  document.getElementById('panel-content').innerHTML = `
+    <p style="font-size:11px;color:#6c7086;line-height:1.5;margin-bottom:8px">
+      Pega sentencias <code style="color:#cdd6f4">CREATE [UNIQUE] INDEX</code> de Oracle.<br>
+      Se añadirán a las tablas existentes en el modelo. Se ignoran tablas desconocidas.
+    </p>
+    <textarea id="import-idx-sql" placeholder="CREATE INDEX MIPROYECTO.IDX_RBGES_FECHA ON MIPROYECTO.RBGES (BGFECHA, BGLOTE);
+CREATE UNIQUE INDEX MIPROYECTO.IDX_RBGES_UK ON MIPROYECTO.RBGES (BGIDGESTION);" style="height:220px;font-size:11px;font-family:monospace;width:100%;background:#181825;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:6px 8px"></textarea>
+    <button style="width:100%;margin-top:8px" onclick="parseAndImportIndexes(document.getElementById('import-idx-sql').value)">Importar</button>
+  `;
+}
+
+function parseAndImportIndexes(ddl) {
+  const re = /CREATE\s+(UNIQUE\s+)?INDEX\s+(?:\w+\.)?([\w$#]+)\s+ON\s+(?:\w+\.)?([\w$#]+)\s*\(([^)]+)\)/gi;
+  let m, count = 0; const tables = new Set(), skipped = [];
+  pushUndo();
+  while ((m = re.exec(ddl)) !== null) {
+    const unique    = !!m[1];
+    const idxName   = m[2].toUpperCase();
+    const tableName = m[3].toUpperCase();
+    const cols      = m[4].split(',').map(c => c.trim().toUpperCase().split(/\s+/)[0]);
+    if (!MODEL.tables[tableName]) { skipped.push(tableName); continue; }
+    if (!MODEL.tables[tableName].indexes) MODEL.tables[tableName].indexes = [];
+    MODEL.tables[tableName].indexes = MODEL.tables[tableName].indexes.filter(i => i.name !== idxName);
+    MODEL.tables[tableName].indexes.push({name:idxName, columns:cols, unique});
+    tables.add(tableName); count++;
+  }
+  [...tables].forEach(n => refreshTableBox(n));
+  scheduleAutoSave();
+  const skip = skipped.length ? '\nTablas no encontradas: ' + [...new Set(skipped)].slice(0,5).join(', ') : '';
+  showToast(count + ' índices importados en ' + tables.size + ' tablas' + skip, count?'ok':'warn', 6000);
+  if (count) closePanel();
+}
+
+// ─── Relation filter ─────────────────────────────────────────────────────────
+
+function setRelFilter(level, visible) {
+  if (visible) relFilter.add(level); else relFilter.delete(level);
+  const btn = document.getElementById('btn-relfilter');
+  const allOn = relFilter.size === 4;
+  if (btn) btn.style.color = allOn ? '' : '#fab387';
+  drawRelations();
+  updateFilterChip();
+}
+
+// ─── Autosave localStorage ───────────────────────────────────────────────────
+
+function autoSave() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      model: { tables: MODEL.tables, subviews: MODEL.subviews, table_positions: MODEL.table_positions },
+      savedAt: Date.now(),
+      basedOnRenderTs: RENDER_TS
+    }));
+  } catch(e) {}
+}
+
+function scheduleAutoSave() {
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(autoSave, 2000);
+}
+
+function checkLocalStorage() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (!stored) return;
+    if (stored.basedOnRenderTs !== RENDER_TS) {
+      localStorage.removeItem(LS_KEY);
+      setTimeout(() => showToast('Modelo JSON actualizado — cambios locales anteriores descartados.', 'warn', 6000), 800);
+      return;
+    }
+    if (stored.savedAt > new Date(RENDER_TS).getTime()) {
+      const d = new Date(stored.savedAt).toLocaleString();
+      if (confirm('Hay cambios locales del ' + d + ' no guardados en el fichero JSON.\n¿Restaurar?')) {
+        MODEL.tables = stored.model.tables;
+        MODEL.subviews = stored.model.subviews || {};
+        MODEL.table_positions = stored.model.table_positions || {};
+        setTimeout(() => showToast('Cambios locales restaurados ✓', 'ok'), 400);
+      } else {
+        localStorage.removeItem(LS_KEY);
+      }
+    }
+  } catch(e) {}
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+
+function showStats() {
+  const tables = Object.entries(MODEL.tables);
+  const totalCols = tables.reduce((s, [,t]) => s + Object.keys(t.columns||{}).length, 0);
+  const totalRels = tables.reduce((s, [,t]) => s + (t.relations||[]).length, 0);
+  const relCount = new Map();
+  tables.forEach(([n, t]) => {
+    if (!relCount.has(n)) relCount.set(n, 0);
+    (t.relations||[]).forEach(r => {
+      relCount.set(n, (relCount.get(n)||0) + 1);
+      relCount.set(r.target_table, (relCount.get(r.target_table)||0) + 1);
+    });
+  });
+  const sorted = [...relCount.entries()].sort((a,b) => b[1]-a[1]);
+  const top10 = sorted.slice(0,10);
+  const orphans = tables.filter(([n]) => (relCount.get(n)||0) === 0).map(([n]) => n);
+  const noPk = tables.filter(([,t]) => !Object.values(t.columns||{}).some(c => c.pk)).map(([n]) => n);
+  const noType = tables.reduce((a,[n,t]) => {
+    Object.entries(t.columns||{}).forEach(([c,d]) => { if (!d.type||!d.type.trim()) a.push(n+'.'+c); });
+    return a;
+  }, []);
+  const bigTables = [...tables].sort((a,b) => Object.keys(b[1].columns||{}).length - Object.keys(a[1].columns||{}).length).slice(0,5);
+
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  currentPanel = null;
+  document.getElementById('panel-title').textContent = 'Estadísticas del modelo';
+  document.getElementById('panel-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;text-align:center">
+      <div style="background:#313244;border-radius:6px;padding:8px"><div style="font-size:20px;font-weight:bold;color:#89b4fa">${tables.length}</div><div style="font-size:10px;color:#6c7086">Tablas</div></div>
+      <div style="background:#313244;border-radius:6px;padding:8px"><div style="font-size:20px;font-weight:bold;color:#cba6f7">${totalCols}</div><div style="font-size:10px;color:#6c7086">Columnas</div></div>
+      <div style="background:#313244;border-radius:6px;padding:8px"><div style="font-size:20px;font-weight:bold;color:#fab387">${totalRels}</div><div style="font-size:10px;color:#6c7086">Relaciones</div></div>
+    </div>
+    <label>Top 10 más conectadas</label>
+    ${top10.map(([n,c]) => '<div class="rel-item" style="cursor:pointer;justify-content:space-between" onclick="openPanel(\'table\',\''+n+'\')">'+'<span>'+n+'</span><span style="color:#fab387;font-weight:bold">'+c+'</span></div>').join('')}
+    ${orphans.length ? '<label style="margin-top:10px">Huérfanas (sin relaciones) — '+orphans.length+'</label>'+orphans.slice(0,8).map(n=>'<div class="rel-item" style="cursor:pointer" onclick="openPanel(\'table\',\''+n+'\')">'+n+'</div>').join('')+(orphans.length>8?'<div style="font-size:11px;color:#6c7086">... y '+(orphans.length-8)+' más</div>':'') : ''}
+    ${noPk.length ? '<label style="margin-top:10px;color:#f9e2af">Sin PK definida — '+noPk.length+'</label>'+noPk.slice(0,5).map(n=>'<div class="rel-item" style="cursor:pointer" onclick="openPanel(\'table\',\''+n+'\')">'+n+'</div>').join('')+(noPk.length>5?'<div style="font-size:11px;color:#6c7086">... y '+(noPk.length-5)+' más</div>':'') : ''}
+    ${noType.length ? '<label style="margin-top:10px;color:#f38ba8">Columnas sin tipo — '+noType.length+'</label>'+noType.slice(0,5).map(s=>'<div style="font-size:11px;color:#cdd6f4;padding:2px 0">'+s+'</div>').join('')+(noType.length>5?'<div style="font-size:11px;color:#6c7086">... y '+(noType.length-5)+' más</div>':'') : ''}
+    <label style="margin-top:10px">Tablas con más columnas</label>
+    ${bigTables.map(([n,t]) => '<div class="rel-item" style="cursor:pointer;justify-content:space-between" onclick="openPanel(\'table\',\''+n+'\')">'+'<span>'+n+'</span><span style="color:#a6e3a1">'+Object.keys(t.columns||{}).length+'</span></div>').join('')}
+  `;
+}
+
+// ─── Toast ───────────────────────────────────────────────────────────────────
+
+let _toastTimer = null;
+function showToast(msg, type='ok', duration=3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.className = type; }, duration);
+}
+
+// ─── Undo / Redo ─────────────────────────────────────────────────────────────
+
+const undoStack = [], redoStack = [];
+
+function pushUndo() {
+  const snap = JSON.stringify({ tables: MODEL.tables, subviews: MODEL.subviews, table_positions: MODEL.table_positions });
+  undoStack.push(snap);
+  if (undoStack.length > 20) undoStack.shift();
+  redoStack.length = 0;
+  scheduleAutoSave();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(JSON.stringify({ tables: MODEL.tables, subviews: MODEL.subviews, table_positions: MODEL.table_positions }));
+  restoreSnapshot(JSON.parse(undoStack.pop()));
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(JSON.stringify({ tables: MODEL.tables, subviews: MODEL.subviews, table_positions: MODEL.table_positions }));
+  restoreSnapshot(JSON.parse(redoStack.pop()));
+}
+
+function restoreSnapshot(snap) {
+  MODEL.tables = snap.tables;
+  MODEL.subviews = snap.subviews || {};
+  MODEL.table_positions = snap.table_positions || {};
+  const canvas = document.getElementById('canvas');
+  Array.from(canvas.querySelectorAll('.table-box')).forEach(el => canvas.removeChild(el));
+  _elCache.clear();
+  Object.keys(positions).forEach(k => delete positions[k]);
+  dragging = null; selected.clear();
+  Object.entries(MODEL.tables).forEach(([name, tdef]) => {
+    const el = createTableBox(name, tdef);
+    canvas.appendChild(el);
+    const p = MODEL.table_positions[name] || { x: 40, y: 40 };
+    positions[name] = { ...p };
+    el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+  });
+  _elCache = new Map(Array.from(canvas.querySelectorAll('.table-box')).map(el => [el.dataset.table, el]));
+  if (pkOnlyMode) _elCache.forEach(el => el.querySelectorAll('.col-row:not(.is-pk)').forEach(r => r.style.display = 'none'));
+  rebuildAdjacency(); buildFkMap(); initSubviewSelector(); drawRelations(); updateMinimap();
+  closePanel();
+  document.getElementById('status').textContent = 'Deshacer realizado';
+}
+
+// ─── clipToBox ────────────────────────────────────────────────────────────────
+
+function clipToBox(x1, y1, x2, y2, bx, by, bw, bh) {
+  const dx = x2 - x1, dy = y2 - y1;
+  let best = 1;
+  const chk = (t, ix, iy) => { if (t > 0.01 && t < best && ix >= bx-2 && ix <= bx+bw+2 && iy >= by-2 && iy <= by+bh+2) best = t; };
+  if (Math.abs(dx) > 0.1) {
+    let t = (bx - x1) / dx;      chk(t, x1+t*dx, y1+t*dy);
+    t = (bx+bw - x1) / dx;       chk(t, x1+t*dx, y1+t*dy);
+  }
+  if (Math.abs(dy) > 0.1) {
+    let t = (by - y1) / dy;       chk(t, x1+t*dx, y1+t*dy);
+    t = (by+bh - y1) / dy;        chk(t, x1+t*dx, y1+t*dy);
+  }
+  return { x: x1 + best*dx, y: y1 + best*dy };
+}
+
+// ─── Subvista desde selección ─────────────────────────────────────────────────
+
+function createSubviewFromSelection() {
+  if (!selected.size) { alert('Selecciona tablas primero con Ctrl+click'); return; }
+  const name = prompt('Nombre de la nueva subvista (' + selected.size + ' tablas):');
+  if (!name || !name.trim()) return;
+  const sname = name.trim();
+  if (MODEL.subviews[sname]) { alert('Ya existe la subvista ' + sname); return; }
+  MODEL.subviews[sname] = [...selected];
+  initSubviewSelector();
+  document.getElementById('subview-sel').value = sname;
+  filterBySubview(sname);
+}
+
+// ─── Adjacency (shared helper) ───────────────────────────────────────────────
+
+function rebuildAdjacency() {
+  adjacency.clear();
+  Object.entries(MODEL.tables).forEach(([name, tdef]) => {
+    if (!adjacency.has(name)) adjacency.set(name, new Set());
+    (tdef.relations || []).forEach(r => {
+      adjacency.get(name).add(r.target_table);
+      if (!adjacency.has(r.target_table)) adjacency.set(r.target_table, new Set());
+      adjacency.get(r.target_table).add(name);
+    });
+  });
+}
+
+// ─── Rename table / column ────────────────────────────────────────────────────
+
+function downloadText(text, filename) {
+  const blob = new Blob([text], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+
+function renameTable(oldName) {
+  const raw = prompt('Nuevo nombre para ' + oldName + ':', oldName);
+  if (!raw || raw.trim().toUpperCase() === oldName) return;
+  const newName = raw.trim().toUpperCase();
+  if (MODEL.tables[newName]) { alert('Ya existe tabla ' + newName); return; }
+  pushUndo();
+  MODEL.tables[newName] = MODEL.tables[oldName]; delete MODEL.tables[oldName];
+  positions[newName] = positions[oldName]; delete positions[oldName];
+  if (MODEL.table_positions) { MODEL.table_positions[newName] = MODEL.table_positions[oldName]; delete MODEL.table_positions[oldName]; }
+  Object.values(MODEL.tables).forEach(td => { (td.relations||[]).forEach(r => { if (r.target_table===oldName) r.target_table=newName; }); });
+  Object.values(MODEL.subviews||{}).forEach(sv => { const i=sv.indexOf(oldName); if(i>=0) sv[i]=newName; });
+  const old = _elCache.get(oldName); if (old) old.parentNode.removeChild(old); _elCache.delete(oldName);
+  const canvas = document.getElementById('canvas');
+  const el = createTableBox(newName, MODEL.tables[newName]);
+  canvas.appendChild(el);
+  const p = positions[newName]||{x:40,y:40}; el.style.left=p.x+'px'; el.style.top=p.y+'px';
+  _elCache.set(newName, el);
+  rebuildAdjacency(); buildFkMap(); drawRelations(); updateMinimap();
+  openPanel('table', newName);
+  showDDLModal('Renombrar tabla', ddlRenameTable(oldName, newName), oldName+'-RENAME.sql');
+}
+
+function renameColumn(tableName, oldCol) {
+  const raw = prompt('Nuevo nombre para ' + oldCol + ':', oldCol);
+  if (!raw || raw.trim().toUpperCase() === oldCol) return;
+  const newCol = raw.trim().toUpperCase();
+  const cols = MODEL.tables[tableName]?.columns; if (!cols||!cols[oldCol]) return;
+  pushUndo();
+  cols[newCol] = cols[oldCol]; delete cols[oldCol];
+  (MODEL.tables[tableName].relations||[]).forEach(r => { if(r.source_column===oldCol) r.source_column=newCol; });
+  Object.values(MODEL.tables).forEach(td => { (td.relations||[]).forEach(r => { if(r.target_table===tableName&&r.target_column===oldCol) r.target_column=newCol; }); });
+  refreshTableBox(tableName); buildFkMap(); drawRelations();
+  openPanel('column', tableName, newCol);
+  showDDLModal('Renombrar columna — '+tableName, ddlRenameColumn(tableName, oldCol, newCol), tableName+'-REN-'+oldCol+'.sql');
+}
+
+// ─── Auto-suggest FKs ─────────────────────────────────────────────────────────
+
+function autoSuggestFKs() {
+  const pkIndex = new Map();
+  Object.entries(MODEL.tables).forEach(([tname, tdef]) => {
+    Object.entries(tdef.columns||{}).forEach(([cname, cdef]) => {
+      if (cdef.pk) { if (!pkIndex.has(cname)) pkIndex.set(cname, new Set()); pkIndex.get(cname).add(tname); }
+    });
+  });
+  const suggestions = [];
+  Object.entries(MODEL.tables).forEach(([tname, tdef]) => {
+    const existing = new Set((tdef.relations||[]).map(r => r.source_column+'|'+r.target_table+'|'+r.target_column));
+    Object.entries(tdef.columns||{}).forEach(([cname, cdef]) => {
+      if (cdef.pk) return;
+      (pkIndex.get(cname)||new Set()).forEach(tgtTable => {
+        if (tgtTable===tname) return;
+        if (!existing.has(cname+'|'+tgtTable+'|'+cname)) suggestions.push({srcTable:tname,srcCol:cname,tgtTable,tgtCol:cname});
+      });
+    });
+  });
+  window._fkSugg = suggestions;
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  document.getElementById('panel-title').textContent = 'Sugerir FKs (' + suggestions.length + ')';
+  if (!suggestions.length) {
+    document.getElementById('panel-content').innerHTML = '<p style="color:#6c7086;font-size:12px;margin-top:8px">Sin candidatas (columna con nombre = PK en otra tabla).</p>';
+    return;
+  }
+  document.getElementById('panel-content').innerHTML =
+    '<p style="font-size:11px;color:#6c7086;margin-bottom:6px">Columna coincide con PK de otra tabla:</p>' +
+    suggestions.map((s,i) =>
+      '<div class="rel-item" id="fksugg-'+i+'" style="flex-direction:column;align-items:flex-start;gap:2px">' +
+      '<span>' + s.srcTable + '.<b style="color:#fab387">'+s.srcCol+'</b> → '+s.tgtTable+'.<b style="color:#f9e2af">'+s.tgtCol+'</b></span>' +
+      '<div style="display:flex;gap:4px;margin-top:2px">' +
+      '<button onclick="acceptFkSugg('+i+')" style="padding:1px 8px;font-size:11px;color:#a6e3a1">Aceptar</button>' +
+      '<button onclick="document.getElementById(\'fksugg-'+i+'\').remove()" style="padding:1px 8px;font-size:11px;color:#f38ba8">Ignorar</button>' +
+      '</div></div>'
+    ).join('') +
+    '<button style="width:100%;margin-top:8px" onclick="(window._fkSugg||[]).forEach((_,i)=>acceptFkSugg(i))">Aceptar todas</button>';
+}
+
+function acceptFkSugg(i) {
+  const s = (window._fkSugg||[])[i]; if (!s) return;
+  pushUndo();
+  if (!MODEL.tables[s.srcTable].relations) MODEL.tables[s.srcTable].relations = [];
+  MODEL.tables[s.srcTable].relations.push({source_column:s.srcCol,target_table:s.tgtTable,target_column:s.tgtCol,source:'manual',confidence:'high'});
+  buildFkMap(); rebuildAdjacency(); refreshTableBox(s.srcTable); drawRelations();
+  window._fkSugg[i] = null;
+  const el = document.getElementById('fksugg-'+i);
+  if (el) el.innerHTML = '<span style="color:#a6e3a1;font-size:11px">✓ '+s.srcTable+'.'+s.srcCol+' → '+s.tgtTable+'.'+s.tgtCol+'</span>';
+}
+
+// ─── Import DDL ───────────────────────────────────────────────────────────────
+
+function openImportDDL() {
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('canvas-wrap').classList.add('panel-open');
+  document.getElementById('panel-title').textContent = 'Import DDL';
+  document.getElementById('panel-content').innerHTML = `
+    <label>CREATE TABLE (Oracle / SQL Server)</label>
+    <textarea id="ddl-input" style="height:180px;font-family:monospace;font-size:10px;margin-top:4px"
+      placeholder="CREATE TABLE MITABLA (ID NUMBER NOT NULL, NOMBRE VARCHAR2(100), CONSTRAINT PK_MITABLA PRIMARY KEY (ID));"></textarea>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button style="flex:1" onclick="parseAndImportDDL()">Importar</button>
+      <button style="flex:1" onclick="closePanel()">Cancelar</button>
+    </div>
+    <div id="ddl-result" style="margin-top:8px;font-size:11px"></div>`;
+  document.getElementById('ddl-input').focus();
+}
+
+function parseAndImportDDL() {
+  const sql = document.getElementById('ddl-input').value;
+  const result = parseDDL(sql);
+  const res = document.getElementById('ddl-result');
+  if (!result) { res.style.color='#f38ba8'; res.textContent='Error: no se pudo parsear el CREATE TABLE.'; return; }
+  const {name, columns} = result;
+  if (MODEL.tables[name] && !confirm('La tabla '+name+' ya existe. ¿Sobrescribir columnas?')) return;
+  const prevRels = (MODEL.tables[name]||{}).relations || [];
+  MODEL.tables[name] = {columns, relations:prevRels, source:'manual', description:(MODEL.tables[name]||{}).description||''};
+  if (!MODEL.table_positions) MODEL.table_positions = {};
+  if (!positions[name]) {
+    const wrap = document.getElementById('canvas-wrap');
+    const x = Math.round(-panX/scale + wrap.offsetWidth/scale/2 - 120);
+    const y = Math.round(-panY/scale + wrap.offsetHeight/scale/2 - 60);
+    positions[name]={x,y}; MODEL.table_positions[name]={x,y};
+    const canvas = document.getElementById('canvas');
+    const el = createTableBox(name, MODEL.tables[name]);
+    canvas.appendChild(el); el.style.left=x+'px'; el.style.top=y+'px';
+    _elCache.set(name, el); adjacency.set(name, new Set());
+  } else { refreshTableBox(name); }
+  buildFkMap(); drawRelations(); updateMinimap();
+  res.style.color='#a6e3a1';
+  res.textContent='✓ '+name+' importada ('+Object.keys(columns).length+' columnas)';
+  setTimeout(()=>openPanel('table',name), 1200);
+}
+
+function parseDDL(sql) {
+  const nm = sql.match(/CREATE\s+TABLE\s+(?:\w+\.)?(\w[\w$#]*)\s*\(/i);
+  if (!nm) return null;
+  const tableName = nm[1].toUpperCase();
+  const ps = sql.indexOf('('), pe = sql.lastIndexOf(')');
+  if (ps < 0 || pe < 0) return null;
+  const body = sql.slice(ps+1, pe);
+  const parts=[]; let depth=0, cur='';
+  for (const ch of body) {
+    if (ch==='(') { depth++; cur+=ch; }
+    else if (ch===')') { depth--; cur+=ch; }
+    else if (ch===',' && depth===0) { parts.push(cur.trim()); cur=''; }
+    else cur+=ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  const pkCols = new Set();
+  parts.forEach(p => {
+    let m = p.match(/CONSTRAINT\s+\w+\s+PRIMARY\s+KEY\s*\(([^)]+)\)/i);
+    if (m) m[1].split(',').forEach(c => pkCols.add(c.trim().toUpperCase()));
+    m = p.match(/^(\w+)\s+\S.*\bPRIMARY\s+KEY\b/i);
+    if (m) pkCols.add(m[1].toUpperCase());
+  });
+  const columns = {};
+  parts.forEach(p => {
+    const t = p.trim();
+    if (/^\s*(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN)\b/i.test(t)) return;
+    const m = t.match(/^(\w+)\s+(\w+(?:\s*\([^)]*\))?)(?:\s|$)/);
+    if (!m) return;
+    const cname = m[1].toUpperCase(), ctype = m[2].toUpperCase();
+    const isPk = pkCols.has(cname);
+    columns[cname] = { type:ctype, pk:isPk, nullable: !(isPk||/NOT\s+NULL/i.test(t)) };
+  });
+  return Object.keys(columns).length > 0 ? { name:tableName, columns } : null;
+}
+
+// ─── FK Map ───────────────────────────────────────────────────────────────────
+
+function buildFkMap() {
+  fkMap.clear();
+  Object.entries(MODEL.tables).forEach(([tname, tdef]) => {
+    (tdef.relations || []).forEach(r => {
+      if (!fkMap.has(tname)) fkMap.set(tname, new Set());
+      fkMap.get(tname).add(r.source_column);
+    });
+  });
+}
+
+// ─── Rel tooltip ──────────────────────────────────────────────────────────────
+
+function showRelTooltip(e, srcName, rel, path) {
+  const tip = document.getElementById('rel-tooltip');
+  const lbl = rel.source === 'manual' ? 'manual' : rel.confidence;
+  tip.innerHTML = '<b>' + srcName + '</b>.' + rel.source_column + ' → <b>' + rel.target_table + '</b>.' + rel.target_column + ' <span style="color:#6c7086">(' + lbl + ')</span>';
+  tip.style.display = 'block';
+  path.setAttribute('stroke-width', '3');
+}
+function hideRelTooltip(path) {
+  document.getElementById('rel-tooltip').style.display = 'none';
+  path.setAttribute('stroke-width', '1.5');
+}
+
+// ─── Center on table ──────────────────────────────────────────────────────────
+
+function centerOnTable(name) {
+  const pos = positions[name]; if (!pos) return;
+  const wrap = document.getElementById('canvas-wrap');
+  scale = Math.min(Math.max(scale, 0.6), 1.2);
+  panX = wrap.offsetWidth  / 2 - (pos.x + 120) * scale;
+  panY = wrap.offsetHeight / 2 - (pos.y +  60) * scale;
+  applyTransform();
+}
+
+// ─── PKs only ─────────────────────────────────────────────────────────────────
+
+function togglePkOnly() {
+  pkOnlyMode = !pkOnlyMode;
+  document.getElementById('btn-pkonly').classList.toggle('primary', pkOnlyMode);
+  document.querySelectorAll('.col-row:not(.is-pk)').forEach(el => {
+    el.style.display = pkOnlyMode ? 'none' : '';
+  });
+  drawRelations();
+  updateMinimap();
+}
+
+// ─── Create table ─────────────────────────────────────────────────────────────
+
+function createNewTable() {
+  const raw = prompt('Nombre de la nueva tabla:');
+  if (!raw || !raw.trim()) return;
+  const tname = raw.trim().toUpperCase();
+  if (MODEL.tables[tname]) { alert('La tabla ' + tname + ' ya existe.'); return; }
+  pushUndo();
+  MODEL.tables[tname] = { columns: {}, relations: [], source: 'manual', description: '' };
+  if (!MODEL.table_positions) MODEL.table_positions = {};
+  const wrap = document.getElementById('canvas-wrap');
+  const x = Math.round(-panX / scale + wrap.offsetWidth  / scale / 2 - 120);
+  const y = Math.round(-panY / scale + wrap.offsetHeight / scale / 2 -  60);
+  positions[tname] = {x, y};
+  MODEL.table_positions[tname] = {x, y};
+  const canvas = document.getElementById('canvas');
+  const el = createTableBox(tname, MODEL.tables[tname]);
+  canvas.appendChild(el);
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  _elCache.set(tname, el);
+  adjacency.set(tname, new Set());
+  updateMinimap();
+  openPanel('table', tname);
+  showDDLModal('Crear tabla — '+tname, ddlCreateTable(tname, MODEL.tables[tname]), tname+'-CREATE.sql');
+}
+
+// ─── Refresh table box ────────────────────────────────────────────────────────
+
+function refreshTableBox(name) {
+  const canvas = document.getElementById('canvas');
+  const old = _elCache.get(name);
+  if (old) canvas.removeChild(old);
+  const el = createTableBox(name, MODEL.tables[name]);
+  canvas.appendChild(el);
+  const p = positions[name] || {x: 40, y: 40};
+  el.style.left = p.x + 'px';
+  el.style.top  = p.y + 'px';
+  if (pkOnlyMode) el.querySelectorAll('.col-row:not(.is-pk)').forEach(r => { r.style.display = 'none'; });
+  _elCache.set(name, el);
+  drawRelations();
+  updateMinimap();
+}
+
+// ─── Delete table ─────────────────────────────────────────────────────────────
+
+function deleteTable(name) {
+  if (!confirm('¿Eliminar tabla ' + name + '?')) return;
+  const sql = ddlDropTable(name);
+  pushUndo();
+  delete MODEL.tables[name];
+  if (MODEL.table_positions) delete MODEL.table_positions[name];
+  delete positions[name];
+  const el = _elCache.get(name);
+  if (el) el.parentNode.removeChild(el);
+  _elCache.delete(name);
+  adjacency.delete(name);
+  adjacency.forEach(set => { set.delete(name); });
+  buildFkMap();
+  closePanel();
+  drawRelations();
+  updateMinimap();
+  showDDLModal('Eliminar tabla — '+name, sql, name+'-DROP.sql');
+}
+
+// ─── Add column ───────────────────────────────────────────────────────────────
+
+function openAddColumnForm(tableName) {
+  document.getElementById('panel-content').innerHTML += `
+    <div id="add-col-form" style="margin-top:10px;background:#313244;border-radius:6px;padding:10px">
+      <label style="color:#cba6f7">Nueva columna</label>
+      <input id="nc-name" type="text" placeholder="Nombre"
+        style="width:100%;background:#1e1e2e;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:4px 8px;font-size:12px;margin-top:6px">
+      <input id="nc-type" type="text" placeholder="Tipo (ej: VARCHAR2(50))"
+        style="width:100%;background:#1e1e2e;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:4px 8px;font-size:12px;margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">
+        <span><input type="checkbox" id="nc-pk"> PK</span>
+        <span><input type="checkbox" id="nc-nn" checked> NOT NULL</span>
+      </label>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button style="flex:1" onclick="confirmAddColumn('${tableName}')">Añadir</button>
+        <button style="flex:1" onclick="openPanel('table','${tableName}')">Cancelar</button>
+      </div>
+    </div>`;
+  document.getElementById('nc-name').focus();
+}
+
+function confirmAddColumn(tableName) {
+  const cname = (document.getElementById('nc-name').value || '').trim().toUpperCase();
+  const ctype = (document.getElementById('nc-type').value || '').trim().toUpperCase() || 'VARCHAR2(50 CHAR)';
+  const isPk  = document.getElementById('nc-pk').checked;
+  const isNn  = document.getElementById('nc-nn').checked;
+  if (!cname) return;
+  pushUndo();
+  if (!MODEL.tables[tableName].columns) MODEL.tables[tableName].columns = {};
+  const colDef = { type: ctype, pk: isPk, nullable: !isNn };
+  MODEL.tables[tableName].columns[cname] = colDef;
+  refreshTableBox(tableName);
+  buildFkMap();
+  openPanel('table', tableName);
+  showDDLModal('Añadir columna — '+tableName+'.'+cname, ddlAddColumn(tableName, cname, colDef), tableName+'-ADD-'+cname+'.sql');
+}
+
+// ─── Toggle column PK ─────────────────────────────────────────────────────────
+
+function toggleColumnPk(tableName, colName, isPk) {
+  if (!MODEL.tables[tableName]?.columns?.[colName]) return;
+  pushUndo();
+  MODEL.tables[tableName].columns[colName].pk = isPk;
+  refreshTableBox(tableName);
+  buildFkMap();
+  showDDLModal((isPk?'Añadir PK':'Eliminar PK')+' — '+tableName+'.'+colName, ddlTogglePK(tableName, colName, isPk), tableName+'-PK-'+colName+'.sql');
+}
+
+// ─── Link / delete relation ───────────────────────────────────────────────────
+
+function startLinkRelation(srcTable, srcCol) {
+  document.getElementById('panel-title').textContent = srcTable + '.' + srcCol + ' →';
+  const tables = Object.keys(MODEL.tables).sort();
+  document.getElementById('panel-content').innerHTML = `
+    <label>Tabla destino</label>
+    <select id="rel-tgt-table" onchange="updateRelColList()"
+      style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:5px 8px;font-size:12px;margin-top:4px">
+      <option value="">-- selecciona --</option>
+      ${tables.map(t=>`<option value="${t}">${t}</option>`).join('')}
+    </select>
+    <label style="margin-top:8px">Columna destino</label>
+    <input type="text" id="rel-tgt-col" placeholder="Nombre columna" list="rel-col-list"
+      style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:5px 8px;font-size:12px;margin-top:4px">
+    <datalist id="rel-col-list"></datalist>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button style="flex:1" onclick="confirmRelation('${srcTable}','${srcCol}')">Crear FK</button>
+      <button style="flex:1" onclick="openPanel('column','${srcTable}','${srcCol}')">Cancelar</button>
+    </div>`;
+}
+
+function updateRelColList() {
+  const tname = document.getElementById('rel-tgt-table').value;
+  const dl = document.getElementById('rel-col-list');
+  if (!dl) return;
+  const cols = Object.keys((MODEL.tables[tname]||{}).columns||{});
+  dl.innerHTML = cols.map(c=>`<option value="${c}"></option>`).join('');
+}
+
+function confirmRelation(srcTable, srcCol) {
+  const tgtTable = (document.getElementById('rel-tgt-table').value||'').trim();
+  const tgtCol   = (document.getElementById('rel-tgt-col').value||'').trim();
+  if (!tgtTable || !tgtCol) return;
+  pushUndo();
+  if (!MODEL.tables[srcTable].relations) MODEL.tables[srcTable].relations = [];
+  MODEL.tables[srcTable].relations.push({ source_column: srcCol, target_table: tgtTable, target_column: tgtCol, source: 'manual', confidence: 'high' });
+  buildFkMap();
+  rebuildAdjacency();
+  refreshTableBox(srcTable);
+  drawRelations();
+  openPanel('column', srcTable, srcCol);
+}
+
+function deleteRelation(srcTable, srcCol, tgtTable, tgtCol) {
+  if (!MODEL.tables[srcTable]) return;
+  pushUndo();
+  MODEL.tables[srcTable].relations = (MODEL.tables[srcTable].relations || []).filter(
+    r => !(r.source_column === srcCol && r.target_table === tgtTable && r.target_column === tgtCol)
+  );
+  buildFkMap();
+  refreshTableBox(srcTable);
+  drawRelations();
+  openPanel('table', srcTable);
+}
+
+// ─── DDL single table ─────────────────────────────────────────────────────────
+
+function generateTableSQL(tableName) {
+  const tdef = MODEL.tables[tableName]; if (!tdef) return;
+  const cols = Object.entries(tdef.columns || {});
+  const pkCols = cols.filter(([,d]) => d.pk).map(([n]) => n);
+  const colLines = cols.map(([cname, cdef]) => {
+    const nn = (cdef.nullable === false || cdef.pk) ? ' NOT NULL' : '';
+    // generateTableSQL emite DDL Oracle (esquema del modelo, _sch()) → forzar semántica CHAR
+    return '    ' + cname + ' ' + ensureOracleChar(cdef.type || 'VARCHAR2(100)') + nn;
+  });
+  if (pkCols.length) colLines.push('    CONSTRAINT PK_' + tableName + ' PRIMARY KEY (' + pkCols.join(', ') + ')');
+  const idxLines = (tdef.indexes||[]).map(idx =>
+    'CREATE ' + (idx.unique?'UNIQUE ':'') + 'INDEX ' + _sch() + '.' + idx.name +
+    ' ON ' + _sch() + '.' + tableName + ' (' + idx.columns.join(', ') + ');'
+  );
+  const sql = (tdef.description ? '-- ' + tdef.description + '\n' : '') +
+    'CREATE TABLE ' + _sch() + '.' + tableName + ' (\n' + colLines.join(',\n') + '\n);' +
+    (idxLines.length ? '\n\n-- Índices\n' + idxLines.join('\n') : '');
+  downloadText(sql, tableName + '.sql');
+}
+
+// ─── Highlight ────────────────────────────────────────────────────────────────
+
+function highlightTable(name) {
+  if (dragging) return;
+  const related = adjacency.get(name) || new Set();
+  _elCache.forEach((el, n) => {
+    el.classList.remove('dimmed', 'highlighted', 'focused');
+    if (n === name) el.classList.add('focused');
+    else if (related.has(n)) el.classList.add('highlighted');
+    else el.classList.add('dimmed');
+  });
+}
+
+function clearHighlight() {
+  _elCache.forEach(el => el.classList.remove('dimmed', 'highlighted', 'focused'));
+}
+
+// ─── Minimap ──────────────────────────────────────────────────────────────────
+
+function toggleMinimap() {
+  const mm = document.getElementById('minimap');
+  minimapVisible = !minimapVisible;
+  mm.style.display = minimapVisible ? 'block' : 'none';
+  document.getElementById('minimap-toggle').textContent = minimapVisible ? 'mapa' : 'mapa ▸';
+}
+
+function updateMinimap() {
+  if (!minimapVisible) return;
+  const mm = document.getElementById('minimap');
+  if (!mm) return;
+  const ctx = mm.getContext('2d');
+  const W = mm.width, H = mm.height;
+  ctx.clearRect(0, 0, W, H);
+  const visible = Object.keys(positions).filter(n => { const el = _elCache.get(n); return !el || el.style.display !== 'none'; });
+  if (!visible.length) return;
+  const xs = visible.map(n => positions[n].x), ys = visible.map(n => positions[n].y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs) + 280;
+  const minY = Math.min(...ys), maxY = Math.max(...ys) + 200;
+  const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
+  const pad = 6, mw = W - pad * 2, mh = H - pad * 2;
+  const s = Math.min(mw / rangeX, mh / rangeY);
+  const offX = pad + (mw - rangeX * s) / 2, offY = pad + (mh - rangeY * s) / 2;
+  mm._mmParams = { minX, minY, s, offX, offY };
+  ctx.fillStyle = '#45475a';
+  visible.forEach(n => {
+    const {x, y} = positions[n];
+    ctx.fillRect(offX + (x - minX) * s, offY + (y - minY) * s, Math.max(2, 200 * s), Math.max(1, 60 * s));
+  });
+  const wrap = document.getElementById('canvas-wrap');
+  const vx = offX + (-panX / scale - minX) * s;
+  const vy = offY + (-panY / scale - minY) * s;
+  const vw = (wrap.offsetWidth  / scale) * s;
+  const vh = (wrap.offsetHeight / scale) * s;
+  ctx.strokeStyle = '#89b4fa';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(vx, vy, vw, vh);
+}
+
+// ─── Export SVG ───────────────────────────────────────────────────────────────
+
+function buildSVGContent(visible) {
+  const xs = visible.map(n => positions[n].x), ys = visible.map(n => positions[n].y);
+  const minX = Math.min(...xs) - 20, minY = Math.min(...ys) - 20;
+  const maxX = Math.max(...xs) + 300, maxY = Math.max(...ys) + 300;
+  const W = maxX - minX, H = maxY - minY;
+  const visSet = new Set(visible);
+  const L = [];
+  L.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + minX + ' ' + minY + ' ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">');
+  L.push('<rect x="' + minX + '" y="' + minY + '" width="' + W + '" height="' + H + '" fill="#1e1e2e"/>');
+  Object.entries(MODEL.tables).forEach(([src, tdef]) => {
+    if (!visSet.has(src)) return;
+    const sp = positions[src];
+    (tdef.relations || []).forEach(r => {
+      if (!visSet.has(r.target_table)) return;
+      const tp = positions[r.target_table]; if (!tp) return;
+      const x1 = sp.x + 120, y1 = sp.y + 40, x2 = tp.x + 120, y2 = tp.y + 40, cx = (x1 + x2) / 2;
+      const col = r.source === 'manual' ? '#a6e3a1' : r.confidence === 'high' ? '#89b4fa' : r.confidence === 'medium' ? '#fab387' : '#6c7086';
+      const dash = r.confidence === 'medium' ? ' stroke-dasharray="4 3"' : r.confidence === 'low' ? ' stroke-dasharray="2 4"' : '';
+      const arr = r.source==='manual'?'arr-manual':r.confidence==='high'?'arr-high':r.confidence==='low'?'arr-low':'arr-medium';
+      L.push('<path d="M' + x1 + ',' + y1 + ' C' + cx + ',' + y1 + ' ' + cx + ',' + y2 + ' ' + x2 + ',' + y2 + '" stroke="' + col + '" stroke-width="1.5" fill="none" marker-end="url(#' + arr + ')"' + dash + '/>');
+    });
+  });
+  visible.forEach(name => {
+    const {x, y} = positions[name];
+    const tdef = MODEL.tables[name];
+    const cols = Object.entries(tdef.columns || {}).slice(0, 12);
+    const bh = 30 + cols.length * 18 + 10;
+    L.push('<g transform="translate(' + x + ',' + y + ')">');
+    L.push('<rect width="240" height="' + bh + '" rx="6" fill="#181825" stroke="#45475a" stroke-width="1.5"/>');
+    L.push('<rect width="240" height="26" rx="6" fill="#313244"/><rect y="14" width="240" height="12" fill="#313244"/>');
+    L.push('<text x="10" y="18" font-size="11" font-weight="bold" font-family="monospace" fill="#cdd6f4">' + name + '</text>');
+    cols.forEach(([cn, cd], i) => {
+      const cy = 30 + i * 18;
+      const fill = cd.pk ? '#f9e2af' : '#cdd6f4';
+      L.push('<text x="10" y="' + (cy + 12) + '" font-size="10" font-family="monospace" fill="' + fill + '">' + cn + (cd.pk ? ' PK' : '') + '</text>');
+      L.push('<text x="145" y="' + (cy + 12) + '" font-size="9" font-family="monospace" fill="#6c7086">' + (cd.type || '') + '</text>');
+    });
+    const extra = Object.keys(tdef.columns || {}).length - cols.length;
+    if (extra > 0) L.push('<text x="10" y="' + (bh - 4) + '" font-size="9" font-family="monospace" fill="#6c7086">... ' + extra + ' más</text>');
+    L.push('</g>');
+  });
+  L.push('</svg>');
+  return L.join('\n');
+}
+
+function exportSVG() {
+  const sv = document.getElementById('subview-sel').value;
+  const visible = Object.keys(positions).filter(n => { const el = _elCache.get(n); return !el || el.style.display !== 'none'; });
+  if (!visible.length) return;
+  const blob = new Blob([buildSVGContent(visible)], {type: 'image/svg+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = PRJ + (sv ? '-' + sv : '') + '-erd.svg'; a.click();
+}
+
+function exportPNG() {
+  const sv = document.getElementById('subview-sel').value;
+  const visible = Object.keys(positions).filter(n => { const el = _elCache.get(n); return !el || el.style.display !== 'none'; });
+  if (!visible.length) return;
+  const content = buildSVGContent(visible);
+  const blob = new Blob([content], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth || 1200; cv.height = img.naturalHeight || 800;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#1e1e2e'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    const a = document.createElement('a');
+    a.href = cv.toDataURL('image/png'); a.download = PRJ + (sv ? '-' + sv : '') + '-erd.png'; a.click();
+  };
+  img.onerror = () => URL.revokeObjectURL(url);
+  img.src = url;
+}
+
+// ─── Export CSV ───────────────────────────────────────────────────────────────
+
+function csvEscape(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function downloadCSV(rows, filename) {
+  const content = rows.map(r => r.map(csvEscape).join(',')).join('\n');
+  const blob = new Blob(['﻿' + content], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+
+function exportColumnasCsv() {
+  const rows = [['Tabla','Columna','Tipo','Nullable','PK','Indexada','Descripcion']];
+  Object.entries(MODEL.tables).forEach(([tbl, tdef]) => {
+    const idxCols = new Set();
+    (tdef.indexes||[]).forEach(idx => (idx.columns||[]).forEach(c => idxCols.add(c)));
+    Object.entries(tdef.columns||{}).forEach(([col, cd]) => {
+      rows.push([tbl, col, cd.type||'', cd.nullable?'Si':'No', cd.pk?'Si':'No', idxCols.has(col)?'Si':'No', cd.description||'']);
+    });
+  });
+  downloadCSV(rows, PRJ + '-columnas.csv');
+}
+
+function exportRelacionesCsv() {
+  const rows = [['Tabla Origen','Columna Origen','Tabla Destino','Columna Destino','Tipo','Confianza','Fuente','Descripcion']];
+  Object.entries(MODEL.tables).forEach(([tbl, tdef]) => {
+    (tdef.relations||[]).forEach(r => {
+      rows.push([tbl, r.source_column||'', r.target_table||'', r.target_column||'', r.type||'', r.confidence||'', r.source||'', r.description||'']);
+    });
+  });
+  downloadCSV(rows, PRJ + '-relaciones.csv');
+}
+
+function exportIndicesCsv() {
+  const rows = [['Tabla','Indice','Columnas','Unico','Fuente']];
+  Object.entries(MODEL.tables).forEach(([tbl, tdef]) => {
+    (tdef.indexes||[]).forEach(idx => {
+      rows.push([tbl, idx.name||'', (idx.columns||[]).join('; '), idx.unique?'Si':'No', idx.source||'']);
+    });
+  });
+  downloadCSV(rows, PRJ + '-indices.csv');
+}
+
+function exportResumenTablasCsv() {
+  const rows = [['Tabla','Descripcion','Columnas','PKs','Relaciones','Indices','Fuente']];
+  Object.entries(MODEL.tables).forEach(([tbl, tdef]) => {
+    const cols = Object.values(tdef.columns||{});
+    rows.push([tbl, tdef.description||'', cols.length, cols.filter(c=>c.pk).length, (tdef.relations||[]).length, (tdef.indexes||[]).length, tdef.source||'']);
+  });
+  downloadCSV(rows, PRJ + '-tablas.csv');
+}
+
+// ─── Export Ficha ─────────────────────────────────────────────────────────────
+
+function downloadDelimited(rows, filename, sep) {
+  function esc(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    if (s.includes(sep) || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  const content = rows.map(r => r.map(esc).join(sep)).join('\n');
+  const blob = new Blob(['﻿' + content], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+
+function parseColType(typeStr) {
+  if (!typeStr) return {base:'', size:'', prec:''};
+  const m = typeStr.match(/^(\w+)\s*\(([^)]+)\)/);
+  if (!m) return {base: typeStr.trim(), size:'', prec:''};
+  const inner = m[2].replace(/\s*CHAR\s*/i, '').trim();
+  const parts = inner.split(',');
+  return {base: m[1], size: parts[0].trim(), prec: parts[1] ? parts[1].trim() : ''};
+}
+
+function buildFichaRows(tableName, includeTable) {
+  const tdef = MODEL.tables[tableName];
+  if (!tdef) return [];
+  const header = includeTable
+    ? ['Tabla','Campo','Tipo','Tamanio','Precision','Null','PK','Descripcion']
+    : ['Campo','Tipo','Tamanio','Precision','Null','PK','Descripcion'];
+  const rows = [header];
+  Object.entries(tdef.columns||{}).forEach(([col, cd]) => {
+    const t = parseColType(cd.type||'');
+    const base = includeTable ? [tableName] : [];
+    rows.push([...base, col, t.base, t.size, t.prec, cd.nullable?'Si':'No', cd.pk?'Si':'No', cd.description||'']);
+  });
+  return rows;
+}
+
+function exportFichaTablaActual() {
+  if (!currentPanel || !MODEL.tables[currentPanel]) { showToast('Abre una tabla primero', 'warn'); return; }
+  downloadDelimited(buildFichaRows(currentPanel, false), currentPanel + '-ficha.csv', ';');
+}
+
+function exportFichaVista() {
+  const sv = document.getElementById('subview-sel').value;
+  const visible = Object.keys(positions).filter(n => { const el = _elCache.get(n); return !el || el.style.display !== 'none'; });
+  if (!visible.length) { showToast('Sin tablas visibles', 'warn'); return; }
+  const header = ['Tabla','Campo','Tipo','Tamanio','Precision','Null','PK','Descripcion'];
+  const rows = [header];
+  visible.forEach(tbl => {
+    if (!MODEL.tables[tbl]) return;
+    buildFichaRows(tbl, true).slice(1).forEach(r => rows.push(r));
+  });
+  downloadDelimited(rows, (sv || PRJ) + '-ficha.csv', ';');
+}
+
+// ─── Cargar modelo desde fichero ─────────────────────────────────────────────
+// fetch() sobre file:// está bloqueado por CORS, así que el JSON entra por picker o input.
+// Con File System Access API el handle queda guardado y saveModel() escribe sobre ese mismo
+// fichero — sin descarga ni copia manual al workspace.
+
+async function openModelFile() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'Modelo JSON', accept: {'application/json': ['.json']} }]
+      });
+      const file = await handle.getFile();
+      if (applyLoadedModel(await file.text(), file.name)) modelFileHandle = handle;
+      return;
+    } catch(err) {
+      if (err.name === 'AbortError') return;
+      // API no disponible o sin permisos en este contexto → fallback al input clásico
+    }
+  }
+  document.getElementById('model-file-input').click();
+}
+
+function onModelFileInput(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    modelFileHandle = null;   // sin handle: saveModel() vuelve al camino de descarga
+    applyLoadedModel(String(reader.result), file.name);
+  };
+  reader.onerror = () => showToast('No se pudo leer el fichero', 'err', 5000);
+  reader.readAsText(file, 'utf-8');
+}
+
+function applyLoadedModel(text, fileName) {
+  let obj;
+  try {
+    // Los hooks PowerShell escriben el JSON en UTF8 con BOM — igual que utf-8-sig en render-erd.py
+    obj = JSON.parse(text.replace(/^﻿/, ''));
+  } catch(e) {
+    showToast('JSON inválido: ' + e.message, 'err', 6000);
+    return false;
+  }
+  if (!obj || typeof obj.tables !== 'object' || obj.tables === null) {
+    showToast('El fichero no parece un modelo BD (falta "tables")', 'err', 6000);
+    return false;
+  }
+  // Los cambios locales pendientes eran del modelo anterior — dejan de ser válidos
+  localStorage.removeItem(LS_KEY);
+  MODEL = obj;
+  if (!MODEL.subviews) MODEL.subviews = {};
+  if (!MODEL.table_positions) MODEL.table_positions = {};
+  const m = /^(.*)-model\.json$/i.exec(fileName || '');
+  PRJ = m ? m[1] : ((fileName || '').replace(/\.json$/i, '') || PRJ);
+  LS_KEY = 'erd_' + PRJ;
+  RENDER_TS = new Date().toISOString();
+  undoStack.length = 0;
+  redoStack.length = 0;
+  document.getElementById('subview-sel').value = '';
+  closePanel();
+  renderModel();
+  showToast('Modelo cargado: ' + fileName + ' — ' + Object.keys(MODEL.tables).length + ' tablas', 'ok', 4000);
+  return true;
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+async function saveModel() {
+  const json = JSON.stringify(MODEL, null, 2);
+  if (modelFileHandle || window.showSaveFilePicker) {
+    try {
+      if (!modelFileHandle) {
+        modelFileHandle = await window.showSaveFilePicker({
+          suggestedName: PRJ + '-model.json',
+          types: [{ description: 'JSON', accept: {'application/json': ['.json']} }]
+        });
+      }
+      // Un handle venido de "Abrir modelo…" solo trae permiso de lectura
+      if (modelFileHandle.queryPermission) {
+        let perm = await modelFileHandle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') perm = await modelFileHandle.requestPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') throw new Error('permiso de escritura denegado');
+      }
+      const writable = await modelFileHandle.createWritable();
+      await writable.write(json);
+      await writable.close();
+      localStorage.removeItem(LS_KEY);
+      showToast('Guardado en ' + (modelFileHandle.name || PRJ + '-model.json') + ' ✓  ' + new Date().toLocaleTimeString(), 'ok');
+      return;
+    } catch(err) {
+      if (err.name === 'AbortError') return;
+      modelFileHandle = null;
+    }
+  }
+  const blob = new Blob([json], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = PRJ + '-model.json'; a.click();
+  localStorage.removeItem(LS_KEY);
+  const dir = window.location.pathname.replace(/[/\\][^/\\]+$/, '').replace(/^\//,'').replace(/\//g,'\\');
+  showToast('Descargado. Copia el fichero a:\n' + dir + '\\' + PRJ + '-model.json', 'warn', 8000);
+}
+
+function generateSQL(engine) {
+  const sv = document.getElementById('subview-sel').value;
+  const visibleNames = new Set(
+    [...document.querySelectorAll('.table-box')].filter(el => el.style.display !== 'none').map(el => el.dataset.table)
+  );
+  const totalTables  = Object.keys(MODEL.tables).length;
+  const isFiltered   = visibleNames.size < totalTables;
+  const lines = [`-- DDL ${engine} | ${PRJ} | ${new Date().toISOString().slice(0,10)}`, ''];
+  if (sv)         lines.push(`-- Subvista: ${sv}`);
+  if (isFiltered) lines.push(`-- Tablas visibles: ${visibleNames.size} de ${totalTables}`);
+  if (sv || isFiltered) lines.push('');
+  Object.entries(MODEL.tables).forEach(([tname, tdef]) => {
+    if (!visibleNames.has(tname)) return;
+    if (tdef.description) lines.push(`-- ${tdef.description}`);
+    lines.push(`CREATE TABLE ${tname} (`);
+    const cols = Object.entries(tdef.columns || {});
+    const pkCols = cols.filter(([,d]) => d.pk).map(([n]) => n);
+    const colLines = cols.map(([cname, cdef]) => {
+      let t = cdef.type || 'VARCHAR2(100)';
+      if (engine === 'SQLSERVER') t = t.replace(/VARCHAR2\((\d+)\s+CHAR\)/gi,'VARCHAR($1)').replace('VARCHAR2','VARCHAR').replace('NUMBER','DECIMAL');
+      else if (engine === 'ORACLE') t = ensureOracleChar(t);
+      const nn = cdef.nullable === false ? ' NOT NULL' : '';
+      return `    ${cname} ${t}${nn}`;
+    });
+    if (pkCols.length) colLines.push(`    CONSTRAINT PK_${tname} PRIMARY KEY (${pkCols.join(', ')})`);
+    lines.push(colLines.join(',\n'));
+    lines.push(');\n');
+  });
+  const blob = new Blob([lines.join('\n')], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = PRJ + (sv ? `-${sv}` : (isFiltered ? '-filtrado' : '')) + '-ddl-' + engine.toLowerCase() + '.sql';
+  a.click();
+  showToast('DDL ' + engine + ' — ' + visibleNames.size + ' tabla(s)', 'ok', 2500);
+}
+
+// ─── Presentation mode ────────────────────────────────────────────────────────
+
+let _presentationActive = false;
+
+function togglePresentation() {
+  _presentationActive = !_presentationActive;
+  document.body.classList.toggle('presentation', _presentationActive);
+  const btn = document.getElementById('btn-present');
+  if (btn) btn.classList.toggle('active', _presentationActive);
+  if (!_presentationActive) fitView();
+  showToast(_presentationActive ? 'Modo presentación activado — pulsa P para salir' : 'Modo presentación desactivado', 'ok', 2500);
+}
+
+// ─── Shortcuts modal ─────────────────────────────────────────────────────────
+
+function toggleShortcutsModal() {
+  document.getElementById('shortcuts-modal').classList.toggle('open');
+}
+
+window.addEventListener('load', init);
+</script>
+<div id="shortcuts-modal" onclick="if(event.target===this)toggleShortcutsModal()">
+  <div id="sk-box">
+    <h3>Atajos de teclado</h3>
+    <div class="sk-section">Navegación</div>
+    <div class="sk-row"><span class="sk-key">F</span><span class="sk-desc">Ajustar todas las tablas en vista (Fit view)</span></div>
+    <div class="sk-row"><span class="sk-key">Rueda ratón</span><span class="sk-desc">Zoom in / out</span></div>
+    <div class="sk-row"><span class="sk-key">Arrastrar canvas</span><span class="sk-desc">Mover vista (pan)</span></div>
+    <div class="sk-section">Selección</div>
+    <div class="sk-row"><span class="sk-key">Ctrl + Click</span><span class="sk-desc">Seleccionar / deseleccionar tabla</span></div>
+    <div class="sk-row"><span class="sk-key">Ctrl + A</span><span class="sk-desc">Seleccionar todas las tablas visibles</span></div>
+    <div class="sk-row"><span class="sk-key">Shift + Arrastrar</span><span class="sk-desc">Selección rectangular (rubber band)</span></div>
+    <div class="sk-row"><span class="sk-key">Esc</span><span class="sk-desc">Cerrar menú / cerrar panel / deseleccionar todo</span></div>
+    <div class="sk-section">Mover tablas</div>
+    <div class="sk-row"><span class="sk-key">↑ ↓ ← →</span><span class="sk-desc">Mover tabla(s) seleccionada(s) 10 px</span></div>
+    <div class="sk-row"><span class="sk-key">Shift + ↑↓←→</span><span class="sk-desc">Mover 100 px</span></div>
+    <div class="sk-section">Edición</div>
+    <div class="sk-row"><span class="sk-key">Del / Backspace</span><span class="sk-desc">Eliminar tabla(s) seleccionada(s) o columna activa</span></div>
+    <div class="sk-row"><span class="sk-key">Ctrl + S</span><span class="sk-desc">Guardar modelo JSON</span></div>
+    <div class="sk-row"><span class="sk-key">Ctrl + Z</span><span class="sk-desc">Deshacer</span></div>
+    <div class="sk-row"><span class="sk-key">Ctrl + Y</span><span class="sk-desc">Rehacer</span></div>
+    <div class="sk-section">Vista</div>
+    <div class="sk-row"><span class="sk-key">P</span><span class="sk-desc">Modo presentación (oculta toolbar y paneles)</span></div>
+    <div class="sk-row"><span class="sk-key">?</span><span class="sk-desc">Este panel de atajos</span></div>
+    <div style="margin-top:14px;text-align:right">
+      <button onclick="toggleShortcutsModal()">Cerrar</button>
+    </div>
+  </div>
+</div>
+<div id="ddl-modal" onclick="if(event.target===this)closeDDLModal()">
+  <div id="ddl-modal-box">
+    <div id="ddl-modal-title"></div>
+    <pre id="ddl-modal-sql"></pre>
+    <div id="ddl-modal-actions">
+      <button onclick="copyDDLSql()" style="background:#313244">Copiar</button>
+      <button onclick="downloadDDLSql()" style="background:#313244">Descargar .sql</button>
+      <button onclick="closeDDLModal()" style="background:#45475a">Cerrar</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="menu-vista" class="menu-popup">
+  <button class="menu-item" onclick="runFromMenu(autoLayout)">Auto layout</button>
+  <button class="menu-item" onclick="runFromMenu(openSubviewManager)">Gestor de subvistas</button>
+  <button class="menu-item" onclick="runFromMenu(createSubviewFromSelection)">Nueva vista desde selección</button>
+  <hr class="menu-sep">
+  <button class="menu-item" id="btn-relfilter" onclick="toggleMenu(this,'rel-filter-popup','right')">Relaciones…</button>
+  <button class="menu-item" id="btn-present" onclick="runFromMenu(togglePresentation)" title="Oculta toolbar y paneles (P)">Presentación</button>
+</div>
+<div id="menu-modelo" class="menu-popup">
+  <button class="menu-item" onclick="runFromMenu(createNewTable)">Tabla +</button>
+  <button class="menu-item" onclick="runFromMenu(autoSuggestFKs)">Sugerir FKs</button>
+  <hr class="menu-sep">
+  <button class="menu-item" onclick="runFromMenu(validateModel)">Validar</button>
+  <button class="menu-item" onclick="runFromMenu(showStats)">Stats</button>
+</div>
+<div id="menu-exportar" class="menu-popup">
+  <div class="menu-label">SQL DDL</div>
+  <button class="menu-item" onclick="runFromMenu(() => generateSQL('ORACLE'))">SQL Oracle</button>
+  <button class="menu-item" onclick="runFromMenu(() => generateSQL('SQLSERVER'))">SQL Server</button>
+  <div class="menu-label">Imagen</div>
+  <button class="menu-item" onclick="runFromMenu(exportSVG)">SVG</button>
+  <button class="menu-item" onclick="runFromMenu(exportPNG)">PNG</button>
+  <div class="menu-label">CSV (abre en Excel)</div>
+  <button class="menu-item" onclick="runFromMenu(exportColumnasCsv)">Catalogo de columnas</button>
+  <button class="menu-item" onclick="runFromMenu(exportRelacionesCsv)">Relaciones</button>
+  <button class="menu-item" onclick="runFromMenu(exportIndicesCsv)">Indices</button>
+  <button class="menu-item" onclick="runFromMenu(exportResumenTablasCsv)">Resumen de tablas</button>
+  <div class="menu-label">Ficha tecnica (separador ;)</div>
+  <button class="menu-item" onclick="runFromMenu(exportFichaTablaActual)">Tabla actual</button>
+  <button class="menu-item" onclick="runFromMenu(exportFichaVista)">Tablas de vista</button>
+</div>
+<div id="menu-importar" class="menu-popup">
+  <button class="menu-item" onclick="runFromMenu(openModelFile)" title="Cargar un -model.json del disco sin regenerar el HTML">Abrir modelo…</button>
+  <hr class="menu-sep">
+  <button class="menu-item" onclick="runFromMenu(openImportDDL)">Import DDL</button>
+  <button class="menu-item" onclick="runFromMenu(openImportIndexes)">Import Índices</button>
+</div>
+<div id="pat-filter-popup" class="menu-popup" style="min-width:240px;padding:12px">
+  <div style="font-size:10px;color:#6c7086;margin-bottom:8px">Filtrar tablas por patrón — usa * como comodín</div>
+  <input id="pat-input" type="text" placeholder="ej: RB* o *GES* o RCLIEN*"
+    style="width:100%;background:#313244;border:1px solid #45475a;color:#cdd6f4;border-radius:4px;padding:6px 8px;font-size:12px;margin-bottom:8px"
+    onkeydown="if(event.key==='Enter') applyPatternFilter()">
+  <div style="display:flex;gap:6px">
+    <button style="flex:1;padding:5px 0;font-size:11px" onclick="applyPatternFilter()">Aplicar</button>
+    <button style="flex:1;padding:5px 0;font-size:11px" onclick="clearPatternFilter()">Limpiar</button>
+  </div>
+</div>
+<div id="rel-filter-popup" class="menu-popup" style="min-width:300px;padding:14px">
+  <div style="font-size:11px;color:#6c7086;line-height:1.6;margin-bottom:10px;border-bottom:1px solid #313244;padding-bottom:8px">
+    <b style="color:#cdd6f4">¿Qué es la confianza?</b><br>
+    Al sincronizar el modelo desde la BD, el sistema detecta relaciones automáticamente comparando nombres de columnas con PKs de otras tablas. El nivel de confianza indica la fiabilidad de esa detección.
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
+      <input type="checkbox" checked onchange="setRelFilter('manual',this.checked)" style="margin-top:2px">
+      <span><span style="color:#a6e3a1;font-weight:bold">● Manual</span> — creada por ti directamente en el visor</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
+      <input type="checkbox" checked onchange="setRelFilter('high',this.checked)" style="margin-top:2px">
+      <span><span style="color:#89b4fa;font-weight:bold">● Alta</span> — nombre de columna FK coincide exactamente con la PK de la tabla referenciada</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
+      <input type="checkbox" checked onchange="setRelFilter('medium',this.checked)" style="margin-top:2px">
+      <span><span style="color:#fab387;font-weight:bold">● Media</span> — coincidencia parcial por sufijo o patrón de nombre</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
+      <input type="checkbox" checked onchange="setRelFilter('low',this.checked)" style="margin-top:2px">
+      <span><span style="color:#6c7086;font-weight:bold">● Baja</span> — heurística débil; posible ruido, verificar antes de confiar</span>
+    </label>
+  </div>
+</div>
+</body>
+</html>

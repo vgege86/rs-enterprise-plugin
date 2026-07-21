@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "rs-workspace": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py"],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}

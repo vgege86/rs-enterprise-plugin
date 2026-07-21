@@ -1,0 +1,46 @@
+{
+  "name": "rs-enterprise-agent",
+  "description": "Agente C# senior para soluciones uCollect/RS. Usar SIEMPRE que el mensaje mencione un fichero .sln o una solución RS (RSProc*, AgendaWeb, AISServiceManager...), aunque el patrón no sea exacto: \"Solucion.sln - cambio a realizar\" dispara el pipeline completo (planificación, análisis, validación, testing, build). También para auditoría, impacto, ERD/modelo BD, scripts de idiomas, commits (SVN o Git, autodetectado) o documentación sobre una solución.",
+  "version": "2.14.0",
+  "author": {
+    "name": "RS"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-preplugin.ps1\" -Quiet",
+            "timeout": 60,
+            "statusMessage": "RS: comprobando instalación..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/runner/runner.ps1\"",
+            "timeout": 120,
+            "statusMessage": "RS Runner..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/skill-trigger.ps1\"",
+            "timeout": 10,
+            "statusMessage": "RS skill trigger..."
+          }
+        ]
+      }
+    ]
+  }
+}

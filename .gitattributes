@@ -1,0 +1,5 @@
+# Normaliza finales de línea en el repo; en checkout se usan los nativos de la plataforma.
+* text=auto
+
+# Los hooks los ejecuta Windows PowerShell 5.1: mantener CRLF en el árbol de trabajo.
+*.ps1 text eol=crlf

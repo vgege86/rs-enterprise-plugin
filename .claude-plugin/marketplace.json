@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "rs-enterprise-agent",
+  "description": "Agente C# senior para soluciones uCollect/RS — pipeline completo (planificación, análisis, validación, testing, build) + modos directos (auditoría, impacto, ERD/modelo BD, scripts de idiomas, commit SVN/Git, documentación, etc).",
+  "owner": {
+    "name": "RS"
+  },
+  "plugins": [
+    {
+      "name": "rs-enterprise-agent",
+      "description": "Pipeline de desarrollo automatizado para soluciones uCollect/RS.",
+      "source": "./",
+      "category": "productivity",
+      "version": "2.14.0"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "_note": "Este archivo NO es el formato de hooks de Claude Code. Los hooks de Claude Code van en ~/.claude/settings.json bajo la clave 'hooks' con eventos (Stop, PreToolUse, etc.). Ver hooks/README.md para instrucciones de registro.",
+  "hookScripts": {
+    "batch_build":       "hooks/batch-build.ps1",
+    "online_publish":    "hooks/online-publish.ps1",
+    "copy_ais":          "hooks/copy-ais.ps1",
+    "validate_solution": "hooks/validate-solution.ps1",
+    "clean_ais":         "scripts/clean-ais.ps1",
+    "clean_build":       "scripts/clean-build.ps1"
+  }
+}
