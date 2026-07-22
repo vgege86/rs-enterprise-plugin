@@ -1,0 +1,9 @@
+# Dependencias Python del servidor MCP rs-workspace (mcp/rs-workspace-server.py).
+#
+# FastMCP se importa como `from mcp.server.fastmcp import FastMCP`; lo aporta el paquete `mcp`
+# (SDK oficial de Model Context Protocol). Piso de versión conservador: a partir de 1.2.0 el
+# submódulo `mcp.server.fastmcp` es estable. Instalar con: pip install -r requirements.txt
+#
+# El resto de herramientas (sqlplus, sqlcmd, svn, git, dotnet, msbuild/vswhere) son CLIs externas
+# del sistema, no paquetes Python — se comprueban en runtime (_check_svn_cli/_check_git_cli).
+mcp>=1.2.0
