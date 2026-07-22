@@ -1,5 +1,6 @@
 ---
-description: Muestra cambios pendientes (SVN o Git, autodetectado) agrupados por solución y proyecto. Uso: /rs-diff [Solution.sln]
+description: "Muestra cambios pendientes (SVN o Git, autodetectado) agrupados por solución y proyecto."
+argument-hint: "[Solution.sln]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in diff mode (SVN or Git, auto-detected).

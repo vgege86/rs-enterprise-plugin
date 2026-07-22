@@ -1,5 +1,6 @@
 ---
-description: Muestra el esquema real de una o varias tablas de BD (columnas, tipos, longitudes, nullabilidad, índices). Uso: /rs-schema <tabla|keyword>
+description: "Muestra el esquema real de una o varias tablas de BD (columnas, tipos, longitudes, nullabilidad, índices)."
+argument-hint: "<tabla|keyword>"
 ---
 
 Invoke the `rs-enterprise-agent` skill in schema-query mode.

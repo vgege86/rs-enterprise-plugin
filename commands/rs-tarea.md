@@ -1,5 +1,6 @@
 ---
-description: Orquesta una tarea de Jira sobre una solución RS (selección → formateo → En Proceso → pipeline → commit → adjuntar SQL → En Validación). Uso: /rs-tarea [PROJ-123]
+description: "Orquesta una tarea de Jira sobre una solución RS (selección → formateo → En Proceso → pipeline → commit → adjuntar SQL → En Validación)."
+argument-hint: "[PROJ-123]"
 ---
 
 Invoke the `rs-jira` skill.

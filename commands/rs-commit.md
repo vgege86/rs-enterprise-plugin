@@ -1,5 +1,6 @@
 ---
-description: Muestra diff (SVN o Git, autodetectado), sugiere mensaje de commit y confirma antes de ejecutar. Uso: /rs-commit <Solution>.sln
+description: "Muestra diff (SVN o Git, autodetectado), sugiere mensaje de commit y confirma antes de ejecutar."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in commit mode (SVN or Git, auto-detected).

@@ -1,5 +1,6 @@
 ---
-description: Gestiona modelo BD JSON, renderiza ERD visual, genera SQL y sincroniza desde BD. Uso: /rs-erd [workspace]
+description: "Gestiona modelo BD JSON, renderiza ERD visual, genera SQL y sincroniza desde BD."
+argument-hint: "[workspace]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in BD-modeler mode.

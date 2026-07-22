@@ -1,5 +1,6 @@
 ---
-description: Muestra ejecuciones recientes del pipeline desde history.json. Uso: /rs-historial [Solution.sln] [N]
+description: "Muestra ejecuciones recientes del pipeline desde history.json."
+argument-hint: "[Solution.sln] [N]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in history mode.

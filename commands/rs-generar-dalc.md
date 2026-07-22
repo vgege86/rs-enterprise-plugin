@@ -1,5 +1,6 @@
 ---
-description: Genera clases DALC completas desde el modelo BD para una tabla. Uso: /rs-generar-dalc <Tabla> en <Solution>.sln
+description: "Genera clases DALC completas desde el modelo BD para una tabla."
+argument-hint: "<Tabla> en <Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in DALC-generation mode.

@@ -1,5 +1,6 @@
 ---
-description: Valida código C# (DALC/clase/tabla) contra la BD real — tipos, longitudes, nullabilidad, motor. Uso: /rs-validar-bd <Solution>.sln <DALC|clase|tabla>
+description: "Valida código C# (DALC/clase/tabla) contra la BD real — tipos, longitudes, nullabilidad, motor."
+argument-hint: "<Solution>.sln <DALC|clase|tabla>"
 ---
 
 Invoke the `rs-enterprise-agent` skill in BD-validation mode.

@@ -1,5 +1,5 @@
 ---
-description: Estadísticas del pipeline: total ejecuciones, tasa éxito, agentes más usados, tendencia 7 días. Uso: /rs-stats
+description: "Estadísticas del pipeline: total ejecuciones, tasa éxito, agentes más usados, tendencia 7 días."
 ---
 
 Invoke the `rs-enterprise-agent` skill in stats mode.

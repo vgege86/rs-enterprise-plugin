@@ -1,5 +1,6 @@
 ---
-description: Genera el instalador completo de cliente (instalación limpia) en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos y Scripts SQL. Uso: /rs-instalador [<Proyecto>|<workspace>]
+description: "Genera el instalador completo de cliente (instalación limpia) en C:\\AIS\\<Proyecto>\\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos y Scripts SQL."
+argument-hint: "[<Proyecto>|<workspace>]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in installer mode.
