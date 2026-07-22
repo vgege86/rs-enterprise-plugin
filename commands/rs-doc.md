@@ -1,5 +1,6 @@
 ---
-description: Genera documentación técnica de la solución: estructura, tablas, flujo y config. Uso: /rs-doc <Solution>.sln
+description: "Genera documentación técnica de la solución: estructura, tablas, flujo y config."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in documentation mode.

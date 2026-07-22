@@ -1,5 +1,5 @@
 ---
-description: Detecta drift entre BD/<proyecto>-model.json y el esquema real en BD. Uso: /rs-comparar-modelo
+description: "Detecta drift entre BD/<proyecto>-model.json y el esquema real en BD."
 ---
 
 Invoke the `rs-enterprise-agent` skill in model-comparison mode.

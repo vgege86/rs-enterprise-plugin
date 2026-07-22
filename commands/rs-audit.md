@@ -1,5 +1,6 @@
 ---
-description: Revisión de calidad estática de una solución sin modificar código. Uso: /rs-audit <Solution>.sln
+description: "Revisión de calidad estática de una solución sin modificar código."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in audit mode.

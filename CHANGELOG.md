@@ -1,5 +1,23 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.4 — 2026-07-22
+
+### Fix: los slash commands `/rs-*` no mostraban descripción al teclearlos
+
+**Síntoma**: al escribir un `/rs-*`, Claude Code no mostraba la descripción del comando (salvo
+`/rs-enterprise-agent`).
+
+**Causa**: el `description:` del frontmatter iba **sin comillas** y contenía `: ` interno (p.ej.
+`... Uso: /rs-audit ...` o `Estadísticas del pipeline: total...`). YAML interpreta ese `: ` como un
+mapping anidado y **falla al parsear el frontmatter entero** → Claude Code no lee la descripción. Solo
+`/rs-enterprise-agent` funcionaba porque su descripción ya iba entrecomillada.
+
+- **Todos los `commands/*.md`**: `description` entrecomillada (comillas dobles, escapando internas) —
+  el frontmatter vuelve a parsear.
+- **`argument-hint` añadido** a cada comando: muestra los parámetros al teclear (`< >` fijos, `[ ]`
+  opcionales), p.ej. `/rs-migrar <Solution>.sln a <ORACLE|SQLSERVER>`. La cola redundante "Uso: ..."
+  se retira de la descripción, que ahora la cubre `argument-hint`.
+
 ## 2.15.3 — 2026-07-22
 
 ### Tier 3 (3/n): dedup del post-proceso de diff svn/git en el MCP server

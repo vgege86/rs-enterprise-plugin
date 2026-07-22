@@ -1,5 +1,6 @@
 ---
-description: Análisis estático de calidad/riesgo de un diff o cambio concreto (no de toda la solución). Uso: /rs-analizar <Solution>.sln [revisión|ficheros]
+description: "Análisis estático de calidad/riesgo de un diff o cambio concreto (no de toda la solución)."
+argument-hint: "<Solution>.sln [revisión|ficheros]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in change-analysis mode.

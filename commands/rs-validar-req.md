@@ -1,5 +1,6 @@
 ---
-description: Verifica que el diff SVN implementa correctamente un requerimiento. Uso: /rs-validar-req "<req>" --rev <rev>
+description: "Verifica que el diff SVN implementa correctamente un requerimiento."
+argument-hint: "\"<req>\" --rev <rev>"
 ---
 
 Invoke the `rs-enterprise-agent` skill in requirement-validation mode.

@@ -1,5 +1,6 @@
 ---
-description: 'Pipeline completo de desarrollo automatizado para una solución RS: planificación, análisis, validación, testing y build. Uso: "<Solucion>.sln - <cambio a realizar>" o /rs-enterprise-agent <Solucion>.sln - <cambio>'
+description: "Pipeline completo de desarrollo automatizado para una solución RS: planificación, análisis, validación, testing y build."
+argument-hint: "<Solución>.sln - <cambio a realizar>"
 ---
 
 Invoke the `rs-enterprise-agent` skill — full pipeline mode (planning → analysis → validation → testing → build).

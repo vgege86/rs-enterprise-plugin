@@ -1,5 +1,6 @@
 ---
-description: Migra DALCs y SQL entre motores SQL Server y Oracle. Uso: /rs-migrar <Solution>.sln a <ORACLE|SQLSERVER>
+description: "Migra DALCs y SQL entre motores SQL Server y Oracle."
+argument-hint: "<Solution>.sln a <ORACLE|SQLSERVER>"
 ---
 
 Invoke the `rs-enterprise-agent` skill in motor-migration mode.

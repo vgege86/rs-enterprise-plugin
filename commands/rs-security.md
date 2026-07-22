@@ -1,5 +1,6 @@
 ---
-description: Escanea SQL injection, credenciales hardcoded, XSS e inputs sin validar. Uso: /rs-security <Solution>.sln
+description: "Escanea SQL injection, credenciales hardcoded, XSS e inputs sin validar."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in security-scan mode.

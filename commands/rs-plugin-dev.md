@@ -1,5 +1,6 @@
 ---
-description: Modifica/extiende el propio plugin rs-enterprise-agent siguiendo su doc de arquitectura, con gate de aprobación, bump de versión obligatorio y sincronización de docs. Uso: /rs-plugin-dev <qué cambiar en el plugin>
+description: "Modifica/extiende el propio plugin rs-enterprise-agent siguiendo su doc de arquitectura, con gate de aprobación, bump de versión obligatorio y sincronización de docs."
+argument-hint: "<qué cambiar en el plugin>"
 ---
 
 Invoke the `rs-plugin-dev` skill.

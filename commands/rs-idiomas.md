@@ -1,5 +1,6 @@
 ---
-description: Genera scripts INSERT para RIDIOMA y RCONTROLES de controles AIS en .aspx. Uso: /rs-idiomas <Solution>.sln
+description: "Genera scripts INSERT para RIDIOMA y RCONTROLES de controles AIS en .aspx."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in idiomas-standalone mode.

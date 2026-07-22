@@ -1,5 +1,6 @@
 ---
-description: Analiza todas las referencias a una clase, método o tabla dentro del scope. Uso: /rs-impacto <símbolo> en <Solution>.sln
+description: "Analiza todas las referencias a una clase, método o tabla dentro del scope."
+argument-hint: "<símbolo> en <Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in impact-analysis mode.

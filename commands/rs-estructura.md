@@ -1,5 +1,6 @@
 ---
-description: Mapa de capas y dependencias de la solución, detecta referencias circulares. Uso: /rs-estructura <Solution>.sln
+description: "Mapa de capas y dependencias de la solución, detecta referencias circulares."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in structure mode.

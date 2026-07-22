@@ -1,5 +1,6 @@
 ---
-description: Mapa de dependencias entre soluciones, proyectos compartidos y conflictos NuGet. Uso: /rs-deps [project_name]
+description: "Mapa de dependencias entre soluciones, proyectos compartidos y conflictos NuGet."
+argument-hint: "[project_name]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in dependency-map mode.

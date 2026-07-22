@@ -1,5 +1,6 @@
 ---
-description: Crea proyecto de tests si no existe y genera tests unitarios para la solución. Uso: /rs-crear-tests <Solution>.sln
+description: "Crea proyecto de tests si no existe y genera tests unitarios para la solución."
+argument-hint: "<Solution>.sln"
 ---
 
 Invoke the `rs-enterprise-agent` skill in test-creation mode.

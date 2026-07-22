@@ -1,5 +1,6 @@
 ---
-description: Sincroniza índices Oracle (ALL_INDEXES) al modelo BD JSON. Preserva índices manuales. Uso: /rs-sync-indexes [workspace]
+description: "Sincroniza índices Oracle (ALL_INDEXES) al modelo BD JSON. Preserva índices manuales."
+argument-hint: "[workspace]"
 ---
 
 Invoke the `rs-enterprise-agent` skill in BD-modeler mode to sync indexes from database.

@@ -1,5 +1,5 @@
 ---
-description: Valida entorno de desarrollo: .rs-databases.json, AIS, dotnet, SVN, modelo BD y docs agentic. Uso: /rs-env
+description: "Valida entorno de desarrollo: .rs-databases.json, AIS, dotnet, SVN, modelo BD y docs agentic."
 ---
 
 Invoke the `rs-enterprise-agent` skill in environment-validation mode.
