@@ -1,5 +1,31 @@
 # RS Enterprise Agent — Changelog
 
+## 2.14.1 — 2026-07-22
+
+### Seguridad y correctitud en el fallback `db-query.ps1` + script de instalación por proyecto
+
+Arreglos de bajo riesgo que no tocan el pipeline ni el contrato de las tools MCP. `hooks/db-query.ps1`
+es el **fallback 1:1** de la tool MCP `db_query` (convención Preferente/Fallback, `references/hooks.md`);
+regresaba tres protecciones que el camino MCP (`mcp/rs-workspace-server.py`) ya tenía. Ahora quedan
+alineados con ese patrón:
+
+- **Password fuera de la línea de comando** — antes `sqlplus -S "$user/$password@$dataSource"` dejaba
+  la contraseña visible en la lista de procesos durante toda la consulta. Ahora usa `/nolog` +
+  `CONNECT` escrito en el script SQL temporal, igual que la rama Oracle de la tool MCP. `WHENEVER
+  SQLERROR EXIT SQL.SQLCODE` va antes del `CONNECT` para que un login fallido salga con el código de
+  error.
+- **Guarda SELECT-only** — el hook interpolaba `$Sql` directo en el script sqlplus sin validación, así
+  que cualquier sentencia (`DROP`/`DELETE`/bloque PL/SQL) se ejecutaba. Se añade la misma validación
+  que `db_query`: exige que empiece por `SELECT` y bloquea multi-statement (`;` fuera de literales).
+- **Fuga de fichero temporal** — `GetTempFileName() + ".sql"` creaba un fichero de 0 bytes en OTRA ruta
+  que nunca se limpiaba. Ahora las rutas temp se generan con `[Guid]` y ambas se borran en el `finally`.
+
+- **`scripts/install-to-project.ps1`** — apuntaba a la estructura pre-v2: la carpeta de subagentes
+  `subagents\` (real: `agents\` desde v2.0.0) y la versión leída de un `SKILL.md` en la raíz (hoy en
+  `skills\rs-enterprise-agent\` y la versión en `plugin.json`). Se corrigen ambas rutas; la versión se
+  lee ya de `.claude-plugin\plugin.json` (fuente canónica). Resuelve dos de las inconsistencias del §11
+  de `docs/plugin-architecture.md`.
+
 ## 2.14.0 — 2026-07-21
 
 ### Portabilidad: el plugin deja de depender del árbol del mantenedor
