@@ -1,6 +1,6 @@
 # Patrones de Test — RS/uCollect
 
-Guía de convenciones para tests en soluciones uCollect/RS. Referenciada por `subagents/rs-crear-tests.md`.
+Guía de convenciones para tests en soluciones uCollect/RS. Referenciada por `agents/rs-crear-tests.md`.
 
 ## Framework estándar
 

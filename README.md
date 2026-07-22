@@ -310,7 +310,7 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 ```
 .claude-plugin/
   marketplace.json        marketplace de un solo plugin (source: "./")
-  plugin.json             manifiesto del plugin: nombre, versión, hooks Stop/UserPromptSubmit
+  plugin.json             manifiesto del plugin: nombre, versión, hooks SessionStart/Stop/UserPromptSubmit
 .mcp.json                 registro del MCP server rs-workspace
 skills/
   rs-enterprise-agent/
@@ -319,7 +319,7 @@ skills/
     SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
   rs-jira/
     SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   27 subagentes: pipeline y modos directos
+agents/                   28 subagentes: pipeline y modos directos
 commands/                 definiciones de slash commands
 hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
 mcp/                      servidor MCP con 40 tools
@@ -332,7 +332,6 @@ docs/
   plugin-architecture.md  anatomía interna del plugin + patrón de extensión (fuente canónica)
 scripts/                  utilidades python (analyze-dalc, export-dmd, generate-sql, render-erd)
 runner/                   runner.ps1 — ejecutor de builds (Stop hook)
-BD/                       modelos JSON por proyecto (en el workspace de cada solución, no en el repo)
 executions/               history.json — historial de ejecuciones
 assets/                   widget ERD inline
 ```

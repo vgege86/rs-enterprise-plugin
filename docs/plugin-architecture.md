@@ -22,7 +22,7 @@ local del mantenedor es un checkout más — ningún artefacto del plugin puede 
 
 ```
 .claude-plugin/
-  plugin.json            manifiesto: name, version, author, hooks Stop + UserPromptSubmit
+  plugin.json            manifiesto: name, version, author, hooks SessionStart + Stop + UserPromptSubmit
   marketplace.json       marketplace de un solo plugin (source: "./")
 .mcp.json                registro del MCP server rs-workspace (stdio, python)
 skills/
@@ -80,7 +80,7 @@ resuelto y verificado (§11.4).
 
 | Fichero | Declara |
 |---------|---------|
-| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 10), inline con `${CLAUDE_PLUGIN_ROOT}` |
+| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 10), inline con `${CLAUDE_PLUGIN_ROOT}` |
 | `.claude-plugin/marketplace.json` | Entrada de marketplace: un plugin `rs-enterprise-agent`, `source: "./"`, `category: productivity`. Puede llevar su propia `version` |
 | `.mcp.json` | El MCP server `rs-workspace` (type `stdio`, `command: python`, arg `${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py`, env `PYTHONUTF8=1`) |
 
@@ -233,8 +233,10 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 `hooks/*.ps1` — dos roles distintos:
 
 **Infraestructura** (registrados en `plugin.json`, los ejecuta Claude Code, no los agentes):
+- `scripts/cleanup-preplugin.ps1` — evento `SessionStart`: retira restos de la instalación manual
+  pre-plugin que sombrean al plugin (mueve a backup, no borra). Ver CHANGELOG 2.11.0/2.14.0.
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
-  para disparar la skill cuando se menciona una `.sln` en workspaces `\SVN\RS\`.
+  para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / copy-ais).
 
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
@@ -314,14 +316,9 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 
 Desajustes reales detectados (documentados, no corregidos aquí salvo petición explícita):
 
-1. **`subagents/` vs `agents/`** — el design spec y `commands/rs-sync-indexes.md` referencian una
-   carpeta `subagents/`; la carpeta real es `agents/` (renombrada en v2.0.0). `SKILL.md` ya usa
-   `agents/` correctamente.
-2. **Carpeta `BD/`** — `README.md` (§Estructura y §Modelo de BD) la describe como parte del repo;
-   no existe en el repo del plugin — el `model.json` vive en el workspace de cada solución cliente.
-3. **`settings.json` (raíz)** — bloque `hookScripts` legacy/informativo; **no** es formato de hooks
+1. **`settings.json` (raíz)** — bloque `hookScripts` legacy/informativo; **no** es formato de hooks
    de Claude Code (los hooks reales están en `plugin.json`). Lleva un `_note` que lo aclara.
-4. **`${CLAUDE_PLUGIN_ROOT}` NO se expande en markdown** — Claude Code solo la sustituye en
+2. **`${CLAUDE_PLUGIN_ROOT}` NO se expande en markdown** — Claude Code solo la sustituye en
    `.claude-plugin/plugin.json` y `.mcp.json`. En `skills/*/SKILL.md`, `agents/*.md` y
    `commands/*.md` llega literal, o el modelo la resuelve a la carpeta de la *skill*
    (`...\skills\rs-enterprise-agent`), que no contiene `hooks\` ni `runner\` → el runner del
@@ -329,3 +326,10 @@ Desajustes reales detectados (documentados, no corregidos aquí salvo petición 
    #9354, #9427). Corregido en 2.12.0: contrato `plugin_root` + regla de normalización verificada
    con Glob (SKILL.md § "Raíz del plugin"), y comprobación defensiva en los tres agentes que
    ejecutan `runner\`/`hooks\` por ruta (`rs-instalador`, `rs-editor-build`, `rs-editor-db-modeler`).
+
+**Resueltas** (histórico):
+- **`subagents/` vs `agents/`** (2.15.2) — las referencias en ficheros versionados (`references/`,
+  `commands/`, `scripts/install-hooks.ps1`) se actualizaron a `agents/` (carpeta real desde v2.0.0).
+  El design spec vive en `docs/superpowers/` (no publicado, ver `.gitignore`) y queda fuera de este barrido.
+- **Carpeta `BD/`** (2.15.2) — se retiró del árbol de estructura del `README.md`: el `model.json`
+  vive en el workspace de cada solución cliente, no en el repo del plugin.
