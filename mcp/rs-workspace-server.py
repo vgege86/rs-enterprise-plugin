@@ -476,6 +476,46 @@ def find_doc_section(workspace: str, keyword: str) -> str:
     return json.dumps(_run_ps("find-doc-section.ps1", workspace, keyword), ensure_ascii=False, indent=2)
 
 
+# Firma de miembro C# en una línea añadida del diff — captura el nombre del símbolo (método/clase).
+_DIFF_SYMBOL_RE = re.compile(
+    r'(?:public|private|protected|internal)\s+(?:static\s+)?(?:override\s+)?(?:async\s+)?(?:\w+\s+)+(\w+)\s*[\(\{]')
+
+
+def _diff_summary(diff_text: str, revisions: str, file_header_re: str) -> str:
+    """Post-proceso común de svn_diff_revision/git_diff_revision: resumen estructurado sin código
+    (~500 tokens en vez de ~4K). Las dos VCS difieren SOLO en el marcador de fichero del diff
+    (SVN 'Index: <file>' vs Git 'diff --git a/<file> b/<file>'), que llega como file_header_re."""
+    header_re = re.compile(file_header_re)
+    file_stats: dict = {}
+    current_file = None
+    for line in (diff_text or "").splitlines():
+        m = header_re.match(line)
+        if m:
+            current_file = m.group(1).strip()
+            file_stats.setdefault(current_file, {"added": 0, "removed": 0, "op": "M", "symbols": []})
+            continue
+        if current_file is None:
+            continue
+        if line.startswith('+') and not line.startswith('+++'):
+            file_stats[current_file]["added"] += 1
+            sym = _DIFF_SYMBOL_RE.search(line)
+            if sym and sym.group(1) not in file_stats[current_file]["symbols"]:
+                file_stats[current_file]["symbols"].append(sym.group(1))
+        elif line.startswith('-') and not line.startswith('---'):
+            file_stats[current_file]["removed"] += 1
+
+    summary = [
+        {"file": f, "op": s["op"], "+lines": s["added"], "-lines": s["removed"], "symbols": s["symbols"][:10]}
+        for f, s in file_stats.items()
+    ]
+    return json.dumps({
+        "revisions": revisions,
+        "files_changed": len(summary),
+        "summary": summary,
+        "note": "summary_only=True — usar summary_only=False para obtener código completo",
+    }, ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Diff de revisiones SVN (coma-separadas). summary_only=True → [{file, op, +lines, -lines, symbols[]}] sin código (~500 tokens). summary_only=False → combined_diff completo (~4K tokens). Usar full para rs-validar-req, summary para planificación/historial.")
 def svn_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 15000, summary_only: bool = False) -> str:
     if not _check_svn_cli():
@@ -488,39 +528,8 @@ def svn_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 1500
     raw = _run_ps("svn-diff-revision.ps1", workspace, revisions, "-MaxDiffChars", str(max_diff_chars))
     if not summary_only:
         return json.dumps(raw, ensure_ascii=False, indent=2)
-
-    # Generar resumen estructurado sin código
-    import re as _re
-    diff_text = raw.get("combined_diff") or ""
-    files_changed = raw.get("files_changed", [])
-    file_stats: dict = {}
-    current_file = None
-    for line in diff_text.splitlines():
-        m = _re.match(r'^Index:\s+(.+)', line)
-        if m:
-            current_file = m.group(1).strip()
-            file_stats.setdefault(current_file, {"added": 0, "removed": 0, "op": "M", "symbols": []})
-            continue
-        if current_file is None:
-            continue
-        if line.startswith('+') and not line.startswith('+++'):
-            file_stats[current_file]["added"] += 1
-            sym = _re.search(r'(?:public|private|protected|internal)\s+(?:static\s+)?(?:override\s+)?(?:async\s+)?(?:\w+\s+)+(\w+)\s*[\(\{]', line)
-            if sym and sym.group(1) not in file_stats[current_file]["symbols"]:
-                file_stats[current_file]["symbols"].append(sym.group(1))
-        elif line.startswith('-') and not line.startswith('---'):
-            file_stats[current_file]["removed"] += 1
-
-    summary = [
-        {"file": f, "op": s["op"], "+lines": s["added"], "-lines": s["removed"], "symbols": s["symbols"][:10]}
-        for f, s in file_stats.items()
-    ]
-    return json.dumps({
-        "revisions": revisions,
-        "files_changed": len(summary),
-        "summary": summary,
-        "note": "summary_only=True — usar summary_only=False para obtener código completo",
-    }, ensure_ascii=False, indent=2)
+    # SVN marca cada fichero del diff con 'Index: <file>'.
+    return _diff_summary(raw.get("combined_diff") or "", revisions, r'^Index:\s+(.+)')
 
 
 @mcp.tool(description="Diff de commits Git (hashes coma-separados). summary_only=True → [{file, op, +lines, -lines, symbols[]}] sin código (~500 tokens). summary_only=False → combined_diff completo (~4K tokens). Equivalente Git de svn_diff_revision — usar full para rs-validar-req, summary para planificación/historial.")
@@ -530,39 +539,8 @@ def git_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 1500
     raw = _run_ps("git-diff-revision.ps1", workspace, revisions, "-MaxDiffChars", str(max_diff_chars))
     if not summary_only:
         return json.dumps(raw, ensure_ascii=False, indent=2)
-
-    # Generar resumen estructurado sin código — mismo post-proceso que svn_diff_revision,
-    # pero el marcador de "nuevo fichero" en el diff es "diff --git a/x b/x", no "Index:".
-    import re as _re
-    diff_text = raw.get("combined_diff") or ""
-    file_stats: dict = {}
-    current_file = None
-    for line in diff_text.splitlines():
-        m = _re.match(r'^diff --git a/.+ b/(.+)', line)
-        if m:
-            current_file = m.group(1).strip()
-            file_stats.setdefault(current_file, {"added": 0, "removed": 0, "op": "M", "symbols": []})
-            continue
-        if current_file is None:
-            continue
-        if line.startswith('+') and not line.startswith('+++'):
-            file_stats[current_file]["added"] += 1
-            sym = _re.search(r'(?:public|private|protected|internal)\s+(?:static\s+)?(?:override\s+)?(?:async\s+)?(?:\w+\s+)+(\w+)\s*[\(\{]', line)
-            if sym and sym.group(1) not in file_stats[current_file]["symbols"]:
-                file_stats[current_file]["symbols"].append(sym.group(1))
-        elif line.startswith('-') and not line.startswith('---'):
-            file_stats[current_file]["removed"] += 1
-
-    summary = [
-        {"file": f, "op": s["op"], "+lines": s["added"], "-lines": s["removed"], "symbols": s["symbols"][:10]}
-        for f, s in file_stats.items()
-    ]
-    return json.dumps({
-        "revisions": revisions,
-        "files_changed": len(summary),
-        "summary": summary,
-        "note": "summary_only=True — usar summary_only=False para obtener código completo",
-    }, ensure_ascii=False, indent=2)
+    # Git marca cada fichero del diff con 'diff --git a/<file> b/<file>'.
+    return _diff_summary(raw.get("combined_diff") or "", revisions, r'^diff --git a/.+ b/(.+)')
 
 
 @mcp.tool(description="Añade ficheros ? a SVN: CLI → TortoiseProc → instrucciones manuales. files vacío = auto-detectar todos los ? del workspace.")

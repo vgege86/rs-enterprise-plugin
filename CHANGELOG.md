@@ -1,5 +1,26 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.3 — 2026-07-22
+
+### Tier 3 (3/n): dedup del post-proceso de diff svn/git en el MCP server
+
+`svn_diff_revision` y `git_diff_revision` (`mcp/rs-workspace-server.py`) duplicaban ~30 líneas
+idénticas de post-proceso (construcción del resumen por fichero: `+lines`/`-lines`/`symbols`), que
+solo diferían en el marcador de fichero del diff (`Index:` en SVN vs `diff --git` en Git).
+
+- **Nuevo helper `_diff_summary(diff_text, revisions, file_header_re)`** — fuente única del resumen;
+  cada tool le pasa su regex de cabecera. El regex de símbolo C# se extrae a una constante compilada
+  `_DIFF_SYMBOL_RE` (antes recompilado por línea).
+- Se eliminan los `import re as _re` locales redundantes (el módulo ya importa `re` arriba) y una
+  variable muerta en la rama SVN (`files_changed = raw.get("files_changed", [])`, asignada y nunca
+  usada).
+- **Sin cambio de comportamiento**: verificado con un test de equivalencia que compara la salida JSON
+  del código viejo y el nuevo sobre diffs SVN y Git representativos (incluido diff vacío) — idénticas.
+
+Los wrappers finos `svn_status`/`git_status`, `svn_add`/`git_add`, `svn_log`/`git_log` se dejan como
+están: son ~4 líneas cada uno y deben seguir siendo tools MCP separadas con su propia descripción y
+sus guardas/fallbacks específicos (git exige `_check_git_cli`; svn ofrece fallback TortoiseSVN).
+
 ## 2.15.2 — 2026-07-22
 
 ### Tier 3 (2/n): corrección del drift de documentación
