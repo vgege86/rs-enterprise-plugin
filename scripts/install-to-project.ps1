@@ -24,17 +24,20 @@ $userClaudeJson = "$env:USERPROFILE\.claude.json"
 
 $runnerSrc    = Join-Path $SkillPath "runner\runner.ps1"
 $commandsSrc  = Join-Path $SkillPath "commands"
-$subagentsSrc = Join-Path $SkillPath "subagents"
+$subagentsSrc = Join-Path $SkillPath "agents"   # carpeta real desde v2.0.0 (antes "subagents")
 $hooksSrc     = Join-Path $SkillPath "hooks"
 $mcpSrc       = Join-Path $SkillPath "mcp"
 $runnerDirSrc = Join-Path $SkillPath "runner"
 $scriptsSrc   = Join-Path $SkillPath "scripts"
 
-$skillMd = Join-Path $SkillPath "SKILL.md"
+# Versión: fuente canónica es .claude-plugin\plugin.json (ya no hay 'version:' en SKILL.md).
+$pluginJson = Join-Path $SkillPath ".claude-plugin\plugin.json"
 $version = "?"
-if (Test-Path $skillMd) {
-    $vLine = Get-Content $skillMd | Select-String 'version:' | Select-Object -First 1
-    if ($vLine) { $version = ($vLine -replace '.*version:\s*"?([^"]+)"?.*', '$1').Trim() }
+if (Test-Path $pluginJson) {
+    try {
+        $v = (Get-Content $pluginJson -Raw -Encoding UTF8 | ConvertFrom-Json).version
+        if ($v) { $version = "$v" }
+    } catch { }
 }
 
 Write-Host "====================================="

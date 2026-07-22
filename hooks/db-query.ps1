@@ -25,6 +25,28 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "lib-dbconfig.ps1")
 
+# --- Guarda SELECT-only (misma validación que la tool MCP db_query, rs-workspace-server.py) ---
+# Este hook es el fallback 1:1 de esa tool; sin esta guarda ejecutaría cualquier sentencia
+# (DROP/DELETE/bloque PL/SQL) interpolada directamente en el script sqlplus.
+$sqlTrim = $Sql.Trim()
+if (-not $sqlTrim.ToUpper().StartsWith("SELECT")) {
+    @{ success = $false; error = "Solo se permiten consultas SELECT" } | ConvertTo-Json
+    exit 1
+}
+# Bloquea multi-statement ("SELECT 1; DROP TABLE x"): quita el ; final habitual y cuenta los ;
+# que queden fuera de literales de string.
+$sqlNorm = $sqlTrim.TrimEnd(';')
+$inStr = $false
+$semiCount = 0
+foreach ($ch in $sqlNorm.ToCharArray()) {
+    if ($ch -eq "'") { $inStr = -not $inStr }
+    elseif ($ch -eq ';' -and -not $inStr) { $semiCount++ }
+}
+if ($semiCount -gt 0) {
+    @{ success = $false; error = "Multi-statement SQL no permitido" } | ConvertTo-Json
+    exit 1
+}
+
 $Workspace = Resolve-RsWorkspace $Workspace
 
 # --- Leer docs\.rs-databases.json ---
@@ -53,11 +75,25 @@ $user       = Get-CsPart -Cadena $cadena -Clave "User Id"
 $password   = Get-CsPart -Cadena $cadena -Clave "Password"
 
 # --- Ejecutar SQL ---
-$tempSql = [System.IO.Path]::GetTempFileName() + ".sql"
-$tempOut = [System.IO.Path]::GetTempFileName() + ".txt"
+# Rutas temp propias (no GetTempFileName() + ".sql": eso crea un fichero de 0 bytes en OTRA ruta
+# que quedaba huérfano — el finally solo limpiaba las rutas con sufijo). [Guid] existe en PS5.1.
+$tmpDir  = [System.IO.Path]::GetTempPath()
+$tempSql = Join-Path $tmpDir ("rsdbq-" + [Guid]::NewGuid().ToString("N") + ".sql")
+$tempOut = Join-Path $tmpDir ("rsdbq-" + [Guid]::NewGuid().ToString("N") + ".txt")
 
 try {
     if ($motor -eq "ORACLE") {
+        # Credenciales en el script SQL (CONNECT), no en la línea de comando: con sqlplus -S
+        # "user/pass@ds" la password queda visible en la lista de procesos toda la ejecución.
+        # Mismo patrón que la tool MCP db_query (rs-workspace-server.py): /nolog + CONNECT.
+        # WHENEVER SQLERROR va ANTES del CONNECT para que un login fallido salga con el SQLCODE.
+        if ($password) {
+            $connectLine = "CONNECT $user/$password@$dataSource`n"
+            $sqlplusConn = "/nolog"
+        } else {
+            $connectLine = ""
+            $sqlplusConn = "$user/@$dataSource"
+        }
         # MARKUP CSV (sqlplus 12.2+) en vez de COLSEP: las cabeceras salen con el nombre completo
         # de la columna. Con salida tabular sqlplus las trunca al ancho del campo, así que un
         # SELECT 'a' AS C1 devolvía la cabecera "C". Además QUOTE ON escapa los valores que
@@ -69,13 +105,13 @@ SET FEEDBACK OFF
 SET LINESIZE 32767
 SET TRIMSPOOL ON
 WHENEVER SQLERROR EXIT SQL.SQLCODE
-$Sql;
+$connectLine$sqlNorm;
 EXIT;
 "@ | ForEach-Object { [System.IO.File]::WriteAllText($tempSql, $_, (New-Object System.Text.UTF8Encoding($false))) }
 
         # UTF8 sin BOM a propósito: Set-Content -Encoding UTF8 (PS 5.1) antepone el BOM, sqlplus lo
         # lee como parte del primer comando y el primer SET falla con SP2-0734.
-        sqlplus -S "$user/$password@$dataSource" "@$tempSql" > $tempOut 2>&1
+        sqlplus -S "$sqlplusConn" "@$tempSql" > $tempOut 2>&1
         $exitCode = $LASTEXITCODE
         # @() en todas las colecciones: con una sola línea/columna PowerShell colapsa a escalar y
         # $lines[0] / $headers[$i] devuelven un [char], que ConvertTo-Json rechaza como clave.
