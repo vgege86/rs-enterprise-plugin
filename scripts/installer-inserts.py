@@ -46,6 +46,12 @@ ROWEND  = "@@ROWEND@@" # terminador de fila: se añade al final de cada fila en 
                        # contener saltos de línea: si se troceara por '\n' (1 línea = 1 fila) la
                        # fila se partiría y se perdería. Con el terminador, los '\n' internos de
                        # un valor se conservan.
+# Tokens de salto de línea: el cliente SQL (sqlplus con PAGESIZE 0) TRUNCA el valor en el
+# primer CHR(10) interno, descartando el resto del dato Y el terminador de fila -> las filas se
+# funden y se pierden todas. Por eso la query codifica CR/LF como estos tokens (cada fila queda
+# en UNA sola línea física, sin truncado) y Python los revierte a saltos reales en el literal SQL.
+LFTOK   = "@@LF@@"     # CHR(10) / \n
+CRTOK   = "@@CR@@"     # CHR(13) / \r
 
 NUMERIC_BASES = {
     'NUMBER', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT',
@@ -200,14 +206,18 @@ def build_select(table: str, columns: list, schema: str, motor: str) -> str:
 
     tbl = f"{schema}.{table}" if schema else table
     if motor == "ORACLE":
+        # Codificar CR/LF -> tokens para que cada fila salga en UNA línea física (sqlplus trunca
+        # el valor en el 1er CHR(10) interno; sin esto se pierde el resto del dato y el ROWEND).
+        exprs = [f"REPLACE(REPLACE({e}, CHR(13), '{CRTOK}'), CHR(10), '{LFTOK}')" for e in exprs]
         exprs[0] = f"TO_CLOB({exprs[0]})"
         concat = f"\n    || '{DELIM}' || ".join(exprs)
-        concat += f"\n    || '{ROWEND}'"   # terminador de fila (sobrevive a '\n' en los valores)
+        concat += f"\n    || '{ROWEND}'"   # terminador de fila (sobrevive porque ya no hay '\n')
         return f"SELECT\n    {concat}\nFROM {tbl}"
     else:
         # SQL Server: '' + NVARCHAR evita el error de tipo; DELIM entre expresiones
+        exprs = [f"REPLACE(REPLACE({e}, CHAR(13), '{CRTOK}'), CHAR(10), '{LFTOK}')" for e in exprs]
         concat = f"\n    + '{DELIM}' + ".join(exprs)
-        concat += f"\n    + '{ROWEND}'"    # terminador de fila (sobrevive a '\n' en los valores)
+        concat += f"\n    + '{ROWEND}'"    # terminador de fila (sobrevive porque ya no hay '\n')
         tbl_sql = f"[{schema}].[{table}]" if schema else f"[{table}]"
         return f"SELECT\n    {concat}\nFROM {tbl_sql}"
 
@@ -331,6 +341,8 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
         if len(fields) != len(columns):
             lines.append(f"-- AVISO fila omitida (nº campos {len(fields)} != {len(columns)}): {line[:120]}")
             continue
+        # Revertir los tokens de salto de línea a saltos reales (el literal SQL queda multilínea)
+        fields = [f.replace(CRTOK, "\r").replace(LFTOK, "\n") for f in fields]
         vals = [format_value(fields[i], columns[i][1], cfg["motor"]) for i in range(len(columns))]
         lines.append(f"INSERT INTO {table} ({cols_csv}) VALUES ({', '.join(vals)});")
         n += 1

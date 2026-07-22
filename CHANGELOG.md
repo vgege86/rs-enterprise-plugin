@@ -1,5 +1,34 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.6 — 2026-07-22
+
+### Fix: inserts del instalador vacíos por saltos de línea (regresión de 2.15.5)
+
+`scripts/installer-inserts.py` (`Inserts\<TABLA>.sql` de `/rs-instalador`). Tras 2.15.5, tablas con
+texto multilínea (p.ej. `RACCION.ACSQL`, con sentencias SQL de varias líneas) generaban **0 inserts**
+(`-- (sin filas)`), y los scripts de idiomas salían **incompletos**.
+
+**Causa raíz** (reproducida contra Oracle real, mínima):
+
+```
+SELECT 'linea1' || CHR(10) || 'linea2' || '@@ROWEND@@' FROM DUAL   ->   linea1
+```
+
+sqlplus en modo `PAGESIZE 0` **trunca el valor en el primer `CHR(10)` interno**: se pierde el resto
+del dato **y** el terminador de fila `@@ROWEND@@`. Sin terminador, las filas se fundían (`nº campos
+28 != 4`) y **todas** se descartaban. El terminador de fila que introdujo 2.15.5 iba al **final**, es
+decir, detrás del salto — por eso siempre se perdía. Reubicarlo no sirve: cualquier cosa tras el 1er
+`\n` muere.
+
+**Fix**: la query **codifica** `CHR(13)`/`CHR(10)` como tokens (`@@CR@@`/`@@LF@@`) vía `REPLACE`
+anidado, de modo que **cada fila sale en una sola línea física** (sin truncado); Python revierte los
+tokens a saltos reales tras trocear, y el literal SQL queda multilínea (válido en Oracle/SQL Server).
+El troceo por `@@ROWEND@@` se mantiene como red de seguridad. Aplica a ambos motores.
+
+Verificado contra una BD Oracle real: `RACCION` (9 filas, todas con salto interno) pasó de **0** a
+**9** inserts, con el `ACSQL` completo y multilínea. Test de aislamiento del round-trip
+codificar→trocear→decodificar.
+
 ## 2.15.5 — 2026-07-22
 
 ### Fix: inserts del instalador — acentos corruptos y pérdida de filas con salto de línea
