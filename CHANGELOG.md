@@ -1,5 +1,23 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.8 — 2026-07-22
+
+### Fix: `installer-batch.ps1` — gate de binding redirects (config viejo + DLL nueva → StackOverflow)
+
+`hooks/installer-batch.ps1` (etapa Batch de `/rs-instalador`). Segundo vector de frankenbuild, distinto
+al de 2.15.7: en una **carpeta de deploy compartida**, last-writer-wins puede dejar un `<exe>.exe.config`
+viejo (con `bindingRedirect newVersion=X`) junto a una `System.*.dll`/tercero **nueva**
+(`AssemblyVersion=Y`). El redirect apunta a una versión que ya no está en la carpeta →
+`FileLoadException` → bucle de re-resolución → **StackOverflow** en `RSActBD`/`RSCore`. La asunción
+"terceros version-pinned = OK, no hace falta verificarlos" es **falsa** en carpeta compartida.
+
+**Fix**: gate nuevo (bloqueante, tras el gate de coherencia por timestamp de 2.15.7). Para cada
+`EXES\*.exe.config` se parsea `runtime/assemblyBinding/dependentAssembly` (namespace
+`urn:schemas-microsoft-com:asm.v1`); por cada `bindingRedirect` cuyo `<name>.dll` **está físicamente
+desplegado** (si no lo está, se resuelve de GAC y no aplica), se compara `newVersion` del config contra
+la `AssemblyName.Version` real del DLL (`[System.Reflection.AssemblyName]::GetAssemblyName`). Si no
+coinciden → se listan `config · assembly · newVersion vs real` y **exit 1**, no se despliega.
+
 ## 2.15.7 — 2026-07-22
 
 ### Fix: `installer-batch.ps1` generaba frankenbuilds → StackOverflowException al arrancar

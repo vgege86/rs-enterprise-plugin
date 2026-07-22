@@ -38,6 +38,11 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
   otra fecha → `exit 1`). Trampa asociada: `<Reference><HintPath>..\bin\Debug\X.dll` de un proyecto
   con `X.csproj` en el workspace enlaza contra una DLL de otro build → usar `<ProjectReference>` (el
   hook lo avisa). Config opcional `sharedAssemblies` en el JSON (default `Comun,BusComun,RSModel`).
+  Segundo gate (binding redirects): en carpeta de deploy compartida, last-writer-wins deja un
+  `<exe>.exe.config` viejo (`bindingRedirect newVersion=X`) junto a una `System.*.dll`/tercero nueva
+  (`AssemblyVersion=Y`) → `FileLoadException` en bucle → StackOverflow. El hook verifica que, para cada
+  redirect cuyo DLL está desplegado, `newVersion` == `AssemblyName.Version` real del DLL; si no → `exit
+  1`. "Terceros version-pinned = OK" es falso en carpeta compartida.
 - **AgendaWeb**: `DeployOnBuild` sin `DeployTarget=WebPublish` hace que msbuild empaquete
   (`obj\Release\Package\<app>.zip`) en vez de publicar a carpeta. `publishUrl` se pasa siempre como
   propiedad global para ganar al `PublishUrl` del `.pubxml`, que apunta al AIS **en vivo**.

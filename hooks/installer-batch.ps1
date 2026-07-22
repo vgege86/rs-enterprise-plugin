@@ -204,6 +204,52 @@ if ($stragglers.Count -gt 0) {
 }
 Write-Host "`nGate de coherencia OK — $exeCount .exe + DLLs compartidas ($($sharedAssemblies -join '/')) de este build."
 
+# ---------------------------------------------------------------------------------------------------
+# Paso F — GATE DE BINDING REDIRECTS (bloqueante). En carpeta de deploy compartida, last-writer-wins
+#          puede dejar un <exe>.exe.config viejo (bindingRedirect newVersion=X) junto a una
+#          System.*.dll/tercero nueva (AssemblyVersion=Y). El redirect apunta a una versión que ya no
+#          existe → FileLoadException en bucle → StackOverflow (RSActBD/RSCore). "Terceros
+#          version-pinned = OK" es FALSO en carpeta compartida. Para cada redirect cuyo DLL está
+#          físicamente desplegado, newVersion debe == AssemblyName.Version real del DLL.
+# ---------------------------------------------------------------------------------------------------
+$asmNs = 'urn:schemas-microsoft-com:asm.v1'
+$bindingMismatch = @()
+foreach ($cfgFile in @(Get-ChildItem $exesDir -File -Filter "*.exe.config" -ErrorAction SilentlyContinue)) {
+    try { $xml = [xml](Get-Content $cfgFile.FullName -Raw) } catch {
+        Write-Host "AVISO: no se pudo parsear $($cfgFile.Name) — se omite del gate de binding."
+        continue
+    }
+    $nsm = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+    $nsm.AddNamespace('a', $asmNs)
+    foreach ($dep in @($xml.SelectNodes('//a:dependentAssembly', $nsm))) {
+        $ident    = $dep.SelectSingleNode('a:assemblyIdentity', $nsm)
+        $redirect = $dep.SelectSingleNode('a:bindingRedirect', $nsm)
+        if (-not $ident -or -not $redirect) { continue }
+        $name = $ident.name
+        $newVer = $redirect.newVersion
+        if (-not $name -or -not $newVer) { continue }
+
+        $dll = Join-Path $exesDir "$name.dll"
+        if (!(Test-Path $dll)) { continue }  # no desplegada → se resuelve de GAC, no aplica
+
+        try { $realVer = [System.Reflection.AssemblyName]::GetAssemblyName($dll).Version } catch {
+            Write-Host "AVISO: no se pudo leer la versión de $name.dll — se omite."
+            continue
+        }
+        try { $cfgVer = [version]$newVer } catch { $cfgVer = $null }
+        if ($cfgVer -eq $null -or $realVer -ne $cfgVer) {
+            $bindingMismatch += ("  {0} · {1}: config newVersion={2} != DLL AssemblyVersion={3}" -f $cfgFile.Name, $name, $newVer, $realVer)
+        }
+    }
+}
+if ($bindingMismatch.Count -gt 0) {
+    Write-Host "`nERROR: gate de binding redirects — config y DLL desalineados (FileLoadException → StackOverflow):"
+    $bindingMismatch | ForEach-Object { Write-Host $_ }
+    Write-Host "  -> el .exe.config apunta a una versión de assembly que no está desplegada. NO desplegar."
+    exit 1
+}
+Write-Host "Gate de binding redirects OK — newVersion de cada .exe.config coincide con el DLL desplegado."
+
 Write-Host "`n== Resumen BATCH: $($batch.Count - $fallos.Count)/$($batch.Count) OK =="
 if ($fallos.Count -gt 0) {
     Write-Host "Fallos: $($fallos -join ', ')"
