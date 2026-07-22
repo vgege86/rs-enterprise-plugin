@@ -3,16 +3,15 @@ Genera el DDL de creación de TODAS las tablas del modelo, SIN schema en ningún
 (ni en la tabla, ni en la PK, ni en los índices). Para el instalador de cliente
 (carpeta Instalador\\Scripts) — instalación limpia en el servidor destino.
 
-Reutiliza la lógica de tipos de generate-sql.py (adapt_type / semántica CHAR Oracle),
-pero a diferencia de aquél escribe el fichero en la ruta indicada y omite el prefijo de
-schema de los índices (generate-sql.py:105 sí lo pone).
+Reutiliza la lógica de tipos de scripts/_dbtypes.py (adapt_type / semántica CHAR Oracle),
+compartida con generate-sql.py, pero a diferencia de aquél escribe el fichero en la ruta
+indicada y omite el prefijo de schema de los índices (generate-sql.py sí lo pone).
 
 Uso: python installer-ddl.py <workspace> <proyecto> <out.sql> [ORACLE|SQLSERVER]
 """
 
 import sys
 import json
-import re
 from pathlib import Path
 from datetime import datetime
 
@@ -23,51 +22,9 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# Mapeo de tipos Oracle → SQL Server (idéntico a generate-sql.py)
-ORACLE_TO_SS = {
-    'NUMBER': 'DECIMAL', 'VARCHAR2': 'VARCHAR', 'NVARCHAR2': 'NVARCHAR',
-    'DATE': 'DATETIME2', 'TIMESTAMP': 'DATETIME2', 'CLOB': 'NVARCHAR(MAX)',
-    'BLOB': 'VARBINARY(MAX)', 'CHAR': 'CHAR', 'NCHAR': 'NCHAR',
-    'INTEGER': 'INT', 'FLOAT': 'FLOAT', 'BINARY_FLOAT': 'FLOAT',
-    'BINARY_DOUBLE': 'FLOAT',
-}
-
-# Mapeo SQL Server → Oracle (idéntico a generate-sql.py)
-SS_TO_ORACLE = {
-    'INT': 'NUMBER(10)', 'BIGINT': 'NUMBER(19)', 'SMALLINT': 'NUMBER(5)',
-    'TINYINT': 'NUMBER(3)', 'BIT': 'NUMBER(1)', 'FLOAT': 'BINARY_DOUBLE',
-    'REAL': 'BINARY_FLOAT', 'DECIMAL': 'NUMBER', 'NUMERIC': 'NUMBER',
-    'VARCHAR': 'VARCHAR2', 'NVARCHAR': 'NVARCHAR2', 'CHAR': 'CHAR',
-    'NCHAR': 'NCHAR', 'TEXT': 'CLOB', 'NTEXT': 'NCLOB',
-    'DATETIME': 'DATE', 'DATETIME2': 'TIMESTAMP', 'DATE': 'DATE',
-    'VARBINARY': 'BLOB',
-}
-
-
-def adapt_type(col_type: str, from_engine: str, to_engine: str) -> str:
-    if from_engine == to_engine:
-        return col_type
-    base = col_type.split('(')[0].upper()
-    suffix = col_type[len(base):]
-    if from_engine == 'ORACLE' and to_engine == 'SQLSERVER':
-        mapped = ORACLE_TO_SS.get(base, base)
-        if base == 'NUMBER' and not suffix:
-            return 'DECIMAL(18,2)'
-        return mapped + suffix
-    elif from_engine == 'SQLSERVER' and to_engine == 'ORACLE':
-        mapped = SS_TO_ORACLE.get(base, base)
-        return mapped + suffix
-    return col_type
-
-
-def ensure_oracle_char_semantics(col_type: str) -> str:
-    """VARCHAR2(n) → VARCHAR2(n CHAR) para evitar truncado multibyte en Oracle."""
-    def add_char(m):
-        type_name, size = m.group(1), m.group(2)
-        if 'CHAR' in size.upper() or 'BYTE' in size.upper():
-            return m.group(0)
-        return f"{type_name}({size} CHAR)"
-    return re.sub(r'(VARCHAR2|NVARCHAR2|CHAR)\((\d+)\)', add_char, col_type, flags=re.IGNORECASE)
+# Mapeo de tipos Oracle ⇄ SQL Server: fuente única en scripts/_dbtypes.py (antes duplicado aquí
+# y en generate-sql.py; las copias ya habían divergido en 'RAW'). scripts/ está en sys.path.
+from _dbtypes import adapt_type, ensure_oracle_char_semantics
 
 
 def pk_columns(table_def: dict) -> list:
