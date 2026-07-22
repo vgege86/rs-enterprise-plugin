@@ -19,7 +19,7 @@ config por cliente de `docs\<Proyecto>-instalador.json`.
 
 | Script | Parámetros | Descripción |
 |--------|-----------|-------------|
-| `hooks/installer-batch.ps1` | `<workspace> <destino>` | Build Release de los batch activos (JSON `batch`) → copia EXEs a `<destino>\EXES` |
+| `hooks/installer-batch.ps1` | `<workspace> <destino>` | **Rebuild** Release (msbuild `/t:Rebuild`, wipe previo de bin/obj) de los csproj-exe de los batch activos (JSON `batch`) → copia EXEs a `<destino>\EXES`, con **gate de coherencia** (todos los .exe + DLLs compartidas del mismo build) |
 | `hooks/installer-agendaweb.ps1` | `<workspace> <destino>` | Publish FileSystem (msbuild `DeployTarget=WebPublish` + `PublishProfile` del JSON) de la Agenda Web → `<destino>\AgendaWeb` |
 | `hooks/installer-servicemanager.ps1` | `<workspace> <destino>` | `dotnet publish` host net8 → `<destino>\ServiceManager`; DLL de módulos activos → `\Modulos` |
 | `hooks/installer-scripts.ps1` | `<workspace> <destino>` | Llama a `scripts/installer-ddl.py` + `scripts/installer-inserts.py` → `<destino>\Scripts` |
@@ -28,6 +28,16 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 `scripts/installer-inserts.py` (inserts por tabla paramétrica desde `subviews["Parametricas"]`).
 
 ⛔ Reglas de estos hooks (violarlas ya ha roto el instalador en real):
+- **Batch (frankenbuild → StackOverflow)**: NUNCA `dotnet build` incremental. Las DLLs compartidas
+  (`Comun`/`BusComun`/`RSModel`) no tienen strong-name y su `AssemblyVersion` es `1.0.*` → el CLR
+  enlaza por nombre simple; mezclar exes y DLLs de builds de días distintos hace que un exe llame a un
+  método con firma cambiada → recursión infinita → `StackOverflowException` al arrancar. Por eso:
+  `msbuild /t:Rebuild` de los **csproj-exe** (no la .sln — un proyecto de Tests rompía `dotnet build` y
+  dejaba el .exe sin actualizar) tras **wipe de todos los bin/obj del scope**, y un **gate final** que
+  exige que todos los `.exe` + DLLs compartidas desplegados sean de ese mismo build (si alguno es de
+  otra fecha → `exit 1`). Trampa asociada: `<Reference><HintPath>..\bin\Debug\X.dll` de un proyecto
+  con `X.csproj` en el workspace enlaza contra una DLL de otro build → usar `<ProjectReference>` (el
+  hook lo avisa). Config opcional `sharedAssemblies` en el JSON (default `Comun,BusComun,RSModel`).
 - **AgendaWeb**: `DeployOnBuild` sin `DeployTarget=WebPublish` hace que msbuild empaquete
   (`obj\Release\Package\<app>.zip`) en vez de publicar a carpeta. `publishUrl` se pasa siempre como
   propiedad global para ganar al `PublishUrl` del `.pubxml`, que apunta al AIS **en vivo**.

@@ -1,5 +1,37 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.7 — 2026-07-22
+
+### Fix: `installer-batch.ps1` generaba frankenbuilds → StackOverflowException al arrancar
+
+`hooks/installer-batch.ps1` (etapa Batch de `/rs-instalador`). El hook compilaba con `dotnet build`
+**incremental**, por-sln y sin verificación final. En un caso real (B2Impact) dejó en `EXES` 8 exes
+del build 07-20 15:33 junto a `Comun.dll`/`BusComun.dll`/`RsExtrae.exe` del 07-21 10:31.
+
+**Causa raíz**: las DLLs compartidas (`Comun`/`BusComun`/`RSModel`) **no tienen strong-name** y su
+`AssemblyVersion` es `1.0.*` → el CLR las enlaza **por nombre simple**. Un exe viejo, compilado
+contra un snapshot distinto de esas DLLs, llama en runtime a un método cuya firma cambió → recursión
+infinita → **StackOverflowException** al arrancar `RSActBD.exe`. Agravante: `dotnet build` de una
+`.sln` con proyecto de Tests (p.ej. `RsExtrae.Tests`) fallaba y dejaba su `.exe` **sin actualizar** =
+el straggler exacto observado.
+
+**Fix** (reescritura del hook):
+
+- **Rebuild desde snapshot único, no incremental** — `msbuild /t:Rebuild` (VS2022 via `vswhere`, mismo
+  patrón que `installer-agendaweb`), precedido de un **wipe de todos los `bin`/`obj` del scope** en una
+  sola pasada. Sin restos de builds anteriores.
+- **Los proyectos de Tests ya no rompen ni contaminan el build** — no se compila la `.sln` entera; se
+  resuelven los **csproj-exe** (`<OutputType>Exe|WinExe`, fallback = csproj homónimo de la sln) y se
+  compilan **directamente** con `-t:Rebuild`, arrastrando sus `<ProjectReference>` (las DLLs
+  compartidas se recompilan del mismo snapshot). El `*.Tests` queda fuera.
+- **Gate de coherencia final (bloqueante)** — se sella `$buildStart` antes de compilar; tras copiar,
+  todo `*.exe` + DLLs compartidas (`Comun`/`BusComun`/`RSModel`, override por JSON `sharedAssemblies`)
+  en `EXES` debe tener `LastWriteTime >= $buildStart`. Cualquier fichero de otra fecha → se listan y
+  **exit 1**, nunca "OK".
+- **Aviso de la trampa estructural `HintPath`** — detecta `<Reference><HintPath>..\bin\Debug\X.dll`
+  cuando existe `X.csproj` en el workspace (debería ser `<ProjectReference>`): se enlaza contra una DLL
+  de otro build. Advisory (no falla). Ya corregida en B2Impact r14970.
+
 ## 2.15.6 — 2026-07-22
 
 ### Fix: inserts del instalador vacíos por saltos de línea (regresión de 2.15.5)

@@ -97,7 +97,10 @@ El runner imprime el output del hook y termina con el exit code del hook.
 
 Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
 
-- **Batch:** `Resumen BATCH: N/N OK` + existencia de `<destino>\EXES` con `.exe`.
+- **Batch:** `Gate de coherencia OK — ...` **Y** `Resumen BATCH: N/N OK` + `<destino>\EXES` con `.exe`.
+  - `ERROR: gate de coherencia — ...` (exes/DLLs de otra fecha, o ningún .exe) = frankenbuild → **NO
+    desplegar**, reportar los ficheros straggler que lista el hook. Un `Resumen ... OK` sin la línea del
+    gate no es evidencia suficiente.
 - **AgendaWeb:** `OK — AgendaWeb publicada: N ficheros` (msbuild sin errores).
 - **ServiceManager:** `host OK` + `<destino>\ServiceManager\Modulos` con las DLL de los módulos.
 - **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts`.
