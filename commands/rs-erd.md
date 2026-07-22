@@ -7,4 +7,4 @@ Invoke the `rs-enterprise-agent` skill in BD-modeler mode.
 Usage: /rs-erd [workspace]
 Example: /rs-erd
 
-Dispatches Task subagent `rs-editor-db-modeler` (`subagents/rs-editor-db-modeler.md`) — manages BD model, renders ERD widget, generates SQL, syncs from database.
+Dispatches Task subagent `rs-editor-db-modeler` (`agents/rs-editor-db-modeler.md`) — manages BD model, renders ERD widget, generates SQL, syncs from database.

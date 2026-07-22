@@ -97,7 +97,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 |--------|-----------|-------------|
 | `hooks/jira-attach.ps1` | `-IssueKey <KEY> -Files "<ruta1,ruta2>"` | Adjunta ficheros a una issue de Jira Cloud (`POST /rest/api/3/issue/{KEY}/attachments`). Lee credenciales de `~/.claude/rs-jira-credentials.json`; ⛔ nunca imprime el token. Equivalente a la tool `jira_attach`. Ver `references/jira.md` |
 
-## Build (via runner — ver `subagents/rs-editor-build.md`)
+## Build (via runner — ver `agents/rs-editor-build.md`)
 
 | Script | Parámetros | Descripción |
 |--------|-----------|-------------|

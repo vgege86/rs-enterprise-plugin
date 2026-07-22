@@ -1,5 +1,29 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.2 — 2026-07-22
+
+### Tier 3 (2/n): corrección del drift de documentación
+
+Resuelve dos de las inconsistencias conocidas del §11 de `docs/plugin-architecture.md` y varias
+imprecisiones de la doc. Solo documentación (+ un arreglo de ruta en un script de instalación
+legacy). No cambia el runtime del plugin.
+
+- **`subagents/` → `agents/`** — se actualizan las referencias a la carpeta antigua en ficheros
+  versionados: `references/hooks.md`, `references/testing.md`, `commands/rs-erd.md`,
+  `commands/rs-sync-indexes.md`. Además `scripts/install-hooks.ps1` tenía la **misma** ruta rota
+  (`Join-Path $SkillPath "subagents"`) que ya se corrigió en `install-to-project.ps1` en 2.14.1 —
+  ahora apunta a `agents/`. (El design spec vive en `docs/superpowers/`, no publicado — queda fuera.)
+- **Hook `SessionStart` documentado** — `plugin.json` declara tres hooks (SessionStart → 
+  `cleanup-preplugin.ps1`, Stop, UserPromptSubmit), pero `docs/plugin-architecture.md` (§2 y §7) y el
+  `README.md` (§Estructura) solo mencionaban dos. Añadido el SessionStart en los tres sitios.
+- **Carpeta `BD/`** — retirada del árbol de estructura del `README.md`: el `model.json` vive en el
+  workspace de cada solución cliente, no en el repo del plugin (el árbol la listaba con un
+  "(no en el repo)" contradictorio).
+- **Conteo de agentes** — `README.md` decía "27 subagentes"; son **28**.
+- **§11** actualizado: las dos inconsistencias resueltas se mueven a un apartado "Resueltas" con su
+  versión; quedan como conocidas solo `settings.json` (legacy con `_note`) y la no-expansión de
+  `${CLAUDE_PLUGIN_ROOT}` en markdown (mitigada en 2.12.0).
+
 ## 2.15.1 — 2026-07-22
 
 ### Tier 3 (1/n): helper Python compartido para el mapeo de tipos entre motores
