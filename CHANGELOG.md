@@ -1,5 +1,27 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.1 — 2026-07-22
+
+### Tier 3 (1/n): helper Python compartido para el mapeo de tipos entre motores
+
+Primer paso de la deduplicación del Tier 3. El bloque de mapeo de tipos Oracle ⇄ SQL Server
+(`ORACLE_TO_SS`, `SS_TO_ORACLE`, `adapt_type`, `ensure_oracle_char_semantics`) estaba copiado
+literalmente en `scripts/generate-sql.py` y `scripts/installer-ddl.py`.
+
+- **`scripts/_dbtypes.py`** (nuevo) — fuente única. Los scripts se ejecutan con `scripts/` en
+  `sys.path`, así que `import _dbtypes` resuelve sin trucos (a diferencia de los otros scripts, cuyo
+  nombre lleva guion y no son importables directamente).
+- **Corrige un drift ya existente**: las dos copias habían divergido — `installer-ddl.py` se había
+  quedado sin la entrada `RAW → VARBINARY` que sí tenía `generate-sql.py`. Al unificar sobre el
+  superconjunto, `installer-ddl.py` ahora mapea correctamente las columnas `RAW` de Oracle a
+  `VARBINARY` en SQL Server (antes las dejaba como `RAW`, tipo inexistente en SQL Server). Cambio de
+  comportamiento intencionado en el DDL generado para columnas `RAW`.
+- Sin cambios de comportamiento en el resto de conversiones (verificado: ambos scripts comparten
+  ahora el mismo objeto `adapt_type`; casos representativos idénticos).
+
+Pendiente en próximos pasos del Tier 3: colapsar las funciones `svn_*`/`git_*` casi idénticas del
+MCP server y corregir el drift de documentación (§11 de `docs/plugin-architecture.md`).
+
 ## 2.15.0 — 2026-07-22
 
 ### Higiene de proyecto: manifiesto de dependencias + CI
