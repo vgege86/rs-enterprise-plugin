@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python (py_compile + invariantes de publicación)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: py_compile del MCP server y scripts
+        run: python -m py_compile $(find mcp scripts -name '*.py' -print)
+      - name: Paridad de versión plugin.json/marketplace.json + entrada CHANGELOG
+        run: python .github/scripts/check_version.py
+
+  powershell:
+    name: PowerShell (PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+      - name: Analizar hooks/, scripts/, runner/
+        shell: pwsh
+        run: |
+          $findings = Invoke-ScriptAnalyzer -Path . -Recurse
+          if ($findings) {
+              $findings | Sort-Object Severity -Descending |
+                  Format-Table Severity, ScriptName, Line, RuleName -AutoSize |
+                  Out-String -Width 200 | Write-Host
+          }
+          # Falla solo con errores reales de sintaxis/análisis (Error/ParseError). Los Warnings
+          # (p.ej. Write-Host intencionado en los hooks) se imprimen pero no rompen el build.
+          $errors = @($findings | Where-Object { $_.Severity -in @('Error', 'ParseError') })
+          if ($errors.Count -gt 0) {
+              Write-Host "::error::PSScriptAnalyzer encontró $($errors.Count) problema(s) de severidad Error/ParseError"
+              exit 1
+          }
+          Write-Host "PSScriptAnalyzer OK — sin errores (los warnings son informativos)"

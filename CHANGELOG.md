@@ -1,5 +1,26 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.0 — 2026-07-22
+
+### Higiene de proyecto: manifiesto de dependencias + CI
+
+Infraestructura de desarrollo que faltaba por completo en el repo. No cambia el runtime del plugin.
+
+- **`requirements.txt`** — el MCP server importa `from mcp.server.fastmcp import FastMCP`
+  (`mcp/rs-workspace-server.py`), una dependencia de terceros que hasta ahora no estaba declarada en
+  ninguna parte (solo prosa en el README). Se fija `mcp>=1.2.0` (piso donde `mcp.server.fastmcp` es
+  estable). Las CLIs externas (sqlplus, sqlcmd, svn, git, dotnet, msbuild) no son deps Python y se
+  siguen comprobando en runtime.
+- **CI en GitHub Actions** (`.github/workflows/ci.yml`) — primer conjunto de checks automáticos del
+  repo, sobre cada PR y push a `main`:
+  - `py_compile` del MCP server y de los scripts Python.
+  - **Paridad de versión** `plugin.json` == `marketplace.json` + verificación de que `CHANGELOG.md`
+    tiene entrada para esa versión (`.github/scripts/check_version.py`) — automatiza el invariante de
+    publicación del §10 de `docs/plugin-architecture.md`, el error más fácil de cometer al publicar.
+  - **PSScriptAnalyzer** sobre los `.ps1` de `hooks/`, `scripts/` y `runner/`. Falla solo con
+    severidad Error/ParseError (los warnings se listan pero no rompen el build) — caza fallos de
+    sintaxis PowerShell que el entorno Linux de desarrollo no puede validar en vivo.
+
 ## 2.14.1 — 2026-07-22
 
 ### Seguridad y correctitud en el fallback `db-query.ps1` + script de instalación por proyecto
