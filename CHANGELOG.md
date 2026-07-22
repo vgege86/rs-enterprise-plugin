@@ -1,5 +1,33 @@
 # RS Enterprise Agent — Changelog
 
+## 2.15.5 — 2026-07-22
+
+### Fix: inserts del instalador — acentos corruptos y pérdida de filas con salto de línea
+
+Dos bugs en `scripts/installer-inserts.py` (los ficheros `Inserts\<TABLA>.sql` que genera
+`/rs-instalador`).
+
+- **Acentos como caracteres corruptos** — los `.sql` se escribían en UTF-8 **sin BOM**; las
+  herramientas gráficas de Oracle (SQL Developer/TOAD/PL-SQL Developer) asumían Windows-1252 y los
+  acentos salían mal. Ahora se escriben con **BOM UTF-8** (`utf-8-sig`), que esas herramientas
+  detectan. Los ficheros de inserts son independientes (se ejecutan aparte), así que el BOM no afecta
+  a ningún flujo de `@@include`.
+- **Pérdida de filas con salto de línea** — la salida del SELECT se troceaba **por líneas**
+  (`splitlines`), asumiendo "1 fila = 1 línea". Un valor de texto con un salto de línea hacía que la
+  fila ocupara varias líneas de salida; cada trozo quedaba con un nº de campos distinto al esperado y
+  la fila **se descartaba entera** (`-- AVISO fila omitida`). Ahora el SELECT añade un terminador de
+  fila `@@ROWEND@@` y la salida se trocea por ese terminador (`_split_rows`), no por `\n`: los saltos
+  internos de un valor se conservan dentro de su literal SQL (multilínea, válido en Oracle).
+
+Verificado con tests de aislamiento: el nuevo troceo recupera las filas que el viejo perdía por el
+salto de línea, y el fichero se escribe con BOM. (No se puede probar Oracle/sqlplus en el entorno de
+desarrollo Linux; la lógica de parseo y de codificación sí se prueba.)
+
+**Fuera de alcance (deliberado)**: el DDL (`installer-ddl.py`) y los objetos
+(`installer-objects.py`) NO llevan BOM — su maestro `CreacionObjetos.sql` los encadena con `@@`, y un
+BOM en cada sub-fichero podría romper ese `@@include`. Si aparecieran acentos corruptos en
+vistas/triggers, se aborda aparte con otro enfoque.
+
 ## 2.15.4 — 2026-07-22
 
 ### Fix: los slash commands `/rs-*` no mostraban descripción al teclearlos

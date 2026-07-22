@@ -41,6 +41,11 @@ for _s in (sys.stdout, sys.stderr):
 
 DELIM   = "|@#@|"      # separador de columnas en la salida de la query
 NULLTOK = "@@NULL@@"   # sentinel de NULL
+ROWEND  = "@@ROWEND@@" # terminador de fila: se añade al final de cada fila en el SELECT y se usa
+                       # para trocear la salida. Imprescindible porque un valor de texto puede
+                       # contener saltos de línea: si se troceara por '\n' (1 línea = 1 fila) la
+                       # fila se partiría y se perdería. Con el terminador, los '\n' internos de
+                       # un valor se conservan.
 
 NUMERIC_BASES = {
     'NUMBER', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT',
@@ -197,10 +202,12 @@ def build_select(table: str, columns: list, schema: str, motor: str) -> str:
     if motor == "ORACLE":
         exprs[0] = f"TO_CLOB({exprs[0]})"
         concat = f"\n    || '{DELIM}' || ".join(exprs)
+        concat += f"\n    || '{ROWEND}'"   # terminador de fila (sobrevive a '\n' en los valores)
         return f"SELECT\n    {concat}\nFROM {tbl}"
     else:
         # SQL Server: '' + NVARCHAR evita el error de tipo; DELIM entre expresiones
         concat = f"\n    + '{DELIM}' + ".join(exprs)
+        concat += f"\n    + '{ROWEND}'"    # terminador de fila (sobrevive a '\n' en los valores)
         tbl_sql = f"[{schema}].[{table}]" if schema else f"[{table}]"
         return f"SELECT\n    {concat}\nFROM {tbl_sql}"
 
@@ -243,7 +250,7 @@ def run_query_oracle(sql: str, cfg: dict) -> list:
     for ln in out.splitlines():
         if ln.startswith("ORA-") or ln.startswith("SP2-"):
             raise RuntimeError(ln.strip())
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return out   # texto completo; el troceado en filas lo hace _split_rows (por ROWEND, no por \n)
 
 
 def run_query_sqlserver(sql: str, cfg: dict) -> list:
@@ -259,7 +266,20 @@ def run_query_sqlserver(sql: str, cfg: dict) -> list:
     out, err = _decode(r.stdout), _decode(r.stderr)
     if r.returncode != 0:
         raise RuntimeError((err or out).strip())
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return out   # texto completo; el troceado en filas lo hace _split_rows (por ROWEND, no por \n)
+
+
+def _split_rows(out: str) -> list:
+    """Trocea la salida del cliente SQL en filas por el terminador ROWEND — NO por '\\n', porque
+    un valor de texto puede contener saltos de línea (una fila de BD ocuparía varias líneas de
+    salida y se perdería). El salto que el cliente intercala ENTRE filas se recorta de los extremos
+    del trozo; los '\\n' internos de un valor quedan intactos dentro de su campo."""
+    filas = []
+    for trozo in out.split(ROWEND):
+        trozo = trozo.strip("\r\n")
+        if trozo.strip():
+            filas.append(trozo)
+    return filas
 
 
 def format_value(raw: str, cdef: dict, motor: str) -> str:
@@ -306,7 +326,7 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
     lines.append("")
     n = 0
     cols_csv = ", ".join(col_names)
-    for line in rows_raw:
+    for line in _split_rows(rows_raw):
         fields = line.split(DELIM)
         if len(fields) != len(columns):
             lines.append(f"-- AVISO fila omitida (nº campos {len(fields)} != {len(columns)}): {line[:120]}")
@@ -319,7 +339,10 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
         lines.append("-- (sin filas)")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
+    # utf-8-sig (BOM): las herramientas gráficas Oracle (SQL Developer/TOAD/PL-SQL Developer)
+    # detectan el BOM y leen el fichero como UTF-8; sin él asumen Windows-1252 y los acentos
+    # salen como caracteres corruptos.
+    with open(out_path, "w", encoding="utf-8-sig") as f:
         f.write("\n".join(lines) + "\n")
     return ("OK", n, "")
 
