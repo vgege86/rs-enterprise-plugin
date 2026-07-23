@@ -51,7 +51,7 @@ El **planner es el cerebro**: analiza el cambio con acceso al modelo BD y al có
 
 ```
 resolver .sln → scope → planner → [aprobación humana] → STAGES → checklist → log
-   STAGES ⊆ { core, validator, tester, build, db-modeler, documentar }  (en ese orden)
+   STAGES ⊆ { core, plan-check, validator, tester, build, db-modeler, documentar }  (en ese orden)
 ```
 
 | Etapa | Agente | Cuándo la incluye el planner en STAGES |
@@ -61,6 +61,8 @@ resolver .sln → scope → planner → [aprobación humana] → STAGES → chec
 | (2) | planner 🟣 | Siempre — analiza y decide STAGES |
 | (2b) | **Aprobación humana** | Siempre — gate bloqueante (`references/gates.md`) |
 | `core` | core 🟣 | Siempre — implementa el cambio (lee docs si el plan lo marca) |
+| `plan-check` | plan-check 🔷 | Siempre tras core — verifica que el código cubre todos los ítems del PLAN aprobado (red de seguridad: también si el planner lo omite) |
+| — | core (reintento) 🟣 | Si plan-check devuelve INCOMPLETE (máx 1 ciclo; agotado → escala al usuario) |
 | `validator` | validator 🔷 | Siempre — compila + análisis estático + lógica (absorbe el antiguo analyzer) |
 | — | fixer 🟣 | Si validator falla (máx 2 ciclos, compartidos con tester) |
 | `tester` | tester 🔷 | Si hay lógica testeable o es Online y toca controles/idiomas |
@@ -319,7 +321,7 @@ skills/
     SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
   rs-jira/
     SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   28 subagentes: pipeline y modos directos
+agents/                   29 subagentes: pipeline y modos directos
 commands/                 definiciones de slash commands
 hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
 mcp/                      servidor MCP con 40 tools

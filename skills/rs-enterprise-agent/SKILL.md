@@ -91,7 +91,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 
 **1. Resolver solución** → `mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution(sln_path)` (fallback `hooks/validate-solution.ps1`).
 **1b. Scope** (una sola vez) → `mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope(sln_path)` → `scope_dirs`, `tipo`, `workspace`. Reenviar a TODAS las etapas.
-**2. Planner** → Task `rs-enterprise-agent:rs-editor-planner` (+ `cambio` = texto de la petición). Es **el cerebro**: analiza con acceso al modelo BD y al código, clasifica la tarea contra el índice maestro técnico (tabla tarea→docs), y devuelve el bloque `PLAN` legible + `STAGES` + `READ_DOCS` (docs técnicos que core debe leer + CHECKLIST) + `CONTEXT` + `STATUS`. El pipeline nunca llega a Core sin un `PLAN`.
+**2. Planner** → Task `rs-enterprise-agent:rs-editor-planner` (+ `cambio` = texto de la petición). Es **el cerebro**: analiza con acceso al modelo BD y al código, clasifica la tarea contra el índice maestro técnico (tabla tarea→docs), y devuelve el bloque `PLAN` legible + `STAGES` + `READ_DOCS` (docs técnicos que core debe leer + CHECKLIST) + `CONTEXT` + `STATUS`. El pipeline nunca llega a Core sin un `PLAN`. Cuando `STAGES` incluye `core`, el planner coloca `plan-check` **justo después** — la etapa que verifica que el código cubre todos los ítems del `PLAN` aprobado (red de seguridad en el paso 3 si el planner lo omitiera).
    - `STATUS: NEEDS_INPUT` → resolver con el usuario antes de seguir.
    - ⛔ **Verificar el contrato:** si la respuesta NO contiene un bloque `STAGES`, el planner que ha corrido es de una versión antigua (contrato `SUMMARY`+`STATUS` sin `PLAN`/`STAGES`). Detener y reportar: "planner devolvió contrato antiguo — se está ejecutando una copia obsoleta del agente; revisa `~/.claude/agents/` y ejecuta `/rs-env`". ⛔ Nunca continuar a Core: sin `PLAN` no hay nada que aprobar y el Gate A se saltaría en silencio.
 **2b. Aprobación del plan** → **Gate A** (`references/gates.md`). ⛔ PARADA: presentar el `PLAN` y detener el turno hasta aprobación explícita. No invocar Core en el mismo turno.
@@ -100,6 +100,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 | Token | Subagente | Handoff extra | Devuelve |
 |-------|-----------|---------------|----------|
 | `core` | `rs-enterprise-agent:rs-editor-core` | `plan`, `cambio`, `READ_DOCS` (docs técnicos + CHECKLIST) | `FILES_CHANGED`, `TABLES_TOUCHED`, `IDIOMAS_HINT`, `NEW_PATTERN`, `STATUS` |
+| `plan-check` | `rs-enterprise-agent:rs-editor-plan-check` | `plan`, `FILES_CHANGED` | `STATUS: OK\|INCOMPLETE` + `MISSING` |
 | `validator` | `rs-enterprise-agent:rs-editor-validator` | `FILES_CHANGED` | `STATUS: OK\|FAIL` + `ERRORS` |
 | `tester` | `rs-enterprise-agent:rs-editor-tester` | `FILES_CHANGED`, `IDIOMAS_HINT`, confirmación Validator PASS | `STATUS: OK\|FAIL\|NEEDS_TESTS` |
 | `build` | `rs-enterprise-agent:rs-editor-build` | `tipo`, `workspace` | `SUMMARY` con evidencia de copia a AIS |
@@ -108,6 +109,8 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 
 Control de flujo (vive en el orquestador):
 - **core** `STATUS=FAIL` (duda bloqueante) → detener, escalar, ir a Log con `status="partial"`.
+- **plan-check** `INCOMPLETE` → reinvocar `core` (+ `MISSING`, `plan`, foco en el hueco) → nuevo `FILES_CHANGED` → volver a plan-check. **Máx 1 ciclo** de re-implementación (independiente del presupuesto de fixer); si sigue `INCOMPLETE` → detener, escalar al usuario (el hueco requiere decisión funcional, no reintento ciego), Log `partial`. Ruta a `core`, no a `fixer`: un ítem faltante suele ser lógica nueva, y `fixer` tiene prohibido añadirla.
+- **Red de seguridad plan-check:** si `core` corrió y `plan-check` NO estaba en `STAGES` → ejecutarlo igualmente antes de validator y anotarlo (misma corrección empírica permitida que db-modeler). Sin él, un `core` que implementa medio plan pasaría en silencio.
 - **validator** FAIL → `rs-editor-fixer` (+ `ERRORS`, `FILES_CHANGED`) → nuevo `FILES_CHANGED` → volver a validator. Máx **2 ciclos totales** (compartidos con tester). Agotado o `NO SAFE FIX` → detener, escalar, Log `partial`.
 - **tester** `NEEDS_TESTS` → `rs-crear-tests` (+ `FILES_CHANGED`) → reinvocar tester con marca anti-bucle. Advisory: si no compilan los tests, no abortar — continuar y Log `partial` motivo "tests pendientes". `FAIL` → fixer → validator → tester (mismo límite de 2 ciclos).
 - **build** solo si validator PASS + tester OK (o tester no estaba en `STAGES`) + sin dudas abiertas.

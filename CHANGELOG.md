@@ -1,5 +1,35 @@
 # RS Enterprise Agent — Changelog
 
+## 2.18.0 — 2026-07-23
+
+### Feat: nueva etapa `plan-check` — verifica que el código cumple el PLAN aprobado
+
+Hasta ahora el pipeline no tenía ningún agente que comprobara que el código implementado por `core`
+cubría lo que el `PLAN` del planner prometía. `validator` y `tester` reciben solo `FILES_CHANGED`
+(juzgan la calidad/lógica del **cambio**, no su completitud respecto al plan) y `core` recibe el
+`plan` pero es quien lo implementa — nadie cerraba el círculo. Un `core` que implementaba medio plan
+y compilaba pasaba en silencio a build.
+
+**Nuevo agente `rs-editor-plan-check`** (🔷 Sonnet, read-only): descompone el `PLAN` aprobado en
+ítems accionables y busca evidencia concreta de cada uno en `FILES_CHANGED` (`search_code` /
+`find_symbol` / `batch_find_symbols` acotados a `scope_dirs`). Devuelve el contrato
+`STATUS: OK|INCOMPLETE` + `MISSING`. Sonnet, no Haiku: mapear ítem de plan (lenguaje natural) →
+evidencia semántica en código exige juicio; un falso `OK` reabre exactamente el hueco que la etapa
+existe para tapar. Anti-ruido: solo bloquea con certeza alta de ausencia, no exige más de lo que el
+plan pide, y no cuenta como faltantes los ítems delegados a otras etapas (idiomas→tester,
+doc→documentar, modelo→db-modeler, tests→crear-tests).
+
+**Cableado (orquestador):** el planner coloca `plan-check` en `STAGES` justo después de `core`.
+Posición: `core → plan-check → validator` (fail-fast antes de compilar/validar). `INCOMPLETE` →
+reinvoca `core` con `MISSING` (máx **1 ciclo**, independiente del presupuesto de fixer; agotado →
+escala al usuario, porque un hueco suele ser lógica nueva y `fixer` no puede añadirla). **Red de
+seguridad** como la de db-modeler: si `core` corrió y `plan-check` no estaba en `STAGES`, el
+orquestador lo ejecuta igualmente antes de validator.
+
+Ficheros: `agents/rs-editor-plan-check.md` (nuevo) · `skills/rs-enterprise-agent/SKILL.md`
+(paso 2, handoff paso 3, control de flujo) · `README.md` (set STAGES + tabla pipeline) ·
+`docs/plugin-architecture.md` (§3 set STAGES, §4 tabla agentes) · bump de versión.
+
 ## 2.17.2 — 2026-07-23
 
 ### Fix: `sync-from-db.ps1` regeneraba el modelo BD en O(n²) → O(n)

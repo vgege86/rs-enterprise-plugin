@@ -106,7 +106,7 @@ solución y scope, y despacha cada etapa como subagente Task-tool aislado.
 ```
 1 resolver .sln → 1b scope → 2 planner (cerebro) → 2b ⛔aprobación humana →
 3 ejecutar STAGES en orden → 4 ⛔checklist → 5 log
-   STAGES ⊆ { core, validator⇄[fixer], tester⇄[crear-tests], build, db-modeler, documentar }
+   STAGES ⊆ { core⇄[plan-check], validator⇄[fixer], tester⇄[crear-tests], build, db-modeler, documentar }
 ```
 
 El **planner** analiza con acceso al modelo BD y al código, y emite `PLAN` (para el humano) + `STAGES`
@@ -153,6 +153,7 @@ Cuerpo en español, arranca con `# Rol`.
 |--------|--------|----------------------|
 | `rs-editor-planner` | **opus** | 2 — cerebro: analiza (modelo BD + `db_query` + símbolos) y decide `STAGES` |
 | `rs-editor-core` | opus | `core` |
+| `rs-editor-plan-check` | sonnet | `plan-check` — verifica cobertura del PLAN tras core (INCOMPLETE ⇄ core, máx 1 ciclo) |
 | `rs-editor-validator` | sonnet | `validator` (absorbe el antiguo analyzer) |
 | `rs-editor-fixer` | opus | ciclo de `validator`/`tester` |
 | `rs-editor-tester` | sonnet | `tester` |
