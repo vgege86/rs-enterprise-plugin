@@ -7,3 +7,7 @@
 # El resto de herramientas (sqlplus, sqlcmd, svn, git, dotnet, msbuild/vswhere) son CLIs externas
 # del sistema, no paquetes Python — se comprueban en runtime (_check_svn_cli/_check_git_cli).
 mcp>=1.2.0
+
+# Dev/test: tests unitarios de las funciones puras del MCP (tests/test_mcp.py). Solo para CI/desarrollo,
+# no lo necesita el runtime del server. Tope superior conservador para no arrastrar un major nuevo.
+pytest>=7.0,<9

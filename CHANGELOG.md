@@ -1,5 +1,142 @@
 # RS Enterprise Agent — Changelog
 
+## 2.21.0 — 2026-07-23
+
+### Feat: tests del plugin + dashboard de estadísticas + 4 modos directos
+
+Tercera tanda. Además de modos nuevos, esta versión introduce la **primera suite de tests del propio
+plugin** y un **dashboard visual**.
+
+**Tests del plugin (CI).** Hasta ahora el CI solo hacía `py_compile` + PSScriptAnalyzer; ni una prueba
+funcional sobre las 42 tools ni los 47 hooks.
+- `tests/test_mcp.py` (**pytest**, 15 casos): funciones puras de `mcp/rs-workspace-server.py` —
+  `_resolve_workspace`, `_get_db_password` (parseo de connection string), `_parse_resultset`
+  (CSV Oracle / separador SQL Server), `_diff_summary`, `_proyecto`. Cargadas por `importlib` sin
+  arrancar el server.
+- `tests/DbQuery.Tests.ps1` (**Pester**): la guarda read-only de `hooks/db-query.ps1` rechaza
+  multi-statement, CTE con verbo de escritura y no-SELECT (sin necesidad de BD).
+- `.github/workflows/ci.yml`: nuevo paso `pytest` (job Python) y paso `Invoke-Pester` (job PowerShell).
+  `requirements.txt` añade `pytest` (dev). ⚠️ Los tests **no** modifican código sensible de seguridad;
+  ejercitan la guarda SQL como caja negra.
+
+**`/rs-dashboard` (`rs-dashboard`, ⚡ Haiku)** — dashboard HTML autónomo de `executions/history.json`
+(KPIs, distribución por estado, top soluciones, agentes, tendencia 7 días), tema claro/oscuro, sin
+dependencias externas. Reproduce el patrón de `render_erd`: script `scripts/render-dashboard.py` +
+plantilla `scripts/dashboard-template.html` + hook `hooks/render-dashboard.ps1` + tool MCP
+`render_dashboard` (genera el fichero, **no** lo carga en contexto). Versión visual de `/rs-stats`.
+**MCP 41 → 42 tools; hooks +`render-dashboard.ps1`.**
+
+**`/rs-explicar` (`rs-explicar`, 🔷 Sonnet)** — explica en lenguaje natural qué hace una
+clase/método/proceso, su flujo de datos y efectos laterales (onboarding). Distinto de `/rs-doc` (que
+persiste un resumen): explicación puntual bajo demanda.
+
+**`/rs-doc-drift` (`rs-doc-drift`, 🔷 Sonnet)** — cruza los cambios recientes (delta VCS) contra la doc
+funcional (`find_doc_section`) y marca secciones obsoletas / incompletas / sin doc. Advisory, no
+reescribe.
+
+**`/rs-test` (`rs-test`, ⚡ Haiku)** — ejecuta `dotnet test` (`run_tests`) y reporta
+passed/failed/skipped, como modo directo sin lanzar el pipeline completo.
+
+**`/rs-format` (`rs-format`, 🟣 Opus)** — auto-fix de convenciones (naming/usings/formato) — el
+complemento de `/rs-audit` (que solo señala). ⛔ Solo formato/naming, **nunca lógica**; ⛔ gate de
+confirmación antes de escribir; renombrados públicos se derivan a `/rs-rename`.
+
+Ficheros: `tests/` (nuevo), `scripts/render-dashboard.py` + `scripts/dashboard-template.html` +
+`hooks/render-dashboard.ps1` + tool `render_dashboard`, `agents/rs-{dashboard,explicar,doc-drift,test,format}.md`,
+`commands/rs-{dashboard,explicar,doc-drift,test,format}.md`, `skills/rs-enterprise-agent/SKILL.md`
+(5 filas), `.github/workflows/ci.yml`, `requirements.txt`, README, `docs/plugin-architecture.md`,
+`references/mcp.md`, `references/hooks.md`, bump de versión. Agentes 40 → 45, comandos 37 → 42.
+
+## 2.20.0 — 2026-07-23
+
+### Feat: seis modos directos nuevos — cobertura, dead-code, rename, seed, comparar-entornos, hotspots
+
+Segunda tanda de modos directos (tras 2.19.0). **Todos son agente-solo, sin hooks ni tools MCP
+nuevos** — reutilizan tools existentes (`find_symbol`, `search_code`, `get_table_schema`,
+`db_query` con su parámetro `conexion`, `git_log`/`svn_log`, `map_dependencies`) y las reglas de
+dominio ya escritas (`references/bd.md`, `references/testing.md`, `scripts/installer-inserts.py` como
+referencia de formato de literales). Superficie mínima: solo markdown (agente + comando + fila en
+`SKILL.md`) por modo. El conteo de tools MCP se mantiene en 41.
+
+**`/rs-cobertura` (`rs-cobertura`, 🔷 Sonnet)** — mapa de cobertura de tests: cruza la superficie
+pública del scope contra los proyectos de test (mismo criterio que `test-runner-check.ps1`) y reporta
+qué clases/métodos (DALC/BUS primero) no tienen test. Cobertura aproximada por referencia, no por
+ejecución. Cierra el hueco entre `/rs-crear-tests` (genera) y saber dónde faltan.
+
+**`/rs-dead-code` (`rs-dead-code`, 🔷 Sonnet)** — el inverso de `/rs-impacto`: símbolos con cero
+referencias en el scope. ⛔ Marca como "no concluyente" (nunca muerto) los puntos de entrada, handlers
+`.aspx`, reflexión/DI, interfaces públicas y overrides. Advisory, no borra.
+
+**`/rs-rename` (`rs-rename`, 🟣 Opus)** — renombrado seguro: localiza todas las referencias (como
+`/rs-impacto`) y las reescribe. Único modo de esta tanda que **escribe código** → ⛔ gate de
+confirmación humana antes de aplicar `Edit`. Avisa de referencias cross-solución (`map_dependencies`)
+y de colisiones; recomienda validar con `/rs-review` o el pipeline tras aplicar.
+
+**`/rs-seed` (`rs-seed`, 🔷 Sonnet)** — genera INSERTs **sintéticos** de prueba respetando
+tipo/longitud/nullabilidad/FKs/unicidad del modelo (`get_table_schema`). Literales por motor según
+`references/bd.md`; salida a `C:\AIS\<proyecto>\scripts\`. ⛔ No ejecuta contra la BD. Complementa el
+instalador (que vuelca paramétricas reales).
+
+**`/rs-comparar-entornos` (`rs-comparar-entornos`, 🔷 Sonnet)** — diff de esquema entre **dos
+conexiones** de `.rs-databases.json` (p.ej. dev vs pro) vía `db_query(..., conexion=<id>)` sobre las
+vistas de catálogo. Reporta tablas/columnas/tipos/longitudes/índices divergentes. ⛔ Solo SELECT.
+Complementa `/rs-comparar-modelo` (que compara modelo↔BD viva).
+
+**`/rs-hotspots` (`rs-hotspots`, 🔷 Sonnet)** — puntos calientes de riesgo cruzando churn
+(`git_log`/`svn_log`) con complejidad/tamaño (heurísticas de `rs-auditoria`). Ranking para priorizar
+tests/refactor.
+
+Ficheros: `agents/rs-{cobertura,dead-code,rename,seed,comparar-entornos,hotspots}.md` (nuevos) ·
+`commands/rs-{cobertura,dead-code,rename,seed,comparar-entornos,hotspots}.md` (nuevos) ·
+`skills/rs-enterprise-agent/SKILL.md` (6 filas en `# Modos directos`) · `README.md` ·
+`docs/plugin-architecture.md` · bump de versión. Agentes 34 → 40, comandos 31 → 37.
+
+## 2.19.0 — 2026-07-23
+
+### Feat: cinco modos directos nuevos — review, perf, deshacer, init, release-notes
+
+Ampliación de la superficie de modos directos (sin tocar el pipeline principal). Todos siguen el
+patrón de extensión de `docs/plugin-architecture.md §9` (agente + comando + fila en la tabla
+`# Modos directos` de `SKILL.md`) y **reutilizan** agentes/hooks/tools existentes en vez de duplicar
+lógica.
+
+**`/rs-review` (`rs-review`, 🟣 Opus)** — revisión de un cambio (diff/PR) con **veredicto de bloqueo**
+`APRUEBA | CAMBIOS | BLOQUEA`. Unifica sobre el delta las tres lecturas que hoy están sueltas:
+riesgo técnico (como `rs-analisis`), seguridad (`security_scan`) y compatibilidad BD
+(`references/bd.md`, como `rs-validacion-bd`). Con `--pr <n>` publica el veredicto en el pull request
+vía el MCP `github` (nunca `APPROVE` automático; footer de atribución obligatorio).
+
+**`/rs-perf` (`rs-perf`, 🟣 Opus)** — análisis de rendimiento de acceso a BD: cruza el SQL de los
+DALC del scope contra los índices del modelo (`get_table_schema`) para detectar índices que faltan,
+full-scans, filtros no-sargables (`UPPER(col)=`, `LIKE '%x'`, prefijo de compuesto no usado) y
+`SELECT *` en tablas anchas. Agente-solo, sin hook/tool nuevos. Capacidad de dominio nueva —
+complementa `/rs-validar-bd` (que cubre tipos/longitudes) con el eje de rendimiento.
+
+**`/rs-deshacer` (`rs-deshacer`, 🔷 Sonnet)** — deshace los cambios **pendientes de commit** del
+último cambio del pipeline, revirtiéndolos a su estado versionado. Premisa: en el flujo RS el commit
+es un paso aparte, así que "el último cambio" = los cambios pendientes del working copy en scope;
+`executions/history.json` se usa solo como contexto. ⛔ **Gate de confirmación humana** antes de
+revertir (previsualiza con `dry_run`). Nuevos: hook `hooks/vcs-revert.ps1` + tool MCP `vcs_revert`
+(revierte una lista **explícita** de ficheros; autodetecta SVN/Git; elimina los nuevos, restaura a
+HEAD/versionado los modificados). No toca commits ya hechos ni la BD real.
+
+**`/rs-init` (`rs-init`, 🔷 Sonnet)** — bootstrap de un workspace nuevo: crea `docs/.rs-databases.json`
+(o migra `XMLConfig.xml` con `convert-config.ps1`), el andamiaje `docs/agentic_manual/` y el primer
+`model.json` (`sync_from_db`), y valida con `check_env`. ⛔ Nunca sobrescribe ficheros existentes.
+Complementa `/rs-env` (que solo valida).
+
+**`/rs-release-notes` (`rs-release-notes`, 🔷 Sonnet)** — convierte el historial de commits (SVN/Git,
+vía `svn_log`/`git_log`) en notas de versión funcionales agrupadas (✨ nuevo · 🐛 correcciones ·
+🗄️ BD · ⚙️ interno), en lenguaje de negocio/QA.
+
+**MCP:** 40 → **41 tools** (`vcs_revert`). **Hooks:** +`vcs-revert.ps1`.
+
+Ficheros: `agents/rs-{review,perf,deshacer,init,release-notes}.md` (nuevos) ·
+`commands/rs-{review,perf,deshacer,init,release-notes}.md` (nuevos) · `hooks/vcs-revert.ps1` (nuevo) ·
+`mcp/rs-workspace-server.py` (tool `vcs_revert`) · `skills/rs-enterprise-agent/SKILL.md` (5 filas en
+`# Modos directos`) · `README.md` · `docs/plugin-architecture.md` · `references/mcp.md` ·
+`references/hooks.md` · bump de versión.
+
 ## 2.18.0 — 2026-07-23
 
 ### Feat: nueva etapa `plan-check` — verifica que el código cumple el PLAN aprobado

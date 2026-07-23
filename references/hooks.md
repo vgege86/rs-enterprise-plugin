@@ -78,6 +78,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/sync-indexes.ps1` | `<workspace> [-Proyecto <nombre>]` | Sincroniza índices desde BD al modelo — preserva source=manual |
 | `hooks/analyze-dalc.ps1` | `<workspace> <proyecto> [-SolutionPath <sln>]` | Infiere relaciones desde JOINs/WHERE en DALCs |
 | `hooks/render-erd.ps1` | `<workspace> [-Proyecto <nombre>]` | Genera ERD HTML y lo abre en navegador → `{path, table_count}` |
+| `hooks/render-dashboard.ps1` | `<workspace>` | Genera dashboard HTML de estadísticas (executions/history.json) y lo abre → `{path, opened}`. Fallback 1:1 de `render_dashboard` |
 | `hooks/generate-sql.ps1` | `<workspace> [-Proyecto <nombre>] [-Motor ORACLE\|SQLSERVER]` | Genera DDL SQL → `C:\AIS\<proyecto-lowercase>\scripts\<proyecto>-ddl-<motor>.sql` |
 | `hooks/export-dmd.ps1` | `<workspace> [-Proyecto <nombre>]` | Exporta a Oracle Data Modeler `.dmd` |
 
@@ -96,6 +97,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/git-log.ps1` | `<workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits Git → JSON, `revision` = hash corto (requiere git CLI) |
 | `hooks/git-diff-revision.ps1` | `<workspace> <revisions> [-MaxDiffChars 15000]` | Diff de commits Git (hashes coma-separados) → `files_changed, combined_diff` (requiere git CLI) |
 | `hooks/git-add.ps1` | `<workspace> [-Files <lista>]` | Añade ficheros ??: CLI → TortoiseGitProc → instrucciones manuales |
+| `hooks/vcs-revert.ps1` | `<workspace> -Files <lista ;-sep> [-DryRun]` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `-DryRun` devuelve el plan sin ejecutar. Fallback 1:1 de `vcs_revert` |
 
 ## Entorno / Logging
 

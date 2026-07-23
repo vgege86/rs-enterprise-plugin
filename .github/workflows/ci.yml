@@ -18,17 +18,22 @@ jobs:
         run: python -m py_compile $(find mcp scripts -name '*.py' -print)
       - name: Paridad de versión plugin.json/marketplace.json + entrada CHANGELOG
         run: python .github/scripts/check_version.py
+      - name: Instalar dependencias (incluye pytest)
+        run: pip install -r requirements.txt
+      - name: pytest (funciones puras del MCP)
+        run: pytest tests/ -q
 
   powershell:
     name: PowerShell (PSScriptAnalyzer)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar PSScriptAnalyzer
+      - name: Instalar PSScriptAnalyzer + Pester
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -SkipPublisherCheck -Scope CurrentUser
       - name: Analizar hooks/, scripts/, runner/
         shell: pwsh
         run: |
@@ -46,3 +51,12 @@ jobs:
               exit 1
           }
           Write-Host "PSScriptAnalyzer OK — sin errores (los warnings son informativos)"
+      - name: Pester (guarda read-only de db-query.ps1)
+        shell: pwsh
+        run: |
+          $res = Invoke-Pester -Path tests/ -PassThru -Output Detailed
+          if ($res.FailedCount -gt 0) {
+              Write-Host "::error::Pester: $($res.FailedCount) test(s) fallando"
+              exit 1
+          }
+          Write-Host "Pester OK — $($res.PassedCount) test(s) en verde"

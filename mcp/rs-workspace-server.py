@@ -587,6 +587,15 @@ def git_add(workspace: Workspace, files: str = "") -> str:
     return json.dumps(_run_ps("git-add.ps1", *args), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Revierte una lista EXPLÍCITA de ficheros a su estado versionado (SVN o Git), o los elimina si son nuevos/sin versionar. Autodetecta el motor. files = rutas separadas por ';' (absolutas o relativas a la raíz del repo). dry_run=True devuelve el plan sin ejecutar. ⛔ Solo toca los ficheros indicados — pensado para deshacer los cambios pendientes del último cambio del pipeline (rs-deshacer), previa confirmación humana.")
+def vcs_revert(workspace: Workspace, files: str, dry_run: bool = False) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    args = [workspace, "-Files", files]
+    if dry_run:
+        args.append("-DryRun")
+    return json.dumps(_run_ps("vcs-revert.ps1", *args), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Escanea código → SQL injection, credenciales hardcodeadas, XSS, input sin validar. Findings con severidad y archivo:línea.")
 def security_scan(sln_path: str) -> str:
     return json.dumps(_run_ps("security-scan.ps1", sln_path), ensure_ascii=False, indent=2)
@@ -665,6 +674,12 @@ def analyze_dalc(workspace: Workspace, sln_path: str = "") -> str:
 def render_erd(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("render-erd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, indent=2)
+
+
+@mcp.tool(description="Genera un dashboard HTML de estadísticas del pipeline (executions/history.json: total, tasa de éxito, top soluciones, agentes, tendencia 7 días) y lo abre en el navegador. Devuelve la ruta — no carga el HTML en contexto.")
+def render_dashboard(workspace: Workspace) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    return json.dumps(_run_ps("render-dashboard.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Esquema completo (columnas con tipo/nullable/pk, relaciones, índices) de tablas específicas del modelo BD. Evita cargar model.json completo (~180K tokens). tables = coma-separadas.")

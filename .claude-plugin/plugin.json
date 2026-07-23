@@ -1,7 +1,7 @@
 {
   "name": "rs-enterprise-agent",
   "description": "Agente C# senior para soluciones uCollect/RS. Usar SIEMPRE que el mensaje mencione un fichero .sln o una solución RS (RSProc*, AgendaWeb, AISServiceManager...), aunque el patrón no sea exacto: \"Solucion.sln - cambio a realizar\" dispara el pipeline completo (planificación, análisis, validación, testing, build). También para auditoría, impacto, ERD/modelo BD, scripts de idiomas, commits (SVN o Git, autodetectado) o documentación sobre una solución.",
-  "version": "2.18.0",
+  "version": "2.21.0",
   "author": {
     "name": "RS"
   },
