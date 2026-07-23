@@ -170,7 +170,15 @@ Ejemplos: `rs-auditoria`, `rs-analisis`, `rs-impacto`, `rs-validacion-bd`, `rs-e
 SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-comparar-modelo`,
 `rs-generar-dalc`, `rs-estructura`, `rs-dependencias`, `rs-validar-entorno`, `rs-historial`,
 `rs-stats`, `rs-validar-req`, `rs-instalador`, `rs-review`, `rs-perf`, `rs-deshacer` (los tres
-autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`.
+autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`, `rs-cobertura`, `rs-dead-code`,
+`rs-rename`, `rs-seed`, `rs-comparar-entornos`, `rs-hotspots`.
+
+Segunda tanda de modos directos (v2.20.0), todos **agente-solo** (sin hooks/tools nuevos): `rs-cobertura`
+(sonnet) mapa de cobertura de tests; `rs-dead-code` (sonnet) inverso de `rs-impacto`, símbolos sin
+referencias; `rs-rename` (opus) renombrado de símbolo + referencias con **gate de confirmación** (único
+que escribe código en esta tanda); `rs-seed` (sonnet) INSERTs sintéticos respetando el esquema del
+modelo; `rs-comparar-entornos` (sonnet) diff de esquema entre dos conexiones vía
+`db_query(..., conexion=<id>)`; `rs-hotspots` (sonnet) churn VCS × complejidad.
 
 `rs-review` (`/rs-review`, opus) revisa un diff/PR con veredicto `APRUEBA|CAMBIOS|BLOQUEA` combinando
 riesgo técnico + seguridad + BD sobre el delta (reutiliza las reglas de `rs-analisis`/`rs-validacion-bd`

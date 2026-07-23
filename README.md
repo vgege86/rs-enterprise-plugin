@@ -119,6 +119,21 @@ Revisión de un cambio (diff/PR) con **veredicto** `APRUEBA | CAMBIOS | BLOQUEA`
 Análisis de rendimiento de acceso a BD: cruza el SQL de los DALC contra los índices del modelo para detectar índices que faltan, full-scans, filtros no-sargables y `SELECT *` en tablas anchas. Complementa `/rs-validar-bd` con el eje de rendimiento. Ejemplo: `/rs-perf RSProcIN.sln CobrosDalc.cs`
 
 ```
+/rs-dead-code <Solution>.sln
+```
+Inverso de `/rs-impacto`: clases, métodos y DALCs con **cero referencias** en el scope, candidatos a eliminar. Marca como "no concluyente" los puntos de entrada, handlers `.aspx`, reflexión e interfaces públicas. Advisory, no borra.
+
+```
+/rs-rename <Solution>.sln <viejo> a <nuevo>
+```
+Renombra un símbolo (clase/método/propiedad/tabla) y **todas** sus referencias del scope. ⛔ Muestra el plan y pide confirmación antes de reescribir. Avisa de referencias en otras soluciones que quedarían rotas. Ejemplo: `/rs-rename RSProcIN.sln GrabarCobro a RegistrarCobro`
+
+```
+/rs-hotspots <Solution>.sln
+```
+Puntos calientes de riesgo: cruza la frecuencia de cambios (churn VCS) con la complejidad/tamaño del código para señalar dónde invertir en tests/refactor. Advisory.
+
+```
 /rs-schema <tabla|keyword>
 ```
 Esquema real de una o varias tablas: columnas, tipos, longitudes, nullabilidad, índices. Consulta pura (no genera DDL/ERD — para eso `/rs-erd`). Ejemplo: `/rs-schema RCLIENTES`
@@ -206,6 +221,16 @@ Drift entre `BD/<proyecto>-model.json` y el esquema real. Ofrece generar scripts
 Sincroniza índices desde la BD real al modelo (solo Oracle). Preserva índices `source=manual`.
 
 ```
+/rs-seed <Solution>.sln <tabla> [N]
+```
+Genera INSERTs **sintéticos** de prueba para una tabla (dev/test), respetando tipo, longitud, nullabilidad, FKs y unicidad del modelo. Escribe un `.sql` en `C:\AIS\<proyecto>\scripts\`; no lo ejecuta. Complementa el instalador (que vuelca paramétricas reales). Ejemplo: `/rs-seed RSProcIN.sln RCLIENTES 20`
+
+```
+/rs-comparar-entornos [id1] [id2] [tablas]
+```
+Diff de esquema entre **dos conexiones** de `.rs-databases.json` (p.ej. dev vs pro): tablas/columnas/tipos/longitudes/índices divergentes. Solo lectura (SELECT). Detecta desincronizaciones antes de un despliegue. Ejemplo: `/rs-comparar-entornos dev pro`
+
+```
 /rs-generar-dalc <NombreTabla> en <Solution>.sln
 ```
 Genera clases DALC completas desde el modelo BD. Ejemplo: `/rs-generar-dalc RCLIENTES en RSProcIN.sln`
@@ -234,6 +259,11 @@ y pregunta si añadir alguno más. Las tablas paramétricas salen de `subviews["
 /rs-crear-tests <Solution>.sln
 ```
 Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios para las clases públicas.
+
+```
+/rs-cobertura <Solution>.sln
+```
+Mapa de cobertura de tests: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Cobertura aproximada (por referencia, no por ejecución). Complementa `/rs-crear-tests` mostrando dónde faltan.
 
 ### Documentación e idiomas
 
@@ -346,7 +376,7 @@ skills/
     SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
   rs-jira/
     SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   34 subagentes: pipeline y modos directos
+agents/                   40 subagentes: pipeline y modos directos
 commands/                 definiciones de slash commands
 hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
 mcp/                      servidor MCP con 41 tools

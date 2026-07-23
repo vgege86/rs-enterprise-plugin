@@ -147,8 +147,12 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Análisis de cambio 🔷 | `/rs-analizar`, "analiza este diff/cambio en X" | `detect_vcs` → `rs-analisis` (análisis estático del delta) |
 | Revisión / PR 🟣 | `/rs-review`, "revisa este cambio", "revisa el PR" | `detect_vcs` → `rs-review` (veredicto APRUEBA/CAMBIOS/BLOQUEA: riesgo + seguridad + BD sobre el delta; opcional publica en PR de GitHub) |
 | Impacto 🔷 | `/rs-impacto`, "impacto de cambiar X" | `rs-impacto` |
+| Código muerto 🔷 | `/rs-dead-code`, "qué código no se usa en X", "código muerto de X" | `rs-dead-code` (inverso de impacto: símbolos sin referencias; advisory, no borra) |
+| Renombrar 🟣 | `/rs-rename`, "renombra X a Y en Z" | `rs-rename` (renombra símbolo + todas sus referencias; ⛔ gate de confirmación antes de escribir) |
 | Validación BD 🔷 | `/rs-validar-bd`, "valida este DALC contra la BD" | `rs-validacion-bd` (tipos/longitudes/nullabilidad/motor código↔BD) |
 | Rendimiento BD 🟣 | `/rs-perf`, "rendimiento de queries de X", "faltan índices en X" | `rs-perf` (cruza SQL de DALC contra índices del modelo: full-scans, no-sargables, SELECT *) |
+| Datos de prueba 🔷 | `/rs-seed`, "genera datos de prueba de X", "seed de la tabla Y" | `rs-seed` (INSERTs sintéticos respetando tipo/longitud/null/FKs; genera .sql, no ejecuta) |
+| Comparar entornos 🔷 | `/rs-comparar-entornos`, "diferencias de esquema entre dev y pro" | `rs-comparar-entornos` (diff de esquema entre dos conexiones de .rs-databases.json vía db_query) |
 | Esquema BD ⚡ | `/rs-schema`, "muéstrame las columnas de X", "esquema de tabla Y" | `rs-esquema` (consulta pura de esquema) |
 | Diff ⚡ | `/rs-diff`, "qué cambió en X" | `detect_vcs` → `rs-diff` (ramifica svn/git) |
 | Historial ⚡ | `/rs-historial`, "ejecuciones recientes" | `rs-historial` |
@@ -163,10 +167,12 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Estructura ⚡ | `/rs-estructura`, "qué proyectos tiene X" | `rs-estructura` |
 | Commit 🔷 | `/rs-commit`, "commit X.sln" | `detect_vcs` → `rs-commit` (ramifica svn/git; Git hace commit+push con doble confirmación) |
 | Crear tests 🔷 | `/rs-crear-tests`, "crea tests para X.sln" | `rs-crear-tests` (auto desde pipeline si tester devuelve `NEEDS_TESTS`) |
+| Cobertura de tests 🔷 | `/rs-cobertura`, "qué falta por testear en X", "cobertura de X" | `rs-cobertura` (mapa de clases/métodos públicos sin test; advisory) |
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |
 | Notas de versión 🔷 | `/rs-release-notes`, "genera notas de versión", "changelog funcional de X" | `detect_vcs` → `rs-release-notes` (agrupa commits SVN/Git en notas funcionales) |
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |
 | Dependencias ⚡ | `/rs-deps`, "mapa dependencias" | `rs-dependencias` |
+| Hotspots de riesgo 🔷 | `/rs-hotspots`, "puntos calientes de X", "dónde hay más riesgo en X" | `rs-hotspots` (churn VCS × complejidad → ranking de riesgo; advisory) |
 | Instalador cliente 🟣 | `/rs-instalador`, "prepara el instalador del cliente", "instalación limpia de X" | `rs-instalador` (genera `C:\AIS\<Proyecto>\Instalador`: EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL) |
