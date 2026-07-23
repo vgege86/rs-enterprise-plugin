@@ -1,5 +1,28 @@
 # RS Enterprise Agent — Changelog
 
+## 2.17.2 — 2026-07-23
+
+### Fix: `sync-from-db.ps1` regeneraba el modelo BD en O(n²) → O(n)
+
+El loop de post-proceso de `hooks/sync-from-db.ps1` (regeneración del modelo BD desde el esquema
+real) hacía, **por cada fila** devuelta por la BD (tablas × columnas), dos `Get-Member -Name` sobre
+un `PSCustomObject` que crece: uno para comprobar si la tabla ya existía y otro para la columna.
+`Get-Member` enumera todos los miembros en cada invocación → coste **O(n²)** sobre el total de
+columnas. En una BD con cientos de tablas (p.ej. 362) y miles de columnas, ahí se iba el tiempo de
+la regeneración — no en la I/O de BD, que ya es una única query (JOIN sobre `ALL_TAB_COLUMNS` /
+`INFORMATION_SCHEMA`), no N queries por tabla.
+
+**Fix**: se construye un índice hashtable O(1) de tablas y columnas existentes en la misma pasada
+que ya normalizaba `relations`/`indexes`. El loop de sync sustituye los dos `Get-Member -Name` por
+lookups de hashtable → **O(n)**. Aplica a ambas ramas (Oracle y SQL Server), ya que el índice se
+construye antes del `if ($motor)`.
+
+Sin cambio de comportamiento: se preservan exactamente las semánticas de merge previas —
+`description`/`relations`/`indexes`/`source` de tablas existentes, `description` de columnas
+existentes, y las tablas/columnas desaparecidas de la BD **no se borran** (igual que antes). El
+paralelismo no aplica aquí: la extracción ya es una sola query y el `PSCustomObject` no es
+thread-safe para `Add-Member` concurrente. Ficheros: `hooks/sync-from-db.ps1`.
+
 ## 2.17.1 — 2026-07-23
 
 ### Fix: `ping` trivial (sin subprocesos) + checks svn/git no envenenan la cache con timeouts

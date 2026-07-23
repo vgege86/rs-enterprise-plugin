@@ -82,8 +82,14 @@ if (Test-Path $modelPath) {
 # --- Normalizar arrays de relations (fix PS 5.1: ConvertFrom-Json deserializa arrays de 1 elemento
 #     como PSCustomObject en vez de array. Al serializar de vuelta con ConvertTo-Json se pierde la
 #     estructura de array y las relaciones quedan corrompidas o desaparecen) ---
-foreach ($tName in ($model.tables | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name)) {
-    $t = $model.tables.$tName
+# Indice O(1) de tablas/columnas existentes: sin el, el loop de sync haria un `Get-Member -Name`
+# por fila (tablas x columnas) sobre un PSCustomObject que crece → O(n²). Se construye en la misma
+# pasada que la normalizacion de relations/indexes. $tblIdx[$tabla] = @{ obj = <PSCustomObject tabla>;
+# cols = @{ <col>: <PSCustomObject col> } }.
+$tblIdx = @{}
+foreach ($tp in $model.tables.PSObject.Properties) {
+    $tName = $tp.Name
+    $t     = $tp.Value
     # Normalizar relations (PS 5.1: array de 1 elemento deserializa como PSCustomObject)
     $rels = $t.relations
     if ($null -eq $rels) {
@@ -98,6 +104,12 @@ foreach ($tName in ($model.tables | Get-Member -MemberType NoteProperty | Select
     } elseif ($idxs -isnot [System.Array]) {
         $t | Add-Member -Force -NotePropertyName 'indexes' -NotePropertyValue @($idxs)
     }
+    # Index de columnas existentes de esta tabla (para preservar description en O(1))
+    $colSet = @{}
+    if ($t.columns) {
+        foreach ($cp in $t.columns.PSObject.Properties) { $colSet[$cp.Name] = $cp.Value }
+    }
+    $tblIdx[$tName] = @{ obj = $t; cols = $colSet }
 }
 
 # --- Extraer esquema segun motor ---
@@ -149,29 +161,33 @@ EXIT;
 
         if (-not $tableName -or -not $colName) { continue }
 
-        # Tabla
-        if (-not ($model.tables | Get-Member -Name $tableName)) {
-            $model.tables | Add-Member -NotePropertyName $tableName -NotePropertyValue ([PSCustomObject]@{
+        # Tabla (lookup O(1) via indice)
+        $entry = $tblIdx[$tableName]
+        if (-not $entry) {
+            $newTbl = [PSCustomObject]@{
                 description = ""
                 source      = "db"
                 columns     = [PSCustomObject]@{}
                 relations   = @()
                 indexes     = @()
-            })
+            }
+            $model.tables | Add-Member -NotePropertyName $tableName -NotePropertyValue $newTbl
+            $entry = @{ obj = $newTbl; cols = @{} }
+            $tblIdx[$tableName] = $entry
         }
 
-        # Columna (preservar description si ya existe)
-        $existingDesc = ""
-        if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
-        }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
+        # Columna (preservar description si ya existe — lookup O(1))
+        $existingCol  = $entry.cols[$colName]
+        $existingDesc = if ($existingCol) { $existingCol.description } else { "" }
+        $newCol = [PSCustomObject]@{
             type        = $colType
             nullable    = $nullable
             pk          = $isPk
             description = $existingDesc
             source      = "db"
-        })
+        }
+        $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
+        $entry.cols[$colName] = $newCol
     }
 
 } elseif ($motor -eq "SQLSERVER") {
@@ -216,27 +232,33 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 
         if (-not $tableName -or -not $colName) { continue }
 
-        if (-not ($model.tables | Get-Member -Name $tableName)) {
-            $model.tables | Add-Member -NotePropertyName $tableName -NotePropertyValue ([PSCustomObject]@{
+        # Tabla (lookup O(1) via indice)
+        $entry = $tblIdx[$tableName]
+        if (-not $entry) {
+            $newTbl = [PSCustomObject]@{
                 description = ""
                 source      = "db"
                 columns     = [PSCustomObject]@{}
                 relations   = @()
                 indexes     = @()
-            })
+            }
+            $model.tables | Add-Member -NotePropertyName $tableName -NotePropertyValue $newTbl
+            $entry = @{ obj = $newTbl; cols = @{} }
+            $tblIdx[$tableName] = $entry
         }
 
-        $existingDesc = ""
-        if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
-        }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
+        # Columna (preservar description si ya existe — lookup O(1))
+        $existingCol  = $entry.cols[$colName]
+        $existingDesc = if ($existingCol) { $existingCol.description } else { "" }
+        $newCol = [PSCustomObject]@{
             type        = $colType
             nullable    = $nullable
             pk          = $isPk
             description = $existingDesc
             source      = "db"
-        })
+        }
+        $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
+        $entry.cols[$colName] = $newCol
     }
 } else {
     throw "Motor no soportado: $motor (esperado: ORACLE o SQLSERVER)"
