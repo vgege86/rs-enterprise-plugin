@@ -3,6 +3,10 @@
 Servidor MCP local. Preferente sobre hooks — más eficiente en tokens.
 Fallback: hook equivalente listado en `references/hooks.md`.
 
+> El primer parámetro `workspace` (raíz del workspace/trunk) acepta también el alias `path` en la
+> entrada — mismo valor, cualquiera de los dos nombres funciona (ver CHANGELOG 2.15.10). El nombre
+> canónico sigue siendo `workspace`.
+
 | Tool | Uso |
 |------|-----|
 | `ping()` | Health check — **version**, **server_path**, hooks_dir, hooks_found, svn_cli, git_cli, python version. `server_path`/`version` delatan si se está sirviendo una copia obsoleta fuera del plugin |

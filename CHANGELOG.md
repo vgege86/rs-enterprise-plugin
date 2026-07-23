@@ -1,5 +1,59 @@
 # RS Enterprise Agent — Changelog
 
+## 2.16.0 — 2026-07-23
+
+### Feat: `rs-jira` deja 2 comentarios automáticos en la issue (prompt lanzado + resultado final)
+
+La skill `rs-jira` (`/rs-tarea`) ahora registra en la propia issue de Jira, vía
+`addCommentToJiraIssue` (Atlassian Rovo, ya disponible), dos hitos de trazabilidad:
+
+- **Fase 3** — al dar OK a lanzar el orquestador, se comenta el **prompt exacto**
+  (`<Solucion>.sln - <cambio>`) que se pasa al pipeline. La confirmación de Fase 3 pasa a cubrir las
+  tres escrituras: comentario del prompt + transición a "En Proceso" + lanzamiento.
+- **Fase 4** — al cerrar la tarea, además de adjuntar los `.sql` + transicionar a "En Validación" +
+  `log_execution`, se comenta el **resumen final** (el mismo "Informe final": qué se hizo, SQL
+  adjuntados, revisión de commit, estado). Bajo ⛔ confirmación; si el comentario falla, el cierre
+  (commit + transición) ya está hecho → cierre parcial, no cuelga.
+
+Sin cambios en el pipeline, sin tools MCP ni hooks nuevos. `addCommentToJiraIssue` se carga con
+ToolSearch en runtime (patrón deferred ya documentado en la skill).
+
+## 2.15.10 — 2026-07-23
+
+### Fix: tools MCP fallaban cuando el modelo llamaba con `path` en vez de `workspace`
+
+29 tools del MCP `rs-workspace` (+ 4 helpers) declaran `workspace` como primer parámetro. El modelo
+a veces las invocaba con `path` (especialmente VCS/log — `detect_vcs`, `svn_status`, `log_execution` —
+leídas como "opera sobre un path") → pydantic rechazaba con `Field required [workspace]`. El modelo
+reintentaba con `workspace` y funcionaba, pero generaba una llamada fallida + ruido cada vez.
+
+**Fix**: tipo compartido `Workspace = Annotated[str, Field(validation_alias=AliasChoices("workspace",
+"path"), ...)]` en `mcp/rs-workspace-server.py`, aplicado a las 33 firmas `workspace: str`. `"workspace"`
+va primero en `AliasChoices` → el schema expuesto conserva el nombre canónico; `"path"` se acepta solo
+como alias de entrada. Es `Annotated[str]` → runtime idéntico, helpers no afectados.
+
+⚠️ Verificar tras recargar: una llamada con `path=...` debe funcionar Y `workspace=...` seguir OK.
+
+## 2.15.9 — 2026-07-23
+
+### Fix: hooks PowerShell hacían timeout (`UserPromptSubmit hook timed out after 5s/10s — output discarded`)
+
+Los 3 hooks de `plugin.json` (`SessionStart` → `cleanup-preplugin.ps1`, `Stop` → `runner.ps1`,
+`UserPromptSubmit` → `skill-trigger.ps1`) se lanzaban con `powershell -ExecutionPolicy Bypass -File`
+**sin `-NoProfile`**. `-File` carga el perfil de usuario de Windows PowerShell en cada arranque
+(imports de módulos + init), lo que en frío y sobre `cwd` en unidad de red sumaba varios segundos.
+El `UserPromptSubmit` (recordatorio de skill) superaba su timeout de 10s → output descartado → el
+recordatorio no se inyectaba.
+
+**Fix**:
+
+- **`-NoProfile` en los 3 commands** de `.claude-plugin/plugin.json` — corta el arranque de perfil
+  (de segundos a ~200-400ms). Palanca principal.
+- **Timeout `UserPromptSubmit` `10`→`15`** — margen adicional (cinturón + tirantes).
+- **`hooks/skill-trigger.ps1` fail-fast** — el loop `Test-Path` ahora valida primero que `cwd` sea
+  accesible (`Test-Path -LiteralPath $cwd`) y usa `-ErrorAction SilentlyContinue` por marcador, para
+  que una unidad de red lenta/caída no bloquee el `UserPromptSubmit`.
+
 ## 2.15.8 — 2026-07-22
 
 ### Fix: `installer-batch.ps1` — gate de binding redirects (config viejo + DLL nueva → StackOverflow)

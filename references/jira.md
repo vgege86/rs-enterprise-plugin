@@ -68,4 +68,12 @@ Scaffolding rápido: `/rs-tarea init`.
 | Comentar | `addCommentToJiraIssue` (Rovo) |
 | Adjuntar `.sql` | `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach(issue_key, files)` → hook `jira-attach.ps1` |
 
+## Comentarios automáticos de trazabilidad (desde 2.16.0)
+
+La skill deja **dos** comentarios en la issue vía `addCommentToJiraIssue`, ambos bajo confirmación:
+
+- **Fase 3** — el **prompt exacto** (`<Solucion>.sln - <cambio>`) que se pasa al orquestador, al lanzar.
+- **Fase 4** — el **resumen final** de la tarea (mismo "Informe final": qué se hizo, SQL adjuntados,
+  revisión de commit, estado), al cerrar.
+
 ⛔ Rovo usa auth interactiva → la skill no corre en headless/cron.

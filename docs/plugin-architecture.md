@@ -80,7 +80,7 @@ resuelto y verificado (§11.4).
 
 | Fichero | Declara |
 |---------|---------|
-| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 10), inline con `${CLAUDE_PLUGIN_ROOT}` |
+| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 15), inline con `${CLAUDE_PLUGIN_ROOT}`. Los 3 commands se lanzan con `powershell -NoProfile` (evita cargar el perfil de usuario en cada arranque → timeouts; ver CHANGELOG 2.15.9) |
 | `.claude-plugin/marketplace.json` | Entrada de marketplace: un plugin `rs-enterprise-agent`, `source: "./"`, `category: productivity`. Puede llevar su propia `version` |
 | `.mcp.json` | El MCP server `rs-workspace` (type `stdio`, `command: python`, arg `${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py`, env `PYTHONUTF8=1`) |
 
@@ -236,7 +236,12 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 - `scripts/cleanup-preplugin.ps1` — evento `SessionStart`: retira restos de la instalación manual
   pre-plugin que sombrean al plugin (mueve a backup, no borra). Ver CHANGELOG 2.11.0/2.14.0.
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
-  para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS.
+  para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS. Fail-fast si
+  `cwd` es inaccesible (unidad de red caída) para no bloquear el evento.
+
+⚠️ Los 3 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
+de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output discarded`). Ver
+CHANGELOG 2.15.9.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / copy-ais).
 
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:

@@ -108,12 +108,18 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
    gate 2b del pipeline (Fase 3).
 
 ### Fase 3 — Transición a "En Proceso" + lanzamiento
-1. ⛔ Confirmar con el usuario antes de tocar Jira.
+1. ⛔ Confirmar con el usuario antes de tocar Jira. Esta confirmación cubre **tres escrituras**:
+   comentar el prompt (paso 4), transicionar a "En Proceso" (pasos 2-3) y lanzar el pipeline
+   (paso 5). Enumerarlas al pedir la confirmación.
 2. `getTransitionsForJiraIssue(cloudId, issueIdOrKey)` → localizar la transición cuyo destino
    coincide con `statusMap.inProgress` (por nombre; si ambiguo, preguntar). Idempotente: si la
    issue ya está en ese estado → saltar la transición.
 3. `transitionJiraIssue(cloudId, issueIdOrKey, transition)`.
-4. **Lanzar el pipeline**: continuar como orquestador de `skills/rs-enterprise-agent/SKILL.md`
+4. **Nota del prompt** → `addCommentToJiraIssue(cloudId, issueIdOrKey, body=<prompt aprobado>)`: dejar
+   como comentario el prompt exacto `<Solucion>.sln - <cambio>` que se pasará al orquestador, para
+   trazar en Jira qué se lanzó. (Deferred: cargar schema con
+   `ToolSearch("select:mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue")` antes de llamar.)
+5. **Lanzar el pipeline**: continuar como orquestador de `skills/rs-enterprise-agent/SKILL.md`
    (PIPELINE OBLIGATORIO) con el prompt aprobado `<Solucion>.sln - <cambio>`. El pipeline aplica su
    propio gate 2b (aprobación del plan técnico) — es una aprobación **distinta** de la Fase 2
    (encuadre del requisito); ambas se mantienen.
@@ -135,8 +141,15 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
      `getTransitionsForJiraIssue` → `transitionJiraIssue`.
    - **Trazabilidad** → `mcp__plugin_rs-enterprise-agent_rs-workspace__log_execution(workspace, solution, task="<KEY>: <resumen>", status, agents)`
      incluyendo la KEY de Jira, para enlazar issue↔ejecución en `/rs-historial`.
+   - **Nota del resultado** → ⛔ confirmar → `addCommentToJiraIssue(cloudId, issueIdOrKey, body=<resumen
+     final>)`: dejar como comentario el mismo resumen final de la tarea (el "Informe final" del paso 4:
+     qué se hizo, ficheros SQL adjuntados, revisión de commit, estado). Cierra la trazabilidad en la
+     propia issue. (Deferred: cargar schema con
+     `ToolSearch("select:mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue")` antes de llamar.) Si
+     `addCommentToJiraIssue` falla, el cierre (commit + transición) ya está hecho → reportar cierre
+     parcial (sin nota), no colgar.
 4. **Informe final** escaneable: KEY procesada · estado actual en Jira · ficheros SQL adjuntados
-   (si aplica) · revisión de commit.
+   (si aplica) · revisión de commit. Es el mismo texto que se publicó como nota del resultado.
 
 # Límite
 

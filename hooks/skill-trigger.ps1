@@ -19,9 +19,11 @@ $cwd    = "$($payload.cwd)"
 $esWorkspaceRS = $false
 if ($env:RS_WORKSPACE_MATCH) {
     $esWorkspaceRS = $cwd -match $env:RS_WORKSPACE_MATCH
-} else {
+} elseif ($cwd -and (Test-Path -LiteralPath $cwd -ErrorAction SilentlyContinue)) {
+    # Fail-fast: si el cwd es lento/inaccesible (unidad de red caída), no bloquear el
+    # UserPromptSubmit. Cada Test-Path corta con -ErrorAction SilentlyContinue.
     foreach ($marcador in @("Batch\Soluciones", "OnLine\Soluciones", "OnLine\AISServiceManager", "docs\.rs-databases.json")) {
-        if (Test-Path (Join-Path $cwd $marcador)) { $esWorkspaceRS = $true; break }
+        if (Test-Path -LiteralPath (Join-Path $cwd $marcador) -ErrorAction SilentlyContinue) { $esWorkspaceRS = $true; break }
     }
 }
 if (-not $esWorkspaceRS) { exit 0 }

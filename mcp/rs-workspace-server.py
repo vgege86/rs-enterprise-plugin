@@ -12,8 +12,10 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import AliasChoices, Field
 
 SERVER_PATH = Path(__file__).resolve()
 PLUGIN_ROOT = SERVER_PATH.parent.parent
@@ -32,6 +34,15 @@ def _plugin_version() -> str:
 
 mcp = FastMCP("rs-workspace")
 
+# Tipo compartido para el primer parámetro de casi todas las tools. El nombre canónico es
+# "workspace"; se acepta también "path" como alias de entrada porque el modelo a veces lo llama
+# así (tools VCS/log leídas como "opera sobre un path") → evita el error de validación y el
+# reintento. "workspace" va primero en AliasChoices para que el schema expuesto conserve ese
+# nombre. Es Annotated[str] → en runtime es un str normal (helpers no afectados). Ver CHANGELOG 2.15.10.
+Workspace = Annotated[str, Field(
+    validation_alias=AliasChoices("workspace", "path"),
+    description="Ruta absoluta raíz del workspace uCollect/RS (trunk). Acepta también 'path'.")]
+
 _model_cache:  dict[str, tuple[float, dict]] = {}  # path → (mtime, model) — en proceso
 _config_cache: dict[str, tuple[float, dict]] = {}  # workspace → (mtime, config) — en proceso
 _scope_cache:  dict[str, tuple[float, dict]] = {}  # sln_path → (mtime, scope) — en proceso
@@ -47,7 +58,7 @@ def _resolve_workspace(ws: Path) -> Path:
     return ws
 
 
-def _get_config(workspace: str) -> dict:
+def _get_config(workspace: Workspace) -> dict:
     """get-config.ps1 con cache mtime — igual patrón que _get_scope/_load_model.
     Nunca cachea errores: si el workspace no está migrado (o el JSON es inválido), cada
     llamada vuelve a intentarlo — necesario para que convert-config.ps1 se note sin
@@ -142,12 +153,12 @@ def _run_ps(script: str, *args: str) -> dict:
         return {"raw": output, "exit_code": result.returncode, "script": script}
 
 
-def _proyecto(workspace: str) -> str:
+def _proyecto(workspace: Workspace) -> str:
     """Infiere nombre de proyecto desde ruta workspace (carpeta anterior a trunk/)."""
     return Path(workspace).parent.name
 
 
-def _get_db_password(workspace: str, conexion_id: str = "") -> str:
+def _get_db_password(workspace: Workspace, conexion_id: str = "") -> str:
     """Lee password directo de docs/.rs-databases.json — NUNCA pasar por _get_config()/get-config.ps1,
     cuyo dict se devuelve tal cual por la tool get_db_config (no debe filtrar el password al agente).
     conexion_id vacío → conexión principal (conexiones[0]).
@@ -180,7 +191,7 @@ def _get_db_password(workspace: str, conexion_id: str = "") -> str:
         return ""
 
 
-def _check_workspace(workspace: str) -> dict | None:
+def _check_workspace(workspace: Workspace) -> dict | None:
     """Devuelve dict de error si el workspace no existe, None si es válido."""
     if not Path(workspace).exists():
         return {"error": f"Workspace no encontrado: {workspace}", "success": False}
@@ -220,13 +231,13 @@ def validate_solution(sln_path: str) -> str:
 
 
 @mcp.tool(description="Detecta qué VCS hay bajo el workspace subiendo por las carpetas: 'svn', 'git' o 'none'. Llamar antes de cualquier tool svn_*/git_* para saber cuál usar — no hay forma de saberlo sin esto.")
-def detect_vcs(workspace: str) -> str:
+def detect_vcs(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("detect-vcs.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Lee .rs-databases.json → motor, datasource, schema, model_path de la conexión principal, más conexiones[] y motores[]. Usar antes de operaciones BD.")
-def get_db_config(workspace: str) -> str:
+def get_db_config(workspace: Workspace) -> str:
     return json.dumps(_get_config(workspace), ensure_ascii=False, indent=2)
 
 
@@ -267,13 +278,13 @@ def run_tests(sln_path: str, no_build: bool = True, max_failures: int = 10) -> s
 
 
 @mcp.tool(description="Estado SVN del workspace: modificados, añadidos, eliminados, ? sin versionar. Usar para commit/diff.")
-def svn_status(workspace: str) -> str:
+def svn_status(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("svn-diff.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Estado Git del workspace: modificados, staged, sin trackear (??), conflictos (U). Equivalente Git de svn_status — usar detect_vcs primero para saber cuál llamar.")
-def git_status(workspace: str) -> str:
+def git_status(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     if not _check_git_cli():
         return json.dumps({"error": "git CLI no disponible en PATH", "workspace": workspace}, ensure_ascii=False)
@@ -316,7 +327,7 @@ def _parse_resultset(stdout: str, motor: str) -> tuple[list, list, int]:
 
 
 @mcp.tool(description="SELECT directo a una BD de .rs-databases.json (SQL Server u Oracle). SOLO SELECT. conexion = id de conexión; si se omite, la principal. Devuelve columns[] (nombres, una vez) y rows[] (listas de valores en ese mismo orden). max_rows limita filas devueltas en contexto (default 200).")
-def db_query(workspace: str, sql: str, max_rows: int = 200, conexion: str = "") -> str:
+def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str = "") -> str:
     sql_clean = sql.strip().upper()
     if not sql_clean.startswith("SELECT"):
         return json.dumps({"success": False, "error": "Solo se permiten consultas SELECT"}, ensure_ascii=False)
@@ -422,7 +433,7 @@ def db_query(workspace: str, sql: str, max_rows: int = 200, conexion: str = "") 
 
 
 @mcp.tool(description="Compara model.json con esquema real BD → tablas nuevas/eliminadas, columnas añadidas/eliminadas y columnas con tipo o nullable distinto (modified_columns). Usar para detectar drift completo.")
-def compare_model(workspace: str) -> str:
+def compare_model(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("compare-model.ps1", workspace), ensure_ascii=False, indent=2)
 
@@ -433,19 +444,19 @@ def scan_aspx(sln_path: str) -> str:
 
 
 @mcp.tool(description="Registra ejecución del pipeline en executions/history.json. status: success|fail|partial. Llamar al final del pipeline.")
-def log_execution(workspace: str, solution: str, task: str, status: str = "success", agents: str = "") -> str:
+def log_execution(workspace: Workspace, solution: str, task: str, status: str = "success", agents: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("log-execution.ps1", workspace, solution, task, "-Status", status, "-Agents", agents), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Scripts SQL migración desde drift modelo→BD: CREATE TABLE+PK+FK+INDEX (tablas nuevas), ALTER TABLE ADD (columnas nuevas), ALTER TABLE MODIFY (tipo/nullable distinto), DROP COLUMN comentado (columnas en BD no en modelo).")
-def generate_migration(workspace: str) -> str:
+def generate_migration(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("generate-migration.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Historial commits SVN → revisión, autor, fecha, mensaje. solution filtra por texto en mensaje.")
-def svn_log(workspace: str, solution: str = "", limit: int = 10) -> str:
+def svn_log(workspace: Workspace, solution: str = "", limit: int = 10) -> str:
     if not _check_svn_cli():
         return json.dumps({
             "error": "svn CLI no disponible en PATH",
@@ -460,7 +471,7 @@ def svn_log(workspace: str, solution: str = "", limit: int = 10) -> str:
 
 
 @mcp.tool(description="Historial commits Git → revision (hash corto), autor, fecha, mensaje. solution filtra por texto en mensaje. Equivalente Git de svn_log.")
-def git_log(workspace: str, solution: str = "", limit: int = 10) -> str:
+def git_log(workspace: Workspace, solution: str = "", limit: int = 10) -> str:
     if not _check_git_cli():
         return json.dumps({"error": "git CLI no disponible en PATH", "workspace": workspace}, ensure_ascii=False)
     args = [workspace]
@@ -471,7 +482,7 @@ def git_log(workspace: str, solution: str = "", limit: int = 10) -> str:
 
 
 @mcp.tool(description="Busca en docs funcionales secciones relacionadas con keyword → archivo, heading, línea, fragmento.")
-def find_doc_section(workspace: str, keyword: str) -> str:
+def find_doc_section(workspace: Workspace, keyword: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("find-doc-section.ps1", workspace, keyword), ensure_ascii=False, indent=2)
 
@@ -517,7 +528,7 @@ def _diff_summary(diff_text: str, revisions: str, file_header_re: str) -> str:
 
 
 @mcp.tool(description="Diff de revisiones SVN (coma-separadas). summary_only=True → [{file, op, +lines, -lines, symbols[]}] sin código (~500 tokens). summary_only=False → combined_diff completo (~4K tokens). Usar full para rs-validar-req, summary para planificación/historial.")
-def svn_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 15000, summary_only: bool = False) -> str:
+def svn_diff_revision(workspace: Workspace, revisions: str, max_diff_chars: int = 15000, summary_only: bool = False) -> str:
     if not _check_svn_cli():
         return json.dumps({
             "error": "svn CLI no disponible en PATH",
@@ -533,7 +544,7 @@ def svn_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 1500
 
 
 @mcp.tool(description="Diff de commits Git (hashes coma-separados). summary_only=True → [{file, op, +lines, -lines, symbols[]}] sin código (~500 tokens). summary_only=False → combined_diff completo (~4K tokens). Equivalente Git de svn_diff_revision — usar full para rs-validar-req, summary para planificación/historial.")
-def git_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 15000, summary_only: bool = False) -> str:
+def git_diff_revision(workspace: Workspace, revisions: str, max_diff_chars: int = 15000, summary_only: bool = False) -> str:
     if not _check_git_cli():
         return json.dumps({"error": "git CLI no disponible en PATH", "revisions": revisions, "workspace": workspace}, ensure_ascii=False)
     raw = _run_ps("git-diff-revision.ps1", workspace, revisions, "-MaxDiffChars", str(max_diff_chars))
@@ -544,7 +555,7 @@ def git_diff_revision(workspace: str, revisions: str, max_diff_chars: int = 1500
 
 
 @mcp.tool(description="Añade ficheros ? a SVN: CLI → TortoiseProc → instrucciones manuales. files vacío = auto-detectar todos los ? del workspace.")
-def svn_add(workspace: str, files: str = "") -> str:
+def svn_add(workspace: Workspace, files: str = "") -> str:
     args = [workspace]
     if files:
         args += ["-Files", files]
@@ -552,7 +563,7 @@ def svn_add(workspace: str, files: str = "") -> str:
 
 
 @mcp.tool(description="Añade ficheros ?? (sin trackear) a Git: CLI → TortoiseGitProc → instrucciones manuales. files vacío = auto-detectar todos los ?? del workspace. Equivalente Git de svn_add.")
-def git_add(workspace: str, files: str = "") -> str:
+def git_add(workspace: Workspace, files: str = "") -> str:
     args = [workspace]
     if files:
         args += ["-Files", files]
@@ -565,25 +576,25 @@ def security_scan(sln_path: str) -> str:
 
 
 @mcp.tool(description="Actualiza tablas específicas de model.json desde BD real. Llamar post-migración. tables = coma-separadas.")
-def sync_model_tables(workspace: str, tables: str) -> str:
+def sync_model_tables(workspace: Workspace, tables: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("sync-model-tables.ps1", workspace, tables), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Mapa dependencias entre soluciones: proyectos compartidos (impacto), conflictos versión NuGet.")
-def map_dependencies(workspace: str) -> str:
+def map_dependencies(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("map-dependencies.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Valida el entorno de trabajo: .rs-databases.json, ruta AIS, dotnet SDK, SVN, modelo BD, docs agentic. Devuelve checks[] con status OK/WARN/FAIL.")
-def check_env(workspace: str) -> str:
+def check_env(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("check-env.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Genera DDL SQL desde el modelo BD → escribe C:\\AIS\\<proyecto>\\scripts\\<proyecto>-ddl-<motor>.sql. Con motor vacío usa motores[] de .rs-databases.json: si hay más de uno, genera un fichero por motor y devuelve {motores, resultados[]}; si el resultado es único (un motor), devuelve el objeto {path, motor, line_count} sin envolver. El SQL no entra en contexto.")
-def generate_sql(workspace: str, motor: str = "") -> str:
+def generate_sql(workspace: Workspace, motor: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     proyecto = _proyecto(workspace)
 
@@ -607,25 +618,25 @@ def generate_sql(workspace: str, motor: str = "") -> str:
 
 
 @mcp.tool(description="Exporta modelo BD a Oracle Data Modeler (.dmd) → escribe BD/<proyecto>.dmd. Devuelve ruta y nº tablas — el XML no entra en contexto.")
-def export_dmd(workspace: str) -> str:
+def export_dmd(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("export-dmd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Sincroniza tablas y columnas del modelo BD desde el esquema real de la BD. No toca relaciones. Devuelve nº tablas sincronizadas.")
-def sync_from_db(workspace: str) -> str:
+def sync_from_db(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("sync-from-db.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Sincroniza índices Oracle (ALL_INDEXES) al modelo BD JSON. Reemplaza source='db', preserva source='manual'. Solo Oracle. Devuelve index_count y table_count.")
-def sync_indexes(workspace: str) -> str:
+def sync_indexes(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("sync-indexes.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Infiere relaciones entre tablas analizando código DALC (JOINs, WHERE cruzados). Actualiza el modelo JSON. sln_path opcional para limitar scope.")
-def analyze_dalc(workspace: str, sln_path: str = "") -> str:
+def analyze_dalc(workspace: Workspace, sln_path: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     args = [workspace, _proyecto(workspace)]
     if sln_path:
@@ -634,13 +645,13 @@ def analyze_dalc(workspace: str, sln_path: str = "") -> str:
 
 
 @mcp.tool(description="Genera ERD HTML del modelo BD y lo abre en el navegador. Devuelve ruta y nº de tablas — no carga el modelo en contexto.")
-def render_erd(workspace: str) -> str:
+def render_erd(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("render-erd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Esquema completo (columnas con tipo/nullable/pk, relaciones, índices) de tablas específicas del modelo BD. Evita cargar model.json completo (~180K tokens). tables = coma-separadas.")
-def get_table_schema(workspace: str, tables: str) -> str:
+def get_table_schema(workspace: Workspace, tables: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     config = _get_config(workspace)
     if "error" in config: return json.dumps(config, ensure_ascii=False)
@@ -700,7 +711,7 @@ def batch_find_symbols(symbols: str, scope_dirs: str, symbol_type: str = "any", 
 
 
 @mcp.tool(description="Busca patrón regex en archivos del scope de una solución. Reemplaza 3-8× Grep con garantía de scope_dirs. Devuelve [{file,line,match,context}].")
-def search_code(workspace: str, sln_path: str, pattern: str, file_glob: str = "*.cs", context_lines: int = 2, max_results: int = 50) -> str:
+def search_code(workspace: Workspace, sln_path: str, pattern: str, file_glob: str = "*.cs", context_lines: int = 2, max_results: int = 50) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(
         _run_ps("search-code.ps1", workspace, sln_path, pattern, "-Glob", file_glob, "-Context", str(context_lines), "-MaxResults", str(max_results)),
@@ -709,13 +720,13 @@ def search_code(workspace: str, sln_path: str, pattern: str, file_glob: str = "*
 
 
 @mcp.tool(description="Compara solo tablas específicas del modelo con BD real. Usar post-migración cuando se conocen las tablas modificadas. Evita comparar las 362 tablas completas. tables = coma-separadas.")
-def compare_model_tables(workspace: str, tables: str) -> str:
+def compare_model_tables(workspace: Workspace, tables: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("compare-model.ps1", workspace, "-Tables", tables), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Índice ligero del modelo BD: {TABLA: [COL1, COL2, ...]}. ~15K tokens vs 180K del modelo completo. Usar para impact analysis, búsqueda de columnas, verificar qué tablas existen.")
-def get_model_index(workspace: str) -> str:
+def get_model_index(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     config = _get_config(workspace)
     if "error" in config: return json.dumps(config, ensure_ascii=False)
@@ -743,7 +754,7 @@ def get_model_index(workspace: str) -> str:
 
 
 @mcp.tool(description="Busca keyword en nombres de tablas, columnas y descripciones del modelo BD. Alternativa a cargar model.json completo cuando se busca dónde vive un concepto. Devuelve tablas/columnas que hacen match.")
-def search_model(workspace: str, keyword: str) -> str:
+def search_model(workspace: Workspace, keyword: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     config = _get_config(workspace)
     if "error" in config: return json.dumps(config, ensure_ascii=False)
