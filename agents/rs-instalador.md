@@ -50,9 +50,13 @@ Estructura:
   "batch": ["RSProcIN", "RSProcOUT"],
   "agendaweb": { "sln": "AgendaWeb<Proyecto>.sln", "publishProfile": "" },
   "servicemanager": { "modulos": ["AIS.RS.<Proyecto>.API"] },
-  "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [] }
+  "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 }
 }
 ```
+
+`parametricas.max_paralelo` (opcional, default `8`): nº de tablas cuyos inserts se generan en
+paralelo — es también el nº de conexiones BD simultáneas. Bajar si el Oracle del cliente tiene pocas
+sesiones disponibles; subir para acelerar en servidores holgados.
 
 **Si NO existe** → crearlo con interacción:
 - Detectar candidatos para sugerir (no inventar):

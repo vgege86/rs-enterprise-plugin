@@ -25,12 +25,19 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "lib-dbconfig.ps1")
 
-# --- Guarda SELECT-only (misma validación que la tool MCP db_query, rs-workspace-server.py) ---
+# --- Guarda solo-lectura (misma validación que la tool MCP db_query, rs-workspace-server.py) ---
 # Este hook es el fallback 1:1 de esa tool; sin esta guarda ejecutaría cualquier sentencia
 # (DROP/DELETE/bloque PL/SQL) interpolada directamente en el script sqlplus.
-$sqlTrim = $Sql.Trim()
-if (-not $sqlTrim.ToUpper().StartsWith("SELECT")) {
-    @{ success = $false; error = "Solo se permiten consultas SELECT" } | ConvertTo-Json
+$sqlTrim  = $Sql.Trim()
+$sqlUpper = $sqlTrim.ToUpper()
+if (-not ($sqlUpper.StartsWith("SELECT") -or $sqlUpper.StartsWith("WITH"))) {
+    @{ success = $false; error = "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)" } | ConvertTo-Json
+    exit 1
+}
+# Un CTE puede colgar un verbo de escritura tras el bloque ("WITH x AS (...) DELETE FROM ...");
+# StartsWith("WITH") no lo pilla. Bloquear si aparece cualquier verbo de escritura.
+if ($sqlUpper.StartsWith("WITH") -and $sqlUpper -match '\b(INSERT|UPDATE|DELETE|MERGE)\b') {
+    @{ success = $false; error = "CTE con verbo de escritura no permitido" } | ConvertTo-Json
     exit 1
 }
 # Bloquea multi-statement ("SELECT 1; DROP TABLE x"): quita el ; final habitual y cuenta los ;

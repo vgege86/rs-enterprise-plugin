@@ -175,6 +175,8 @@ SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-c
 Orquesta 4 hooks `installer-*.ps1` vía `runner/runner.ps1` (patrón `batch-build`/`online-publish`,
 sin tool MCP) y 2 scripts Python (`installer-ddl.py`, `installer-inserts.py`). Config por cliente en
 `docs\<Proyecto>-instalador.json`; tablas paramétricas desde `subviews["Parametricas"]` del model.json.
+Los inserts por tabla se generan en paralelo (`ThreadPoolExecutor`), con cap configurable
+`parametricas.max_paralelo` (default 8 = conexiones BD simultáneas).
 
 `rs-analisis` (análisis estático de un diff) y `rs-validacion-bd` (validación código↔BD) son las
 versiones **standalone** de lo que en el pipeline hacen el validator y el planner respectivamente —

@@ -1,5 +1,73 @@
 # RS Enterprise Agent — Changelog
 
+## 2.17.1 — 2026-07-23
+
+### Fix: `ping` trivial (sin subprocesos) + checks svn/git no envenenan la cache con timeouts
+
+`ping` (`mcp/rs-workspace-server.py`) spawneaba `svn --version` + `git --version` en cada llamada
+(vía `_check_svn_cli`/`_check_git_cli`), así que un health check heredaba el cuelgue del arranque en
+frío bajo el FP de CrowdStrike (ver `docs/crowdstrike-fp-justification.md`) y, en transporte stdio
+serie, bloqueaba las demás tools hasta 10s (2× `timeout=5`).
+
+Además había un bug de correctness: `_check_svn_cli`/`_check_git_cli` cacheaban `False` tanto ante
+`FileNotFoundError` como ante `TimeoutExpired`. Un timeout transitorio durante la congestión del
+arranque quedaba **pegado toda la sesión** → las tools VCS reportaban "git/svn CLI no disponible" en
+falso el resto de la sesión (observado: `ping` devolviendo `git_cli:false` con git funcionando bien).
+
+**Fix**:
+- `ping` no spawnea subprocesos: reporta el estado **ya cacheado** de los CLIs (`svn_cli`/`git_cli`,
+  `null` = aún no comprobado). Los checks reales quedan perezosos, en las tools VCS que los usan.
+- `_check_svn_cli`/`_check_git_cli` separan excepciones: `FileNotFoundError` (ausencia real) cachea
+  `False`; `TimeoutExpired` devuelve `False` **sin cachear** → reintenta en la próxima llamada.
+
+Sin hook equivalente: `ping` no tiene hook PowerShell y los hooks son procesos frescos por
+invocación (sin cache en-proceso que envenenar). Ficheros: `mcp/rs-workspace-server.py`,
+`references/mcp.md`.
+
+## 2.17.0 — 2026-07-23
+
+### Feat: generación de inserts del instalador en paralelo (`parametricas.max_paralelo`)
+
+`scripts/installer-inserts.py` generaba un fichero `Inserts\<TABLA>.sql` por tabla paramétrica en un
+bucle **secuencial**: cada tabla spawnea un `sqlplus`/`sqlcmd`, hace login fresco y consulta la tabla
+entera. Con 40-60 paramétricas eso eran decenas de segundos a minutos de espera en serie — el cuello
+de botella de la etapa 5 del instalador (`/rs-instalador`).
+
+**Fix**: el bucle pasa a `concurrent.futures.ThreadPoolExecutor`. Es seguro (I/O-bound, GIL libre en
+`subprocess.run`): cada tabla escribe un fichero distinto, `model`/`cfg` son solo-lectura y cada query
+usa su propio fichero temporal. La agregación de filas/errores y los exit codes (0 OK / 2 con avisos)
+no cambian; la salida se recolecta y se imprime en orden de tablas (determinista, no entrelazada).
+
+El paralelismo = nº de conexiones BD simultáneas, así que va **acotado** por la nueva clave opcional
+`parametricas.max_paralelo` en `docs\<Proyecto>-instalador.json` (default `8`, mínimo `1`, capado a
+`len(tablas)`). Bajar en clientes con pocas sesiones Oracle; subir en servidores holgados. Mejora
+típica ~6-8× en la etapa de inserts.
+
+Ficheros: `scripts/installer-inserts.py`, `agents/rs-instalador.md` (ejemplo de config + nota),
+`docs/plugin-architecture.md`.
+
+## 2.16.1 — 2026-07-23
+
+### Fix: el guard de `db_query` bloqueaba CTEs legítimos (`WITH ... SELECT`)
+
+El guard solo-lectura de `db_query` (tool MCP `mcp/rs-workspace-server.py` + su fallback 1:1
+`hooks/db-query.ps1`) exigía que la sentencia empezara por `SELECT`. Una consulta con CTE, que
+empieza por `WITH`, caía como falso positivo con `"Solo se permiten consultas SELECT"`, aunque
+`WITH ... SELECT` es solo-lectura. Obligaba a reescribir el CTE como subconsulta inline.
+
+**Fix**: el guard acepta ahora sentencias que empiecen por `SELECT` **o** `WITH`. Como un CTE puede
+colgar un verbo de escritura tras el bloque (`WITH x AS (...) DELETE FROM ...`) que el `startswith`
+no detecta, en la rama `WITH` se rechaza la sentencia si contiene cualquier verbo de escritura
+(`INSERT|UPDATE|DELETE|MERGE`, `\b...\b`). El bloqueo multi-statement (`;`) y la rama `SELECT`
+(single-statement, no puede escribir) no cambian.
+
+**Limitación conocida**: el check de verbo de escritura es textual, así que un CTE legítimo con un
+literal `'DELETE'` o una columna llamada `UPDATE` se bloquearía. Falla en dirección segura (bloquea
+una lectura, nunca deja pasar una escritura) — aceptable.
+
+Ficheros: `mcp/rs-workspace-server.py` (guard + descripción de la tool), `hooks/db-query.ps1`
+(guard 1:1), `references/mcp.md`, `references/hooks.md`.
+
 ## 2.16.0 — 2026-07-23
 
 ### Feat: `rs-jira` deja 2 comentarios automáticos en la issue (prompt lanzado + resultado final)

@@ -29,6 +29,7 @@ import os
 import json
 import subprocess
 import tempfile
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 
@@ -124,9 +125,10 @@ def read_db_config(workspace: str, model: dict) -> dict:
 
 
 def parametric_tables(model: dict, workspace: str, proyecto: str) -> tuple:
-    """Devuelve (lista_tablas, nombre_vista) a partir de subviews + config del instalador."""
+    """Devuelve (lista_tablas, nombre_vista, max_paralelo) a partir de subviews + config del instalador."""
     vista = "Parametricas"
     excluir, incluir_extra = [], []
+    max_paralelo = 8   # cap de tablas generadas en paralelo (= conexiones BD simultáneas)
     cfg_path = Path(workspace) / "docs" / f"{proyecto}-instalador.json"
     if cfg_path.exists():
         try:
@@ -136,6 +138,10 @@ def parametric_tables(model: dict, workspace: str, proyecto: str) -> tuple:
             vista = p.get("vista", vista)
             excluir = [t.upper() for t in p.get("excluir", [])]
             incluir_extra = p.get("incluir_extra", [])
+            try:
+                max_paralelo = max(1, int(p.get("max_paralelo", max_paralelo)))
+            except (TypeError, ValueError):
+                print(f"AVISO: parametricas.max_paralelo no es un entero — usando {max_paralelo}")
         except Exception as e:
             print(f"AVISO: no se pudo leer {cfg_path}: {e}")
 
@@ -161,7 +167,7 @@ def parametric_tables(model: dict, workspace: str, proyecto: str) -> tuple:
             print(f"AVISO: tabla paramétrica '{tu}' marcada orphan — se omite")
             continue
         resultado.append(tu)
-    return resultado, vista
+    return resultado, vista, max_paralelo
 
 
 def base_type(col_type: str) -> str:
@@ -383,13 +389,24 @@ def main():
         print(f"ERROR: motor no soportado: {cfg['motor']}")
         sys.exit(1)
 
-    tablas, vista = parametric_tables(model, workspace, proyecto)
-    print(f"Vista paramétrica: '{vista}' → {len(tablas)} tablas | Motor: {cfg['motor']}")
+    tablas, vista, max_paralelo = parametric_tables(model, workspace, proyecto)
+    workers = max(1, min(max_paralelo, len(tablas))) if tablas else 1
+    print(f"Vista paramétrica: '{vista}' → {len(tablas)} tablas | Motor: {cfg['motor']} | {workers} en paralelo")
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generación en paralelo: cada tabla abre su propia conexión y escribe un fichero distinto
+    # (<TABLA>.sql), sin estado compartido mutable → thread-safe. El cap `workers` limita las
+    # conexiones BD simultáneas. Los resultados se recolectan y se imprimen en orden de `tablas`
+    # para una salida determinista, no entrelazada.
+    resultados = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(generate_table_file, t, model, cfg, out_dir): t for t in tablas}
+        for fut in concurrent.futures.as_completed(futs):
+            resultados[futs[fut]] = fut.result()
 
     total_rows, errores = 0, []
     for t in tablas:
-        status, n, msg = generate_table_file(t, model, cfg, out_dir)
+        status, n, msg = resultados[t]
         if status == "OK":
             total_rows += n
             print(f"  OK  {t}: {n} filas")

@@ -9,7 +9,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 
 | Tool | Uso |
 |------|-----|
-| `ping()` | Health check — **version**, **server_path**, hooks_dir, hooks_found, svn_cli, git_cli, python version. `server_path`/`version` delatan si se está sirviendo una copia obsoleta fuera del plugin |
+| `ping()` | Health check — **version**, **server_path**, hooks_dir, hooks_found, svn_cli, git_cli, python version. NO spawnea subprocesos: `svn_cli`/`git_cli` = `null` si aún no se comprobaron (perezoso, se resuelven al usar una tool VCS). `server_path`/`version` delatan si se está sirviendo una copia obsoleta fuera del plugin |
 | `get_scope(sln_path)` | Paso 2b — parsea .sln → scope_dirs, tipo, workspace |
 | `validate_solution(sln_path)` | Paso 2 — confirma que la .sln existe y es accesible |
 | `detect_vcs(workspace)` | Detecta SVN/Git subiendo por las carpetas → `{vcs, root}`. Llamar antes de cualquier tool `svn_*`/`git_*` |
@@ -26,7 +26,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `svn_status(workspace)` | Estado SVN → modificados, añadidos, eliminados, ? sin versionar |
 | `git_status(workspace)` | Estado Git → modificados, staged, ?? sin trackear, conflicto (U). Equivalente Git de `svn_status` |
 | `create_test_project(sln_path, framework?, project_name?)` | Crea proyecto xUnit/mstest/nunit |
-| `db_query(workspace, sql, max_rows=200, conexion="")` | SELECT directo (solo SELECT). `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden) |
+| `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden) |
 | `compare_model(workspace)` | Diff model.json vs BD real → tablas/columnas nuevas/eliminadas |
 | `scan_aspx(sln_path)` | Extrae controles AIS de .aspx → IDs y textos para RIDIOMA/RCONTROLES |
 | `log_execution(workspace, solution, task, status?, agents?)` | Registra en executions/history.json |

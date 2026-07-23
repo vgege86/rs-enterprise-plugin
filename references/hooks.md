@@ -68,7 +68,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 |--------|-----------|-------------|
 | `hooks/get-config.ps1` | `<workspace>` | Lee .rs-databases.json → `motor, datasource, schema, model_path` (principal) + `conexiones[], motores[]` |
 | `hooks/get-bd-model.ps1` | `-Workspace <ws> [-Tables "T1,T2"]` | Schemas de tablas del model.json (equivalente a `get_table_schema`) |
-| `hooks/db-query.ps1` | `-Workspace <ws> -Sql "<SELECT>" [-MaxRows 200] [-Conexion <id>]` | SELECT contra una BD de .rs-databases.json (`-Conexion <id>`, default principal; solo Oracle) (equivalente a `db_query`) |
+| `hooks/db-query.ps1` | `-Workspace <ws> -Sql "<SELECT\|WITH...SELECT>" [-MaxRows 200] [-Conexion <id>]` | Consulta solo-lectura (SELECT o CTE WITH...SELECT; WITH con verbo de escritura se rechaza) contra una BD de .rs-databases.json (`-Conexion <id>`, default principal; solo Oracle) (equivalente a `db_query`) |
 | `hooks/lib-dbconfig.ps1` | (librería, no se invoca sola) | Lectura/validación de `.rs-databases.json` y parseo de cadenas de conexión — usada internamente por `get-config.ps1`, `db-query.ps1`, `check-env.ps1` |
 | `hooks/convert-config.ps1` | `<workspace> [-Force]` | `XMLConfig.xml` → `.rs-databases.json`. Uso único por workspace; no borra el XML |
 | `hooks/compare-model.ps1` | `<workspace>` | Drift model.json vs esquema real BD |

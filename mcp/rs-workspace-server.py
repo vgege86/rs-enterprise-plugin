@@ -200,24 +200,37 @@ def _check_workspace(workspace: Workspace) -> dict | None:
 
 def _check_svn_cli() -> bool:
     global _svn_cli
-    if _svn_cli is None:
-        try:
-            r = subprocess.run(["svn", "--version", "--quiet"], capture_output=True, timeout=5)
-            _svn_cli = r.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            _svn_cli = False
-    return _svn_cli
+    if _svn_cli is not None:
+        return _svn_cli
+    try:
+        r = subprocess.run(["svn", "--version", "--quiet"], capture_output=True, timeout=5)
+        _svn_cli = r.returncode == 0
+        return _svn_cli
+    except FileNotFoundError:
+        _svn_cli = False          # ausencia real del binario → cachear
+        return False
+    except subprocess.TimeoutExpired:
+        # Timeout transitorio (p.ej. congestión del arranque en frío bajo el FP de CrowdStrike):
+        # NO cachear — dejar _svn_cli=None para reintentar en la próxima llamada. Cachear False
+        # aquí desactivaría svn toda la sesión por un solo hipo de arranque.
+        return False
 
 
 def _check_git_cli() -> bool:
     global _git_cli
-    if _git_cli is None:
-        try:
-            r = subprocess.run(["git", "--version"], capture_output=True, timeout=5)
-            _git_cli = r.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            _git_cli = False
-    return _git_cli
+    if _git_cli is not None:
+        return _git_cli
+    try:
+        r = subprocess.run(["git", "--version"], capture_output=True, timeout=5)
+        _git_cli = r.returncode == 0
+        return _git_cli
+    except FileNotFoundError:
+        _git_cli = False          # ausencia real del binario → cachear
+        return False
+    except subprocess.TimeoutExpired:
+        # Timeout transitorio → NO cachear (ver _check_svn_cli): un hipo de arranque no debe
+        # desactivar git el resto de la sesión.
+        return False
 
 
 @mcp.tool(description="Parsea .sln → scope_dirs, tipo (Batch/Online), workspace. Usar al inicio de cada tarea (paso 1b). Resultado cacheado en proceso.")
@@ -326,11 +339,15 @@ def _parse_resultset(stdout: str, motor: str) -> tuple[list, list, int]:
     return columns, rows, len(rows)
 
 
-@mcp.tool(description="SELECT directo a una BD de .rs-databases.json (SQL Server u Oracle). SOLO SELECT. conexion = id de conexión; si se omite, la principal. Devuelve columns[] (nombres, una vez) y rows[] (listas de valores en ese mismo orden). max_rows limita filas devueltas en contexto (default 200).")
+@mcp.tool(description="SELECT directo a una BD de .rs-databases.json (SQL Server u Oracle). SOLO lectura: SELECT o CTE (WITH ... SELECT). conexion = id de conexión; si se omite, la principal. Devuelve columns[] (nombres, una vez) y rows[] (listas de valores en ese mismo orden). max_rows limita filas devueltas en contexto (default 200).")
 def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str = "") -> str:
     sql_clean = sql.strip().upper()
-    if not sql_clean.startswith("SELECT"):
-        return json.dumps({"success": False, "error": "Solo se permiten consultas SELECT"}, ensure_ascii=False)
+    if not (sql_clean.startswith("SELECT") or sql_clean.startswith("WITH")):
+        return json.dumps({"success": False, "error": "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)"}, ensure_ascii=False)
+    # Un CTE puede colgar un verbo de escritura tras el bloque: "WITH x AS (...) DELETE FROM ...".
+    # startswith("WITH") no lo pilla; bloquear si aparece cualquier verbo de escritura.
+    if sql_clean.startswith("WITH") and re.search(r'\b(INSERT|UPDATE|DELETE|MERGE)\b', sql_clean):
+        return json.dumps({"success": False, "error": "CTE con verbo de escritura no permitido"}, ensure_ascii=False)
     # Bloquea multi-statement: "SELECT 1; DROP TABLE x"
     # Elimina ; trailing (habitual en SQL) y cuenta ; fuera de literales de string
     sql_norm = sql.strip().rstrip(";")
@@ -799,18 +816,22 @@ def jira_attach(issue_key: str, files: str) -> str:
     return json.dumps(_run_ps("jira-attach.ps1", "-IssueKey", issue_key, "-Files", files), ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Health check: verifica que el servidor MCP está activo y devuelve hooks_dir, nº hooks disponibles y versión Python.")
+@mcp.tool(description="Health check: verifica que el servidor MCP está activo y devuelve hooks_dir, nº hooks disponibles y versión Python. NO spawnea subprocesos: svn_cli/git_cli reflejan solo lo ya comprobado (null = aún no comprobado; se resuelve perezosamente al usar una tool VCS).")
 def ping() -> str:
     import sys as _sys
     hooks = list(HOOKS_DIR.glob("*.ps1")) if HOOKS_DIR.exists() else []
+    # Sin subprocesos aquí: un health check debe responder en ms. Reportar solo el estado ya
+    # cacheado de los CLIs (None = aún no comprobado); los checks reales son perezosos, en las
+    # tools VCS que los necesitan. Antes ping spawneaba svn+git y heredaba el cuelgue de arranque
+    # en frío bajo el FP de CrowdStrike (ver docs/crowdstrike-fp-justification.md).
     return json.dumps({
         "ok": True,
         "version": _plugin_version(),
         "server_path": str(SERVER_PATH),
         "hooks_dir": str(HOOKS_DIR),
         "hooks_found": len(hooks),
-        "svn_cli": _check_svn_cli(),
-        "git_cli": _check_git_cli(),
+        "svn_cli": _svn_cli,
+        "git_cli": _git_cli,
         "python": _sys.version.split()[0],
     }, ensure_ascii=False, indent=2)
 
