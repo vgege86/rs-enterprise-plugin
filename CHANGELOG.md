@@ -1,5 +1,52 @@
 # RS Enterprise Agent — Changelog
 
+## 2.21.0 — 2026-07-23
+
+### Feat: tests del plugin + dashboard de estadísticas + 4 modos directos
+
+Tercera tanda. Además de modos nuevos, esta versión introduce la **primera suite de tests del propio
+plugin** y un **dashboard visual**.
+
+**Tests del plugin (CI).** Hasta ahora el CI solo hacía `py_compile` + PSScriptAnalyzer; ni una prueba
+funcional sobre las 42 tools ni los 47 hooks.
+- `tests/test_mcp.py` (**pytest**, 15 casos): funciones puras de `mcp/rs-workspace-server.py` —
+  `_resolve_workspace`, `_get_db_password` (parseo de connection string), `_parse_resultset`
+  (CSV Oracle / separador SQL Server), `_diff_summary`, `_proyecto`. Cargadas por `importlib` sin
+  arrancar el server.
+- `tests/DbQuery.Tests.ps1` (**Pester**): la guarda read-only de `hooks/db-query.ps1` rechaza
+  multi-statement, CTE con verbo de escritura y no-SELECT (sin necesidad de BD).
+- `.github/workflows/ci.yml`: nuevo paso `pytest` (job Python) y paso `Invoke-Pester` (job PowerShell).
+  `requirements.txt` añade `pytest` (dev). ⚠️ Los tests **no** modifican código sensible de seguridad;
+  ejercitan la guarda SQL como caja negra.
+
+**`/rs-dashboard` (`rs-dashboard`, ⚡ Haiku)** — dashboard HTML autónomo de `executions/history.json`
+(KPIs, distribución por estado, top soluciones, agentes, tendencia 7 días), tema claro/oscuro, sin
+dependencias externas. Reproduce el patrón de `render_erd`: script `scripts/render-dashboard.py` +
+plantilla `scripts/dashboard-template.html` + hook `hooks/render-dashboard.ps1` + tool MCP
+`render_dashboard` (genera el fichero, **no** lo carga en contexto). Versión visual de `/rs-stats`.
+**MCP 41 → 42 tools; hooks +`render-dashboard.ps1`.**
+
+**`/rs-explicar` (`rs-explicar`, 🔷 Sonnet)** — explica en lenguaje natural qué hace una
+clase/método/proceso, su flujo de datos y efectos laterales (onboarding). Distinto de `/rs-doc` (que
+persiste un resumen): explicación puntual bajo demanda.
+
+**`/rs-doc-drift` (`rs-doc-drift`, 🔷 Sonnet)** — cruza los cambios recientes (delta VCS) contra la doc
+funcional (`find_doc_section`) y marca secciones obsoletas / incompletas / sin doc. Advisory, no
+reescribe.
+
+**`/rs-test` (`rs-test`, ⚡ Haiku)** — ejecuta `dotnet test` (`run_tests`) y reporta
+passed/failed/skipped, como modo directo sin lanzar el pipeline completo.
+
+**`/rs-format` (`rs-format`, 🟣 Opus)** — auto-fix de convenciones (naming/usings/formato) — el
+complemento de `/rs-audit` (que solo señala). ⛔ Solo formato/naming, **nunca lógica**; ⛔ gate de
+confirmación antes de escribir; renombrados públicos se derivan a `/rs-rename`.
+
+Ficheros: `tests/` (nuevo), `scripts/render-dashboard.py` + `scripts/dashboard-template.html` +
+`hooks/render-dashboard.ps1` + tool `render_dashboard`, `agents/rs-{dashboard,explicar,doc-drift,test,format}.md`,
+`commands/rs-{dashboard,explicar,doc-drift,test,format}.md`, `skills/rs-enterprise-agent/SKILL.md`
+(5 filas), `.github/workflows/ci.yml`, `requirements.txt`, README, `docs/plugin-architecture.md`,
+`references/mcp.md`, `references/hooks.md`, bump de versión. Agentes 40 → 45, comandos 37 → 42.
+
 ## 2.20.0 — 2026-07-23
 
 ### Feat: seis modos directos nuevos — cobertura, dead-code, rename, seed, comparar-entornos, hotspots

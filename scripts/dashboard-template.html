@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RS Enterprise Agent — Dashboard {proyecto}</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --fg:#1c2330; --muted:#5b6472; --line:#e3e7ee;
+    --ok:#1a9d54; --fail:#d1372f; --partial:#c98a12; --accent:#3358d4; --bar:#c9d3ea;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f141b; --card:#161d27; --fg:#e6eaf0; --muted:#95a0b0; --line:#26303d;
+      --ok:#33c07a; --fail:#f0655d; --partial:#e2a53a; --accent:#6f8bf0; --bar:#2c3a52;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 60px}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:6px}
+  h1{font-size:20px;margin:0}
+  .sub{color:var(--muted);font-size:13px}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
+     margin:32px 0 12px;font-weight:600}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi{font-size:28px;font-weight:700;letter-spacing:-.01em}
+  .kpi .unit{font-size:15px;font-weight:600;color:var(--muted)}
+  .card .lbl{color:var(--muted);font-size:12px;margin-top:2px}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right}
+  .bar{height:8px;border-radius:6px;background:var(--bar);position:relative;min-width:40px}
+  .bar>span{position:absolute;inset:0;width:var(--w,0%);background:var(--accent);border-radius:6px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;font-weight:600}
+  .ok{color:var(--ok)} .fail{color:var(--fail)} .partial{color:var(--partial)}
+  .empty{background:var(--card);border:1px dashed var(--line);border-radius:12px;
+         padding:40px;text-align:center;color:var(--muted)}
+  .scroll{overflow-x:auto}
+  footer{margin-top:40px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>RS Enterprise Agent — Dashboard</h1>
+    <span class="sub" id="scope"></span>
+  </header>
+  <div class="sub" id="period"></div>
+  <div id="app"></div>
+  <footer>Generado {generated_ts} · datos de <code>executions/history.json</code></footer>
+</div>
+
+<script id="data" type="application/json">{data_json}</script>
+<script>
+(function(){
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const app = document.getElementById("app");
+  document.getElementById("scope").textContent = D.proyecto ? ("· " + D.proyecto) : "";
+
+  if(!D.total){
+    app.innerHTML = '<div class="empty">Sin ejecuciones registradas todavía.<br>'
+      + 'El pipeline (<code>&lt;Sln&gt;.sln - cambio</code>) las registra automáticamente en '
+      + '<code>executions/history.json</code>.</div>';
+    return;
+  }
+  document.getElementById("period").textContent =
+    "Periodo: " + D.period_from + " – " + D.period_to;
+
+  const esc = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const pct = (n,d) => d ? Math.round(n*100/d) + "%" : "—";
+
+  // KPIs
+  const cards = [
+    ["Ejecuciones", D.total, ""],
+    ["Tasa de éxito", pct(D.success, D.total), ""],
+    ["Soluciones", D.solutions.length, ""],
+    ["Fallos", D.fail + D.partial, ""],
+  ];
+  let html = '<div class="cards">' + cards.map(([lbl,val]) =>
+    '<div class="card"><div class="kpi">' + esc(val) + '</div><div class="lbl">' + esc(lbl) + '</div></div>'
+  ).join("") + '</div>';
+
+  // Estado
+  html += '<h2>Por estado</h2><div class="cards">'
+    + '<div class="card"><div class="kpi ok">' + D.success + '</div><div class="lbl">success</div></div>'
+    + '<div class="card"><div class="kpi fail">' + D.fail + '</div><div class="lbl">fail</div></div>'
+    + '<div class="card"><div class="kpi partial">' + D.partial + '</div><div class="lbl">partial</div></div>'
+    + '</div>';
+
+  // Top soluciones
+  html += '<h2>Top soluciones</h2><div class="scroll"><table><thead><tr>'
+    + '<th>Solución</th><th class="num">Ejec.</th><th class="num">Éxito</th></tr></thead><tbody>'
+    + D.solutions.slice(0,10).map(s =>
+        '<tr><td>' + esc(s.name) + '</td><td class="num">' + s.total
+        + '</td><td class="num">' + pct(s.success, s.total) + '</td></tr>').join("")
+    + '</tbody></table></div>';
+
+  // Agentes
+  const maxA = Math.max(1, ...D.agents.map(a => a.count));
+  html += '<h2>Agentes más usados</h2><div class="scroll"><table><thead><tr>'
+    + '<th>Agente</th><th class="num">Invocaciones</th><th>&nbsp;</th></tr></thead><tbody>'
+    + D.agents.slice(0,12).map(a =>
+        '<tr><td>' + esc(a.name) + '</td><td class="num">' + a.count + '</td>'
+        + '<td><div class="bar"><span style="--w:' + Math.round(a.count*100/maxA) + '%"></span></div></td></tr>').join("")
+    + '</tbody></table></div>';
+
+  // Tendencia 7 días
+  html += '<h2>Tendencia (7 días)</h2><div class="scroll"><table><thead><tr>'
+    + '<th>Fecha</th><th class="num">Ejec.</th><th class="num ok">OK</th>'
+    + '<th class="num fail">FAIL</th><th class="num partial">PARCIAL</th></tr></thead><tbody>'
+    + D.trend.map(d =>
+        '<tr><td>' + esc(d.date) + '</td><td class="num">' + d.total + '</td>'
+        + '<td class="num ok">' + d.success + '</td><td class="num fail">' + d.fail
+        + '</td><td class="num partial">' + d.partial + '</td></tr>').join("")
+    + '</tbody></table></div>';
+
+  app.innerHTML = html;
+})();
+</script>
+</body>
+</html>

@@ -46,6 +46,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `sync_indexes(workspace)` | Sincroniza índices desde BD al modelo — preserva source=manual |
 | `analyze_dalc(workspace, sln_path?)` | Infiere relaciones entre tablas analizando código DALC |
 | `render_erd(workspace)` | Genera ERD HTML y abre navegador — sin cargar modelo en contexto |
+| `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (executions/history.json) y abre navegador — sin cargar el HTML en contexto |
 | `check_env(workspace)` | Valida entorno: .rs-databases.json, AIS, dotnet, SVN, Git, modelo BD → checks[] |
 | `generate_sql(workspace, motor?)` | Genera DDL SQL a fichero — devuelve ruta, SQL no entra en contexto |
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |

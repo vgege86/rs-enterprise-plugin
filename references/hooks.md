@@ -78,6 +78,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/sync-indexes.ps1` | `<workspace> [-Proyecto <nombre>]` | Sincroniza índices desde BD al modelo — preserva source=manual |
 | `hooks/analyze-dalc.ps1` | `<workspace> <proyecto> [-SolutionPath <sln>]` | Infiere relaciones desde JOINs/WHERE en DALCs |
 | `hooks/render-erd.ps1` | `<workspace> [-Proyecto <nombre>]` | Genera ERD HTML y lo abre en navegador → `{path, table_count}` |
+| `hooks/render-dashboard.ps1` | `<workspace>` | Genera dashboard HTML de estadísticas (executions/history.json) y lo abre → `{path, opened}`. Fallback 1:1 de `render_dashboard` |
 | `hooks/generate-sql.ps1` | `<workspace> [-Proyecto <nombre>] [-Motor ORACLE\|SQLSERVER]` | Genera DDL SQL → `C:\AIS\<proyecto-lowercase>\scripts\<proyecto>-ddl-<motor>.sql` |
 | `hooks/export-dmd.ps1` | `<workspace> [-Proyecto <nombre>]` | Exporta a Oracle Data Modeler `.dmd` |
 

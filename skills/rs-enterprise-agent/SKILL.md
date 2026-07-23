@@ -149,6 +149,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Impacto 🔷 | `/rs-impacto`, "impacto de cambiar X" | `rs-impacto` |
 | Código muerto 🔷 | `/rs-dead-code`, "qué código no se usa en X", "código muerto de X" | `rs-dead-code` (inverso de impacto: símbolos sin referencias; advisory, no borra) |
 | Renombrar 🟣 | `/rs-rename`, "renombra X a Y en Z" | `rs-rename` (renombra símbolo + todas sus referencias; ⛔ gate de confirmación antes de escribir) |
+| Formato / convenciones 🟣 | `/rs-format`, "aplica convenciones a X", "arregla el naming de X" | `rs-format` (auto-fix de naming/usings/formato; ⛔ solo formato, gate de confirmación) |
 | Validación BD 🔷 | `/rs-validar-bd`, "valida este DALC contra la BD" | `rs-validacion-bd` (tipos/longitudes/nullabilidad/motor código↔BD) |
 | Rendimiento BD 🟣 | `/rs-perf`, "rendimiento de queries de X", "faltan índices en X" | `rs-perf` (cruza SQL de DALC contra índices del modelo: full-scans, no-sargables, SELECT *) |
 | Datos de prueba 🔷 | `/rs-seed`, "genera datos de prueba de X", "seed de la tabla Y" | `rs-seed` (INSERTs sintéticos respetando tipo/longitud/null/FKs; genera .sql, no ejecuta) |
@@ -162,14 +163,18 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Migración motor 🟣 | `/rs-migrar`, "migra X a Oracle" | `rs-migracion-motor` |
 | Idiomas standalone 🟣 | `/rs-idiomas`, "genera scripts idiomas X.sln" | `rs-idiomas-standalone` |
 | Documentar 🔷 | `/rs-doc`, "documenta X.sln" | `rs-documentar` (GenerarDoc; UpdateDocs = etapa `documentar` del pipeline) |
+| Doc drift 🔷 | `/rs-doc-drift`, "la doc está al día en X", "doc obsoleta de X" | `detect_vcs` → `rs-doc-drift` (doc funcional vs código; advisory, no reescribe) |
 | Validar entorno ⚡ | `/rs-env`, "check entorno" | `rs-validar-entorno` |
 | Inicializar workspace 🔷 | `/rs-init`, "prepara este workspace", "inicializa el proyecto" | `rs-init` (crea .rs-databases.json + andamiaje docs + primer modelo BD; ⛔ no sobrescribe) |
 | Estructura ⚡ | `/rs-estructura`, "qué proyectos tiene X" | `rs-estructura` |
+| Explicar 🔷 | `/rs-explicar`, "qué hace X", "explícame la clase Y" | `rs-explicar` (explicación NL de una clase/método/proceso + flujo de datos; onboarding) |
 | Commit 🔷 | `/rs-commit`, "commit X.sln" | `detect_vcs` → `rs-commit` (ramifica svn/git; Git hace commit+push con doble confirmación) |
 | Crear tests 🔷 | `/rs-crear-tests`, "crea tests para X.sln" | `rs-crear-tests` (auto desde pipeline si tester devuelve `NEEDS_TESTS`) |
 | Cobertura de tests 🔷 | `/rs-cobertura`, "qué falta por testear en X", "cobertura de X" | `rs-cobertura` (mapa de clases/métodos públicos sin test; advisory) |
+| Ejecutar tests ⚡ | `/rs-test`, "corre los tests de X", "ejecuta los tests" | `rs-test` (dotnet test + reporte; no lanza el pipeline) |
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
+| Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde history.json y lo abre; versión visual de /rs-stats) |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |
 | Notas de versión 🔷 | `/rs-release-notes`, "genera notas de versión", "changelog funcional de X" | `detect_vcs` → `rs-release-notes` (agrupa commits SVN/Git en notas funcionales) |
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |

@@ -676,6 +676,12 @@ def render_erd(workspace: Workspace) -> str:
     return json.dumps(_run_ps("render-erd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Genera un dashboard HTML de estadísticas del pipeline (executions/history.json: total, tasa de éxito, top soluciones, agentes, tendencia 7 días) y lo abre en el navegador. Devuelve la ruta — no carga el HTML en contexto.")
+def render_dashboard(workspace: Workspace) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    return json.dumps(_run_ps("render-dashboard.ps1", workspace), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Esquema completo (columnas con tipo/nullable/pk, relaciones, índices) de tablas específicas del modelo BD. Evita cargar model.json completo (~180K tokens). tables = coma-separadas.")
 def get_table_schema(workspace: Workspace, tables: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)

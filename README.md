@@ -124,6 +124,16 @@ Análisis de rendimiento de acceso a BD: cruza el SQL de los DALC contra los ín
 Inverso de `/rs-impacto`: clases, métodos y DALCs con **cero referencias** en el scope, candidatos a eliminar. Marca como "no concluyente" los puntos de entrada, handlers `.aspx`, reflexión e interfaces públicas. Advisory, no borra.
 
 ```
+/rs-explicar <Solution>.sln <clase|método|proceso>
+```
+Explica en lenguaje natural **qué hace** un elemento (clase/método/proceso), su flujo de datos, entradas/salidas y efectos laterales. Para onboarding. Distinto de `/rs-doc` (que persiste un resumen). Ejemplo: `/rs-explicar RSProcIN.sln CobrosDalc`
+
+```
+/rs-doc-drift <Solution>.sln [--rev <revisiones>]
+```
+Cruza los cambios recientes contra la **doc funcional** y marca secciones obsoletas, incompletas o sin doc. Advisory, no reescribe.
+
+```
 /rs-rename <Solution>.sln <viejo> a <nuevo>
 ```
 Renombra un símbolo (clase/método/propiedad/tabla) y **todas** sus referencias del scope. ⛔ Muestra el plan y pide confirmación antes de reescribir. Avisa de referencias en otras soluciones que quedarían rotas. Ejemplo: `/rs-rename RSProcIN.sln GrabarCobro a RegistrarCobro`
@@ -132,6 +142,11 @@ Renombra un símbolo (clase/método/propiedad/tabla) y **todas** sus referencias
 /rs-hotspots <Solution>.sln
 ```
 Puntos calientes de riesgo: cruza la frecuencia de cambios (churn VCS) con la complejidad/tamaño del código para señalar dónde invertir en tests/refactor. Advisory.
+
+```
+/rs-format <Solution>.sln [fichero]
+```
+Auto-fix de convenciones (naming, `using`, formato) — el complemento de `/rs-audit` (que solo señala). ⛔ Solo formato/naming, **nunca lógica**; pide confirmación antes de escribir. Los renombrados públicos se derivan a `/rs-rename`.
 
 ```
 /rs-schema <tabla|keyword>
@@ -265,6 +280,11 @@ Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios
 ```
 Mapa de cobertura de tests: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Cobertura aproximada (por referencia, no por ejecución). Complementa `/rs-crear-tests` mostrando dónde faltan.
 
+```
+/rs-test <Solution>.sln
+```
+Ejecuta `dotnet test` sobre la solución y reporta passed/failed/skipped, como modo directo (sin lanzar el pipeline completo). Si no hay proyecto de test, deriva a `/rs-crear-tests`.
+
 ### Documentación e idiomas
 
 ```
@@ -297,6 +317,11 @@ Prepara un workspace **nuevo** para el plugin: crea `docs/.rs-databases.json` (o
 ```
 Estadísticas desde `executions/history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días.
 
+```
+/rs-dashboard
+```
+Versión **visual** de `/rs-stats`: genera un dashboard HTML autónomo (KPIs, distribución por estado, top soluciones, agentes, tendencia 7 días; tema claro/oscuro) desde `executions/history.json` y lo abre en el navegador.
+
 ### Jira
 
 ```
@@ -311,7 +336,7 @@ Orquesta el ciclo de vida de una tarea de Jira sobre una solución RS: seleccion
 
 ## MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **41 tools** que envuelven los hooks 1:1. Preferente sobre hooks — más eficiente en tokens, con caché en memoria (mtime) y disco (`~/.claude/cache/rs-models`).
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **42 tools** que envuelven los hooks 1:1. Preferente sobre hooks — más eficiente en tokens, con caché en memoria (mtime) y disco (`~/.claude/cache/rs-models`).
 
 Registrado automáticamente por el plugin vía `.mcp.json` (raíz del repo):
 
@@ -376,10 +401,10 @@ skills/
     SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
   rs-jira/
     SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   40 subagentes: pipeline y modos directos
+agents/                   45 subagentes: pipeline y modos directos
 commands/                 definiciones de slash commands
 hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
-mcp/                      servidor MCP con 41 tools
+mcp/                      servidor MCP con 42 tools
 references/               documentación de referencia (cargada bajo demanda)
   arquitectura.md         stack de capas uCollect, convenciones web Online
   hooks.md                lista completa de hooks con parámetros
