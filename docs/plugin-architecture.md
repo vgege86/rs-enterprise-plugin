@@ -169,7 +169,17 @@ Ejemplos: `rs-auditoria`, `rs-analisis`, `rs-impacto`, `rs-validacion-bd`, `rs-e
 `rs-seguridad`, `rs-documentar`, `rs-crear-tests`, `rs-diff`, `rs-commit` (ambos autodetectan
 SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-comparar-modelo`,
 `rs-generar-dalc`, `rs-estructura`, `rs-dependencias`, `rs-validar-entorno`, `rs-historial`,
-`rs-stats`, `rs-validar-req`, `rs-instalador`.
+`rs-stats`, `rs-validar-req`, `rs-instalador`, `rs-review`, `rs-perf`, `rs-deshacer` (los tres
+autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`.
+
+`rs-review` (`/rs-review`, opus) revisa un diff/PR con veredicto `APRUEBA|CAMBIOS|BLOQUEA` combinando
+riesgo técnico + seguridad + BD sobre el delta (reutiliza las reglas de `rs-analisis`/`rs-validacion-bd`
+y `security_scan`); con `--pr` publica en GitHub vía el MCP `github`. `rs-perf` (`/rs-perf`, opus)
+cruza el SQL de los DALC contra los índices del modelo — capacidad nueva, agente-solo. `rs-deshacer`
+(`/rs-deshacer`, sonnet) revierte los cambios pendientes del último pipeline con gate de confirmación,
+vía el hook/tool nuevos `vcs-revert.ps1`/`vcs_revert`. `rs-init` (`/rs-init`, sonnet) hace bootstrap de
+un workspace nuevo (config BD + andamiaje docs + primer modelo), sin sobrescribir nada. `rs-release-notes`
+(`/rs-release-notes`, sonnet) agrupa el log VCS en notas funcionales.
 
 `rs-instalador` (`/rs-instalador`, opus) genera el instalador completo de cliente en
 `C:\AIS\<Proyecto>\Instalador` (EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL).
@@ -214,7 +224,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**40 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**41 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -264,7 +274,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD |
-| `references/mcp.md` | Catálogo completo de las 40 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 41 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |

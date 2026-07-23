@@ -109,6 +109,16 @@ Mapa de referencias a un símbolo dentro del scope, con clasificación de riesgo
 Valida código C# contra la BD real: tipos, longitudes (truncamiento silencioso), nullabilidad y compatibilidad de motor (SQL Server/Oracle). Versión standalone de la validación BD que el pipeline hace en el planner. Ejemplo: `/rs-validar-bd RSProcIN.sln CobrosDalc.cs`
 
 ```
+/rs-review <Solution>.sln [--rev <revisiones>] [--pr <n> [owner/repo]]
+```
+Revisión de un cambio (diff/PR) con **veredicto** `APRUEBA | CAMBIOS | BLOQUEA`. Unifica sobre el delta riesgo técnico + seguridad + compatibilidad BD. Por defecto revisa los cambios pendientes; con `--rev` una revisión/hash concreto; con `--pr` publica el veredicto en el pull request de GitHub. Ejemplo: `/rs-review RSProcIN.sln --rev 1234`
+
+```
+/rs-perf <Solution>.sln [DALC|tabla]
+```
+Análisis de rendimiento de acceso a BD: cruza el SQL de los DALC contra los índices del modelo para detectar índices que faltan, full-scans, filtros no-sargables y `SELECT *` en tablas anchas. Complementa `/rs-validar-bd` con el eje de rendimiento. Ejemplo: `/rs-perf RSProcIN.sln CobrosDalc.cs`
+
+```
 /rs-schema <tabla|keyword>
 ```
 Esquema real de una o varias tablas: columnas, tipos, longitudes, nullabilidad, índices. Consulta pura (no genera DDL/ERD — para eso `/rs-erd`). Ejemplo: `/rs-schema RCLIENTES`
@@ -149,6 +159,16 @@ Filtro de scope + diff + mensaje de commit sugerido. Requiere confirmación expl
 /rs-historial [Solution.sln] [N]
 ```
 Historial de ejecuciones del pipeline y commits (SVN o Git). Ejemplo: `/rs-historial RSProcIN.sln 5`
+
+```
+/rs-deshacer <Solution>.sln
+```
+Deshace los cambios **pendientes de commit** del último cambio del pipeline, revirtiéndolos a su estado versionado (SVN o Git). No toca commits ya hechos ni la BD. ⛔ Pide confirmación explícita antes de revertir (previsualiza qué se revierte/elimina).
+
+```
+/rs-release-notes [Solution] [N] [--desde YYYY-MM-DD]
+```
+Convierte el historial de commits (SVN/Git) en notas de versión funcionales agrupadas (nuevo / correcciones / BD / interno), en lenguaje de negocio/QA. Ejemplo: `/rs-release-notes RSProcIN 30`
 
 ```
 /rs-validar-req "<requerimiento>" --rev <revisiones> [--sln <Solution.sln>] [--session]
@@ -238,6 +258,11 @@ Reglas clave: mensajes de error (`Idm.Texto`) solo llevan RIDIOMA; IDTEXTO libre
 Valida .rs-databases.json, ruta AIS, dotnet, SVN, modelo BD y docs agentic.
 
 ```
+/rs-init
+```
+Prepara un workspace **nuevo** para el plugin: crea `docs/.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje `docs/agentic_manual/` y el primer `model.json`, y valida con `/rs-env`. ⛔ Nunca sobrescribe ficheros existentes. Complementa `/rs-env` (que solo valida).
+
+```
 /rs-stats [solution]
 ```
 Estadísticas desde `executions/history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días.
@@ -256,7 +281,7 @@ Orquesta el ciclo de vida de una tarea de Jira sobre una solución RS: seleccion
 
 ## MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **40 tools** que envuelven los hooks 1:1. Preferente sobre hooks — más eficiente en tokens, con caché en memoria (mtime) y disco (`~/.claude/cache/rs-models`).
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **41 tools** que envuelven los hooks 1:1. Preferente sobre hooks — más eficiente en tokens, con caché en memoria (mtime) y disco (`~/.claude/cache/rs-models`).
 
 Registrado automáticamente por el plugin vía `.mcp.json` (raíz del repo):
 
@@ -321,10 +346,10 @@ skills/
     SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
   rs-jira/
     SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   29 subagentes: pipeline y modos directos
+agents/                   34 subagentes: pipeline y modos directos
 commands/                 definiciones de slash commands
 hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
-mcp/                      servidor MCP con 40 tools
+mcp/                      servidor MCP con 41 tools
 references/               documentación de referencia (cargada bajo demanda)
   arquitectura.md         stack de capas uCollect, convenciones web Online
   hooks.md                lista completa de hooks con parámetros

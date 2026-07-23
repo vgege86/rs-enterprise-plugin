@@ -145,23 +145,28 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 |------|-----------------|--------|
 | Auditoría 🔷 | `/rs-audit`, "audita X.sln" | `rs-auditoria` (calidad de toda la solución) |
 | Análisis de cambio 🔷 | `/rs-analizar`, "analiza este diff/cambio en X" | `detect_vcs` → `rs-analisis` (análisis estático del delta) |
+| Revisión / PR 🟣 | `/rs-review`, "revisa este cambio", "revisa el PR" | `detect_vcs` → `rs-review` (veredicto APRUEBA/CAMBIOS/BLOQUEA: riesgo + seguridad + BD sobre el delta; opcional publica en PR de GitHub) |
 | Impacto 🔷 | `/rs-impacto`, "impacto de cambiar X" | `rs-impacto` |
 | Validación BD 🔷 | `/rs-validar-bd`, "valida este DALC contra la BD" | `rs-validacion-bd` (tipos/longitudes/nullabilidad/motor código↔BD) |
+| Rendimiento BD 🟣 | `/rs-perf`, "rendimiento de queries de X", "faltan índices en X" | `rs-perf` (cruza SQL de DALC contra índices del modelo: full-scans, no-sargables, SELECT *) |
 | Esquema BD ⚡ | `/rs-schema`, "muéstrame las columnas de X", "esquema de tabla Y" | `rs-esquema` (consulta pura de esquema) |
 | Diff ⚡ | `/rs-diff`, "qué cambió en X" | `detect_vcs` → `rs-diff` (ramifica svn/git) |
 | Historial ⚡ | `/rs-historial`, "ejecuciones recientes" | `rs-historial` |
+| Deshacer 🔷 | `/rs-deshacer`, "deshaz el último cambio", "revierte lo pendiente de X" | `detect_vcs` → `rs-deshacer` (revierte cambios pendientes del último pipeline vía SVN/Git; ⛔ gate de confirmación antes de revertir) |
 | Comparar modelo ⚡ | `/rs-comparar-modelo`, "drift BD X" | `rs-comparar-modelo` |
 | Generar DALC 🔷 | `/rs-generar-dalc`, "genera DALC para X" | `rs-generar-dalc` |
 | Migración motor 🟣 | `/rs-migrar`, "migra X a Oracle" | `rs-migracion-motor` |
 | Idiomas standalone 🟣 | `/rs-idiomas`, "genera scripts idiomas X.sln" | `rs-idiomas-standalone` |
 | Documentar 🔷 | `/rs-doc`, "documenta X.sln" | `rs-documentar` (GenerarDoc; UpdateDocs = etapa `documentar` del pipeline) |
 | Validar entorno ⚡ | `/rs-env`, "check entorno" | `rs-validar-entorno` |
+| Inicializar workspace 🔷 | `/rs-init`, "prepara este workspace", "inicializa el proyecto" | `rs-init` (crea .rs-databases.json + andamiaje docs + primer modelo BD; ⛔ no sobrescribe) |
 | Estructura ⚡ | `/rs-estructura`, "qué proyectos tiene X" | `rs-estructura` |
 | Commit 🔷 | `/rs-commit`, "commit X.sln" | `detect_vcs` → `rs-commit` (ramifica svn/git; Git hace commit+push con doble confirmación) |
 | Crear tests 🔷 | `/rs-crear-tests`, "crea tests para X.sln" | `rs-crear-tests` (auto desde pipeline si tester devuelve `NEEDS_TESTS`) |
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |
+| Notas de versión 🔷 | `/rs-release-notes`, "genera notas de versión", "changelog funcional de X" | `detect_vcs` → `rs-release-notes` (agrupa commits SVN/Git en notas funcionales) |
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |
 | Dependencias ⚡ | `/rs-deps`, "mapa dependencias" | `rs-dependencias` |
 | Instalador cliente 🟣 | `/rs-instalador`, "prepara el instalador del cliente", "instalación limpia de X" | `rs-instalador` (genera `C:\AIS\<Proyecto>\Instalador`: EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL) |

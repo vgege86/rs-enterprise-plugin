@@ -38,6 +38,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `git_diff_revision(workspace, revisions, max_diff_chars?, summary_only?)` | Diff de commits Git (hashes) filtrado. Equivalente Git de `svn_diff_revision` |
 | `svn_add(workspace, files?)` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
 | `git_add(workspace, files?)` | Añade ficheros ??: CLI → TortoiseGitProc → instrucciones manuales. Equivalente Git de `svn_add` |
+| `vcs_revert(workspace, files, dry_run?)` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `dry_run=True` devuelve el plan sin ejecutar. Para `/rs-deshacer` (previa confirmación humana) |
 | `security_scan(sln_path)` | Scan seguridad: SQL injection, XSS, credenciales, input sin validar |
 | `sync_model_tables(workspace, tables)` | Sincroniza tablas específicas model.json con BD (post-migración) |
 | `map_dependencies(workspace)` | Mapa dependencias: proyectos compartidos entre soluciones, conflictos NuGet |

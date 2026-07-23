@@ -587,6 +587,15 @@ def git_add(workspace: Workspace, files: str = "") -> str:
     return json.dumps(_run_ps("git-add.ps1", *args), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Revierte una lista EXPLÍCITA de ficheros a su estado versionado (SVN o Git), o los elimina si son nuevos/sin versionar. Autodetecta el motor. files = rutas separadas por ';' (absolutas o relativas a la raíz del repo). dry_run=True devuelve el plan sin ejecutar. ⛔ Solo toca los ficheros indicados — pensado para deshacer los cambios pendientes del último cambio del pipeline (rs-deshacer), previa confirmación humana.")
+def vcs_revert(workspace: Workspace, files: str, dry_run: bool = False) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    args = [workspace, "-Files", files]
+    if dry_run:
+        args.append("-DryRun")
+    return json.dumps(_run_ps("vcs-revert.ps1", *args), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Escanea código → SQL injection, credenciales hardcodeadas, XSS, input sin validar. Findings con severidad y archivo:línea.")
 def security_scan(sln_path: str) -> str:
     return json.dumps(_run_ps("security-scan.ps1", sln_path), ensure_ascii=False, indent=2)

@@ -1,5 +1,51 @@
 # RS Enterprise Agent — Changelog
 
+## 2.19.0 — 2026-07-23
+
+### Feat: cinco modos directos nuevos — review, perf, deshacer, init, release-notes
+
+Ampliación de la superficie de modos directos (sin tocar el pipeline principal). Todos siguen el
+patrón de extensión de `docs/plugin-architecture.md §9` (agente + comando + fila en la tabla
+`# Modos directos` de `SKILL.md`) y **reutilizan** agentes/hooks/tools existentes en vez de duplicar
+lógica.
+
+**`/rs-review` (`rs-review`, 🟣 Opus)** — revisión de un cambio (diff/PR) con **veredicto de bloqueo**
+`APRUEBA | CAMBIOS | BLOQUEA`. Unifica sobre el delta las tres lecturas que hoy están sueltas:
+riesgo técnico (como `rs-analisis`), seguridad (`security_scan`) y compatibilidad BD
+(`references/bd.md`, como `rs-validacion-bd`). Con `--pr <n>` publica el veredicto en el pull request
+vía el MCP `github` (nunca `APPROVE` automático; footer de atribución obligatorio).
+
+**`/rs-perf` (`rs-perf`, 🟣 Opus)** — análisis de rendimiento de acceso a BD: cruza el SQL de los
+DALC del scope contra los índices del modelo (`get_table_schema`) para detectar índices que faltan,
+full-scans, filtros no-sargables (`UPPER(col)=`, `LIKE '%x'`, prefijo de compuesto no usado) y
+`SELECT *` en tablas anchas. Agente-solo, sin hook/tool nuevos. Capacidad de dominio nueva —
+complementa `/rs-validar-bd` (que cubre tipos/longitudes) con el eje de rendimiento.
+
+**`/rs-deshacer` (`rs-deshacer`, 🔷 Sonnet)** — deshace los cambios **pendientes de commit** del
+último cambio del pipeline, revirtiéndolos a su estado versionado. Premisa: en el flujo RS el commit
+es un paso aparte, así que "el último cambio" = los cambios pendientes del working copy en scope;
+`executions/history.json` se usa solo como contexto. ⛔ **Gate de confirmación humana** antes de
+revertir (previsualiza con `dry_run`). Nuevos: hook `hooks/vcs-revert.ps1` + tool MCP `vcs_revert`
+(revierte una lista **explícita** de ficheros; autodetecta SVN/Git; elimina los nuevos, restaura a
+HEAD/versionado los modificados). No toca commits ya hechos ni la BD real.
+
+**`/rs-init` (`rs-init`, 🔷 Sonnet)** — bootstrap de un workspace nuevo: crea `docs/.rs-databases.json`
+(o migra `XMLConfig.xml` con `convert-config.ps1`), el andamiaje `docs/agentic_manual/` y el primer
+`model.json` (`sync_from_db`), y valida con `check_env`. ⛔ Nunca sobrescribe ficheros existentes.
+Complementa `/rs-env` (que solo valida).
+
+**`/rs-release-notes` (`rs-release-notes`, 🔷 Sonnet)** — convierte el historial de commits (SVN/Git,
+vía `svn_log`/`git_log`) en notas de versión funcionales agrupadas (✨ nuevo · 🐛 correcciones ·
+🗄️ BD · ⚙️ interno), en lenguaje de negocio/QA.
+
+**MCP:** 40 → **41 tools** (`vcs_revert`). **Hooks:** +`vcs-revert.ps1`.
+
+Ficheros: `agents/rs-{review,perf,deshacer,init,release-notes}.md` (nuevos) ·
+`commands/rs-{review,perf,deshacer,init,release-notes}.md` (nuevos) · `hooks/vcs-revert.ps1` (nuevo) ·
+`mcp/rs-workspace-server.py` (tool `vcs_revert`) · `skills/rs-enterprise-agent/SKILL.md` (5 filas en
+`# Modos directos`) · `README.md` · `docs/plugin-architecture.md` · `references/mcp.md` ·
+`references/hooks.md` · bump de versión.
+
 ## 2.18.0 — 2026-07-23
 
 ### Feat: nueva etapa `plan-check` — verifica que el código cumple el PLAN aprobado
