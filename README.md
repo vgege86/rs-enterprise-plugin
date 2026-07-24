@@ -267,7 +267,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, y `Scripts\` (DDL + inserts de tablas paramétricas). La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
+| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, y `Scripts\` (DDL + inserts de tablas paramétricas + `_run_all.sql` que los ejecuta todos de golpe). La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
 
 ---
 

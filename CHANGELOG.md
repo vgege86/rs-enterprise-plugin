@@ -1,5 +1,20 @@
 # RS Enterprise Agent — Changelog
 
+## 2.23.3 — 2026-07-24
+
+### Feat: instalador genera un script maestro `_run_all.sql` (ejecuta todos los inserts de golpe)
+
+`scripts/installer-inserts.py` genera ahora, junto a los `<TABLA>.sql`, un `_run_all.sql` en la
+misma carpeta que los ejecuta todos en orden (solo las tablas que salieron OK). Por motor:
+- **Oracle:** `@@<TABLA>.sql` por tabla (`@@` = ruta relativa al propio master), `WHENEVER SQLERROR
+  EXIT SQL.SQLCODE` (fail-fast). Uso: `sqlplus user/pass@db @_run_all.sql` desde la carpeta.
+- **SQL Server:** `:r <TABLA>.sql` + `GO` por tabla, `:on error exit`. Uso: `sqlcmd -S srv -d db -i
+  _run_all.sql`. Requiere sqlcmd (procesa `:r`).
+
+Cada `<TABLA>.sql` sigue siendo autónomo (su cabecera de sesión y su `commit`, ver 2.23.2); el master
+solo los encadena. Verificado generando el master para ambos motores.
+`agents/rs-instalador.md` y README actualizados.
+
 ## 2.23.2 — 2026-07-24
 
 ### Feat: scripts de inserts del instalador con cabecera/commit de sesión Oracle

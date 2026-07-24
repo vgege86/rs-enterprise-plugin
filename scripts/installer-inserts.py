@@ -378,6 +378,44 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
     return ("OK", n, "")
 
 
+def write_master_script(out_dir: Path, tables: list, motor: str, proyecto: str) -> Path:
+    """Genera un script maestro `_run_all.sql` que ejecuta todos los <TABLA>.sql en orden, desde
+    su misma carpeta. Fail-fast: si una tabla falla, aborta (no deja una carga a medias en silencio).
+    Cada <TABLA>.sql es autónomo (trae su propia cabecera de sesión y su commit)."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"-- Master: ejecuta todos los inserts paramétricos de {proyecto}",
+        f"-- Generado: {ts} | Motor: {motor} | {len(tables)} tablas",
+    ]
+    if motor == "ORACLE":
+        lines += [
+            "-- Uso: sqlplus <user>/<pass>@<db> @_run_all.sql   (ejecutar DESDE esta carpeta)",
+            "WHENEVER SQLERROR EXIT SQL.SQLCODE",
+            "SET DEFINE OFF",
+            f"PROMPT === Inserts parametricos {proyecto} ({len(tables)} tablas) ===",
+        ]
+        for t in tables:
+            lines.append(f"PROMPT -- {t}")
+            lines.append(f"@@{t}.sql")      # @@ = ruta relativa al propio master
+        lines.append("PROMPT === FIN ===")
+    else:  # SQLSERVER
+        lines += [
+            "-- Uso: sqlcmd -S <server> -d <db> -i _run_all.sql   (ejecutar DESDE esta carpeta)",
+            "-- Requiere sqlcmd (procesa :r y :on error); pegado tal cual en SSMS no funciona.",
+            ":on error exit",
+        ]
+        for t in tables:
+            lines.append(f"PRINT '-- {t}';")
+            lines.append(f":r {t}.sql")     # :r = incluye el fichero
+            lines.append("GO")
+        lines.append("PRINT '=== FIN ===';")
+        lines.append("GO")
+    master_path = out_dir / "_run_all.sql"
+    with open(master_path, "w", encoding="utf-8-sig") as f:
+        f.write("\n".join(lines) + "\n")
+    return master_path
+
+
 def main():
     if len(sys.argv) < 4:
         print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir> [ORACLE|SQLSERVER]")
@@ -429,6 +467,12 @@ def main():
 
     print(f"\nResumen: {len(tablas) - len(errores)}/{len(tablas)} tablas OK, "
           f"{total_rows} filas, {len(errores)} errores")
+
+    ok_tablas = [t for t in tablas if resultados[t][0] == "OK"]
+    if ok_tablas:
+        master = write_master_script(out_dir, ok_tablas, cfg["motor"], proyecto)
+        print(f"Master: {master.name} → ejecuta las {len(ok_tablas)} tablas OK de golpe")
+
     if errores:
         # No abortar todo el instalador por una tabla; el hook decide con el exit code
         sys.exit(2)

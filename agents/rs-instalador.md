@@ -19,7 +19,9 @@ C:\AIS\<Proyecto>\Instalador\
 │   └── Modulos\     DLLs de los módulos activos del cliente
 └── Scripts\
     ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas, SIN schema
-    └── Inserts\<TABLA>.sql             un fichero por tabla paramétrica
+    └── Inserts\
+        ├── <TABLA>.sql                 un fichero por tabla paramétrica
+        └── _run_all.sql                master: ejecuta todos los <TABLA>.sql de golpe
 ```
 
 `workspace` (ruta trunk del proyecto) y `plugin_root` vienen en el prompt de invocación. Usar
@@ -110,7 +112,7 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
   - Un `Resumen ... OK` sin las dos líneas de gate no es evidencia suficiente.
 - **AgendaWeb:** `OK — AgendaWeb publicada: N ficheros` (msbuild sin errores).
 - **ServiceManager:** `host OK` + `<destino>\ServiceManager\Modulos` con las DLL de los módulos.
-- **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts`.
+- **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts` (+ `_run_all.sql`, master que los ejecuta todos de golpe: `@@` en Oracle, `:r`+GO en SQL Server, fail-fast).
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD → reportarlo como AVISO,
     no como éxito silencioso.
 
