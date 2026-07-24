@@ -135,10 +135,21 @@ def _load_model(model_path: Path) -> dict | None:
     return model
 
 
-def _run_ps(script: str, *args: str) -> dict:
+def _run_ps(script: str, *args: str, timeout: int = 1200) -> dict:
     ps_path = HOOKS_DIR / script
     cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(ps_path), *args]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # ⛔ stdin=DEVNULL es OBLIGATORIO. Sin él, el powershell hijo hereda el pipe stdin JSON-RPC del
+    # servidor MCP (que nunca recibe EOF) y bloquea en el arranque hasta un timeout interno (~3 min
+    # POR LLAMADA) → rs-init y el pipeline tardaban 20+ min aunque el script suelto corre en ~1s.
+    # DEVNULL da EOF inmediato y powershell arranca al instante. El `timeout` es solo una red de
+    # seguridad para procesos realmente colgados (ej. conexión BD que no responde); holgado a
+    # propósito (20 min) para NO matar operaciones largas legítimas (sync-from-db, compile-check,
+    # test-runner). Los callers pueden subirlo con timeout=.
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"error": f"timeout tras {timeout}s ejecutando {script}", "script": script, "timeout": True}
     output = (result.stdout or "").strip()
     if not output:
         stderr = (result.stderr or "").strip()
@@ -203,7 +214,7 @@ def _check_svn_cli() -> bool:
     if _svn_cli is not None:
         return _svn_cli
     try:
-        r = subprocess.run(["svn", "--version", "--quiet"], capture_output=True, timeout=5)
+        r = subprocess.run(["svn", "--version", "--quiet"], capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
         _svn_cli = r.returncode == 0
         return _svn_cli
     except FileNotFoundError:
@@ -221,7 +232,7 @@ def _check_git_cli() -> bool:
     if _git_cli is not None:
         return _git_cli
     try:
-        r = subprocess.run(["git", "--version"], capture_output=True, timeout=5)
+        r = subprocess.run(["git", "--version"], capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
         _git_cli = r.returncode == 0
         return _git_cli
     except FileNotFoundError:
@@ -394,8 +405,13 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
             # durante toda la ejecución. Misma razón por la que la rama Oracle usa fichero temporal.
             cmd += ["-U", user]
             entorno = {**os.environ, "SQLCMDPASSWORD": password}
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                                errors="replace", env=entorno)
+        try:
+            # stdin=DEVNULL: mismo motivo que en _run_ps — sqlcmd heredaría el pipe JSON-RPC del
+            # server (sin EOF) y bloquearía. timeout=300 evita colgar si la BD no responde.
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", env=entorno, stdin=subprocess.DEVNULL, timeout=300)
+        except subprocess.TimeoutExpired:
+            return json.dumps({"success": False, "error": "timeout (300s) ejecutando sqlcmd — ¿BD inaccesible o consulta demasiado lenta?"}, ensure_ascii=False)
     elif motor == "ORACLE":
         # Credenciales en fichero SQL, no en línea de comando (no exponer en lista de procesos)
         if password:
@@ -420,7 +436,12 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
         tmp.write(script); tmp.close()
         cmd = ["sqlplus", "-S", sqlplus_conn, f"@{tmp.name}"]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            # stdin=DEVNULL crítico: sqlplus es interactivo — sin EOF en stdin se queda esperando
+            # input y cuelga. timeout=300 = red de seguridad si la BD no responde.
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", stdin=subprocess.DEVNULL, timeout=300)
+        except subprocess.TimeoutExpired:
+            return json.dumps({"success": False, "error": "timeout (300s) ejecutando sqlplus — ¿BD inaccesible o consulta demasiado lenta?"}, ensure_ascii=False)
         finally:
             os.unlink(tmp.name)
     else:

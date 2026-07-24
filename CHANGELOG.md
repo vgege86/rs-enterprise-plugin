@@ -1,5 +1,35 @@
 # RS Enterprise Agent — Changelog
 
+## 2.23.1 — 2026-07-24
+
+### Fix (crítico): cada tool MCP tardaba ~3 min por llamada (`_run_ps` sin `stdin`)
+
+`_run_ps` lanzaba `powershell` **sin redirigir stdin**: el proceso hijo heredaba el pipe stdin
+JSON-RPC del servidor MCP (que nunca recibe EOF) y **bloqueaba en el arranque hasta un timeout
+interno (~3 min por llamada)**. El mismo script suelto corría en ~1s. Afectaba a TODA tool que pasa
+por `_run_ps` (`check_env`, `get_scope`, `compile_check`, `run_tests`, `sync_from_db`,
+`generate_sql`, VCS…) → `rs-init` y el pipeline tardaban 20+ min.
+
+**Fix** (`mcp/rs-workspace-server.py`, `_run_ps`):
+- `stdin=subprocess.DEVNULL` → EOF inmediato, powershell arranca al instante. **Es el fix real.**
+- `timeout=1200` (20 min, parametrizable) como red de seguridad para procesos realmente colgados
+  (ej. conexión BD que no responde). Holgado a propósito para **no** matar operaciones largas
+  legítimas (`sync-from-db` 5-10 min, builds, tests); si expira devuelve `{"error": "timeout…"}` en
+  vez de propagar la excepción.
+
+**Mismo bug en los otros 4 `subprocess.run` del server** (no pasaban por `_run_ps`) — corregidos con
+`stdin=subprocess.DEVNULL`:
+- `db_query` **SQL Server (`sqlcmd`)** y **Oracle (`sqlplus`)** — los peores: sin `stdin` **ni**
+  `timeout`. `sqlplus` es interactivo → sin EOF se quedaba esperando input. Añadido DEVNULL +
+  `timeout=300` (devuelve `{"success": false, "error": "timeout…"}` si la BD no responde).
+- `_check_svn_cli` / `_check_git_cli` — ya tenían `timeout=5`; añadido DEVNULL por robustez.
+
+Auditados los 5 `subprocess.run` del fichero: **todos** llevan ya `stdin=DEVNULL`.
+
+Diagnóstico: script standalone rápido pero vía MCP lento = clásico stdin heredado sin EOF.
+Verificación: tras el fix + `/plugin marketplace update` + reiniciar Claude Code, `check_env` vía MCP
+vuelve en ~1-2s (no 3 min).
+
 ## 2.23.0 — 2026-07-24
 
 ### Feat: soporte de soluciones `tipo=Servicio` (servicio Windows + instalador .vdproj)
