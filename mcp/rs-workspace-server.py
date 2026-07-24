@@ -233,7 +233,7 @@ def _check_git_cli() -> bool:
         return False
 
 
-@mcp.tool(description="Parsea .sln → scope_dirs, tipo (Batch/Online), workspace. Usar al inicio de cada tarea (paso 1b). Resultado cacheado en proceso.")
+@mcp.tool(description="Parsea .sln → scope_dirs, tipo (Batch/Online/Servicio/Unknown), workspace, installer_vdproj. 'Servicio' = solución instalable con .vdproj (ej. servicio Windows). Usar al inicio de cada tarea (paso 1b). Resultado cacheado en proceso.")
 def get_scope(sln_path: str) -> str:
     return json.dumps(_get_scope(sln_path), ensure_ascii=False, indent=2)
 
@@ -680,6 +680,12 @@ def render_erd(workspace: Workspace) -> str:
 def render_dashboard(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("render-dashboard.ps1", workspace), ensure_ascii=False, indent=2)
+
+
+@mcp.tool(description="Renderiza la guía de usuario del plugin (README.md) a un HTML autónomo (tema claro/oscuro, sin dependencias) y lo abre en el navegador. Fuente = README del plugin, no el workspace. Devuelve la ruta — no carga el HTML en contexto.")
+def render_help(workspace: Workspace) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    return json.dumps(_run_ps("render-help.ps1", workspace), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Esquema completo (columnas con tipo/nullable/pk, relaciones, índices) de tablas específicas del modelo BD. Evita cargar model.json completo (~180K tokens). tables = coma-separadas.")

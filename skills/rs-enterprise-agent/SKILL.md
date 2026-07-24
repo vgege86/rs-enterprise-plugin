@@ -24,11 +24,12 @@ Prioriza: seguridad > rapidez | robustez > simplicidad | cambios mínimos > rees
 Workspace = carpeta actual en Claude Code (cwd de la sesión, visible como "Primary working directory"). Usar ese valor literal, sin preguntar ni inferir, como argumento `workspace` en CUALQUIER llamada `mcp__plugin_rs-enterprise-agent_rs-workspace__*`.
 Proyecto = carpeta anterior a `trunk\` (ej: `<Proyecto>` en `C:\SVN\RS\<Proyecto>\trunk`).
 Batch: `Batch\Soluciones\<Solution>.sln` | Online: `OnLine\Soluciones\<Solution>.sln`
+Servicio (instalable): `.sln` con un Setup Project `.vdproj`, en ruta **libre** bajo `trunk\` (fuera de `Batch\Soluciones\`/`OnLine\`, ej. `RecBatch2014\RecBatchSvc\RecBatchSvc.sln`). Servicio Windows .NET Framework — `get_scope` la marca `tipo=Servicio`, resuelve el `workspace` al trunk y devuelve `installer_vdproj`. Build: `agents/rs-editor-build.md` § Servicio (MSBuild código + devenv instalador, sin copia a AIS).
 ServiceManager (host REST modular, fuera de `Soluciones\`):
 - Host: `OnLine\AISServiceManager\AISServiceManager\AIS.ServicesManager.sln`
 - Framework: `OnLine\AISServiceManager\ArqNet\AIS.ArqNet.sln`
 - Módulos: `OnLine\AISServiceManager\Modulos\<Modulo>\*.sln` (⚠️ el nombre del `.sln` no siempre coincide con el proyecto, ej. `AIS.RS.<Proyecto>.API` → `RS<Proyecto>.sln`)
-Inferencia de tipo: RSProc* → Batch | Web/UI → Online | `AIS.*` / ServiceManager / módulos de `OnLine\AISServiceManager` → Online (ServiceManager).
+Inferencia de tipo: RSProc* → Batch | Web/UI → Online | `AIS.*` / ServiceManager / módulos de `OnLine\AISServiceManager` → Online (ServiceManager) | `.sln` con `.vdproj` (instalador) → Servicio. ⛔ El valor autoritativo lo da `get_scope` (`tipo`), no inferirlo a mano.
 
 Scripts SQL generados (DDL, migración, idiomas/controles) → `C:\AIS\<proyecto-lowercase>\scripts\` (ruta canónica en `agents/rs-editor-core.md`). Se generan directamente ahí, son específicos de la tarea. ⛔ Nunca dejarlos solo en `BD\` ni solo en el chat; de `BD\` solo se usa el modelo, la fuente de datos es siempre la BD.
 
@@ -175,6 +176,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
 | Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde history.json y lo abre; versión visual de /rs-stats) |
+| Guía de usuario ⚡ | `/rs-help`, "guía del plugin", "manual de usuario", "cómo se usa el plugin" | `rs-help` (renderiza el README a un HTML navegable con formato y lo abre; no carga el HTML en contexto) |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |
 | Notas de versión 🔷 | `/rs-release-notes`, "genera notas de versión", "changelog funcional de X" | `detect_vcs` → `rs-release-notes` (agrupa commits SVN/Git en notas funcionales) |
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |

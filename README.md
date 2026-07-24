@@ -1,8 +1,39 @@
-# RS Enterprise Agent
+# RS Enterprise Agent — Guía de usuario
 
-Skill de Claude Code para desarrollo C# en soluciones uCollect/RS. Pipeline automatizado de desarrollo (planificación → análisis → validación → testing → build) más 22 modos directos: auditoría, análisis de un diff, impacto, validación código↔BD, esquema BD, modelo BD/ERD, scripts de idiomas, commits SVN o Git, documentación, seguridad y estadísticas.
+Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
-Versión actual: ver `CHANGELOG.md`.
+1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
+2. **41 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
+
+Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
+
+> Versión actual: **2.21.0** — ver `CHANGELOG.md` para el detalle por versión.
+
+---
+
+## Índice
+
+- [Instalación](#instalación)
+- [Cómo se usa (activación)](#cómo-se-usa-activación)
+- [Leyenda de modelos](#leyenda-de-modelos)
+- [El pipeline de desarrollo](#el-pipeline-de-desarrollo)
+- [Catálogo de comandos](#catálogo-de-comandos)
+  - [1. Pipeline principal](#1-pipeline-principal)
+  - [2. Análisis y calidad de código](#2-análisis-y-calidad-de-código)
+  - [3. Refactor y correcciones (escriben código)](#3-refactor-y-correcciones-escriben-código)
+  - [4. Base de datos y modelo](#4-base-de-datos-y-modelo)
+  - [5. Rendimiento y validación BD](#5-rendimiento-y-validación-bd)
+  - [6. Testing](#6-testing)
+  - [7. Control de versiones (SVN o Git)](#7-control-de-versiones-svn-o-git)
+  - [8. Documentación e idiomas](#8-documentación-e-idiomas)
+  - [9. Comprensión y onboarding](#9-comprensión-y-onboarding)
+  - [10. Entorno, estadísticas y dashboard](#10-entorno-estadísticas-y-dashboard)
+  - [11. Instalador de cliente](#11-instalador-de-cliente)
+  - [12. Jira](#12-jira)
+- [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
+- [Reglas clave](#reglas-clave)
+- [Requisitos y resolución de problemas](#requisitos-y-resolución-de-problemas)
+- [Para mantenedores del plugin](#para-mantenedores-del-plugin)
 
 ---
 
@@ -17,427 +48,331 @@ Plugin de Claude Code, publicado como marketplace Git:
 
 El repo es **privado**: hace falta credencial de GitHub en la máquina (`gh auth login` o Git Credential Manager) para que Claude Code pueda clonarlo.
 
-Claude Code descubre automáticamente `commands/`, `agents/`, `skills/rs-enterprise-agent/SKILL.md`, los hooks SessionStart/Stop/UserPromptSubmit (`.claude-plugin/plugin.json`) y el MCP server `rs-workspace` (`.mcp.json`) — no hay que copiar nada a mano ni editar `~/.claude/settings.json`/`~/.claude.json`.
+Claude Code descubre automáticamente `commands/`, `agents/`, los skills, los hooks (SessionStart/Stop/UserPromptSubmit) y el MCP server `rs-workspace` — no hay que copiar nada a mano ni editar `~/.claude/settings.json`.
 
-Con origen Git, Claude Code clona el marketplace en `~/.claude/plugins/marketplaces/` y ejecuta el plugin desde su copia en `~/.claude/plugins/cache/<marketplace>/<plugin>/<versión>/`: **ninguna sesión depende de una unidad de red**.
+Con origen Git, Claude Code clona el marketplace en `~/.claude/plugins/marketplaces/` y ejecuta el plugin desde su copia cacheada: **ninguna sesión depende de una unidad de red**.
 
-⚠️ Si tenías el marketplace anterior de tipo `directory` (apuntando a una ruta local o de red), quítalo antes con `/plugin marketplace remove rs-enterprise-agent`; si no, conviven dos orígenes y el plugin se ejecuta desde la carpeta origen, no desde el cache.
+> ⚠️ Si tenías el marketplace anterior de tipo `directory` (ruta local/red), quítalo antes con `/plugin marketplace remove rs-enterprise-agent`. Si no, conviven dos orígenes.
 
-Tras instalar: **reiniciar Claude Code**.
+**Tras instalar: reiniciar Claude Code.**
 
-Para actualizar tras un cambio publicado: `/plugin marketplace update rs-enterprise-agent` (o reinstalar) y reiniciar.
+Para actualizar tras una versión nueva:
 
-**Requisitos**: Python 3.11+ (MCP server), .NET SDK (`dotnet build`/`test`), PowerShell 7+, Visual Studio con MSBuild (builds Online vía vswhere). Para los comandos de control de versiones: Subversion CLI (misma versión que TortoiseSVN) en proyectos SVN, o Git CLI (2.x+) en proyectos Git — basta con tener el que corresponda al proyecto, `detect_vcs` decide cuál usar.
+```
+/plugin marketplace update rs-enterprise-agent
+```
 
----
+…y reiniciar.
 
-## Activación
-
-Tres vías:
-
-1. **Pipeline completo** — mensaje con el patrón solución + cambio:
-   ```
-   RSProcIN.sln - añadir validación de entrada
-   AgendaWeb.sln - modificar lógica de pedidos
-   ```
-2. **Slash commands** — `/rs-*` (lista abajo).
-3. **Lenguaje natural** — "audita AgendaWeb.sln", "muestra el ERD", "qué usa RCLIENTES"... Cualquier mención de una `.sln` o solución RS dispara la skill (reforzado por el hook `skill-trigger.ps1`, que inyecta un recordatorio determinista en workspaces `\SVN\RS\`).
+**Requisitos** (detalle abajo): Python 3.11+, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
 
 ---
 
-## Pipeline
+## Cómo se usa (activación)
 
-El **planner es el cerebro**: analiza el cambio con acceso al modelo BD y al código, y emite el bloque `PLAN` (que un humano debe aprobar) y la lista autoritativa de etapas `STAGES`. El orquestador **ejecuta `STAGES` en orden sin re-decidir** — el resto de agentes solo aplican el plan.
+Tres vías, todas equivalentes en potencia:
 
-```
-resolver .sln → scope → planner → [aprobación humana] → STAGES → checklist → log
-   STAGES ⊆ { core, plan-check, validator, tester, build, db-modeler, documentar }  (en ese orden)
-```
-
-| Etapa | Agente | Cuándo la incluye el planner en STAGES |
-|-------|--------|----------------------------------------|
-| (1) | Validación .sln (validate-solution) | Siempre (orquestador) |
-| (1b) | Scope (get_scope) | Siempre — una sola vez, reenviado a todas las etapas |
-| (2) | planner 🟣 | Siempre — analiza y decide STAGES |
-| (2b) | **Aprobación humana** | Siempre — gate bloqueante (`references/gates.md`) |
-| `core` | core 🟣 | Siempre — implementa el cambio (lee docs si el plan lo marca) |
-| `plan-check` | plan-check 🔷 | Siempre tras core — verifica que el código cubre todos los ítems del PLAN aprobado (red de seguridad: también si el planner lo omite) |
-| — | core (reintento) 🟣 | Si plan-check devuelve INCOMPLETE (máx 1 ciclo; agotado → escala al usuario) |
-| `validator` | validator 🔷 | Siempre — compila + análisis estático + lógica (absorbe el antiguo analyzer) |
-| — | fixer 🟣 | Si validator falla (máx 2 ciclos, compartidos con tester) |
-| `tester` | tester 🔷 | Si hay lógica testeable o es Online y toca controles/idiomas |
-| — | crear-tests 🔷 | Auto si tester devuelve NEEDS_TESTS (sin proyecto, o código nuevo sin cobertura; advisory) |
-| — | scripts idiomas | Solo Online — gate interno del tester (controles/Idm.Texto/rebinds nuevos) |
-| `build` | build ⚡ | Tras modificar código (Batch y Online), con verificación de evidencia |
-| `db-modeler` | db-modeler 🟣 | Si añade/modifica tablas o DALCs (red de seguridad: también si core devuelve TABLES_TOUCHED) |
-| `documentar` | documentar (UpdateDocs) 🔷 | Si el cambio cumple los criterios de DocumentarCambio |
-| (checklist + log) | Orquestador | Siempre — verificación de evidencia + registro en history.json |
-
-> La validación de tipos/longitudes/motor BD (antes etapa `bd`) la hace ahora el **planner** en la fase de análisis. Ya no existen los agentes `rs-editor-bd` ni `rs-editor-analyzer`.
-
----
-
-## Comandos slash
-
-### Pipeline principal
+**1. Pipeline completo** — mensaje con el patrón `solución + cambio`:
 
 ```
-/rs-enterprise-agent <Solution>.sln - <cambio a realizar>
+RSProcIN.sln - añadir validación de fecha en cabecera
+AgendaWeb.sln - modificar lógica de pedidos
 ```
-Ejemplo: `/rs-enterprise-agent RSProcIN.sln - añadir validación de fecha en cabecera`
 
-### Análisis de código
-
-```
-/rs-audit <Solution>.sln
-```
-Auditoría estática de calidad (naming, estructura, lógica, seguridad) de **toda** la solución, sin modificar código.
+**2. Slash commands** — `/rs-*` (catálogo completo abajo):
 
 ```
-/rs-analizar <Solution>.sln [revisión|ficheros]
+/rs-audit AgendaWeb.sln
+/rs-impacto RCLIENTES en RSProcIN.sln
 ```
-Análisis estático de calidad/riesgo de **un diff o cambio concreto** (el delta, no toda la solución). Reconstruye el cambio vía `detect_vcs`; por defecto analiza los cambios pendientes. Versión standalone de lo que el pipeline hace en el validator.
+
+**3. Lenguaje natural** — cualquier mención de una `.sln` o solución RS dispara el plugin:
 
 ```
-/rs-impacto <clase|método|tabla> en <Solution>.sln
+audita AgendaWeb.sln
+muéstrame el ERD
+qué usa RCLIENTES
+faltan índices en RSProcIN
 ```
-Mapa de referencias a un símbolo dentro del scope, con clasificación de riesgo. Ejemplo: `/rs-impacto RCLIENTES en RSProcIN.sln`
 
-```
-/rs-validar-bd <Solution>.sln <DALC|clase|tabla>
-```
-Valida código C# contra la BD real: tipos, longitudes (truncamiento silencioso), nullabilidad y compatibilidad de motor (SQL Server/Oracle). Versión standalone de la validación BD que el pipeline hace en el planner. Ejemplo: `/rs-validar-bd RSProcIN.sln CobrosDalc.cs`
-
-```
-/rs-review <Solution>.sln [--rev <revisiones>] [--pr <n> [owner/repo]]
-```
-Revisión de un cambio (diff/PR) con **veredicto** `APRUEBA | CAMBIOS | BLOQUEA`. Unifica sobre el delta riesgo técnico + seguridad + compatibilidad BD. Por defecto revisa los cambios pendientes; con `--rev` una revisión/hash concreto; con `--pr` publica el veredicto en el pull request de GitHub. Ejemplo: `/rs-review RSProcIN.sln --rev 1234`
-
-```
-/rs-perf <Solution>.sln [DALC|tabla]
-```
-Análisis de rendimiento de acceso a BD: cruza el SQL de los DALC contra los índices del modelo para detectar índices que faltan, full-scans, filtros no-sargables y `SELECT *` en tablas anchas. Complementa `/rs-validar-bd` con el eje de rendimiento. Ejemplo: `/rs-perf RSProcIN.sln CobrosDalc.cs`
-
-```
-/rs-dead-code <Solution>.sln
-```
-Inverso de `/rs-impacto`: clases, métodos y DALCs con **cero referencias** en el scope, candidatos a eliminar. Marca como "no concluyente" los puntos de entrada, handlers `.aspx`, reflexión e interfaces públicas. Advisory, no borra.
-
-```
-/rs-explicar <Solution>.sln <clase|método|proceso>
-```
-Explica en lenguaje natural **qué hace** un elemento (clase/método/proceso), su flujo de datos, entradas/salidas y efectos laterales. Para onboarding. Distinto de `/rs-doc` (que persiste un resumen). Ejemplo: `/rs-explicar RSProcIN.sln CobrosDalc`
-
-```
-/rs-doc-drift <Solution>.sln [--rev <revisiones>]
-```
-Cruza los cambios recientes contra la **doc funcional** y marca secciones obsoletas, incompletas o sin doc. Advisory, no reescribe.
-
-```
-/rs-rename <Solution>.sln <viejo> a <nuevo>
-```
-Renombra un símbolo (clase/método/propiedad/tabla) y **todas** sus referencias del scope. ⛔ Muestra el plan y pide confirmación antes de reescribir. Avisa de referencias en otras soluciones que quedarían rotas. Ejemplo: `/rs-rename RSProcIN.sln GrabarCobro a RegistrarCobro`
-
-```
-/rs-hotspots <Solution>.sln
-```
-Puntos calientes de riesgo: cruza la frecuencia de cambios (churn VCS) con la complejidad/tamaño del código para señalar dónde invertir en tests/refactor. Advisory.
-
-```
-/rs-format <Solution>.sln [fichero]
-```
-Auto-fix de convenciones (naming, `using`, formato) — el complemento de `/rs-audit` (que solo señala). ⛔ Solo formato/naming, **nunca lógica**; pide confirmación antes de escribir. Los renombrados públicos se derivan a `/rs-rename`.
-
-```
-/rs-schema <tabla|keyword>
-```
-Esquema real de una o varias tablas: columnas, tipos, longitudes, nullabilidad, índices. Consulta pura (no genera DDL/ERD — para eso `/rs-erd`). Ejemplo: `/rs-schema RCLIENTES`
-
-```
-/rs-estructura <Solution>.sln
-```
-Mapa de capas, grafo de dependencias, detección de referencias circulares.
-
-```
-/rs-security <Solution>.sln
-```
-Scan de seguridad: SQL injection, credenciales hardcodeadas, XSS, input sin validar. Findings con severidad y `archivo:línea`.
-
-```
-/rs-deps [proyecto]
-```
-Mapa de dependencias entre soluciones: proyectos compartidos, conflictos de versión NuGet.
-Ejemplo: `/rs-deps RSDalc` → qué soluciones usan RSDalc y cuántas se verían afectadas por un cambio.
-
-### Control de versiones (SVN o Git — autodetectado)
-
-> **Requisito:** `/rs-diff`, `/rs-commit`, `/rs-historial` y `/rs-validar-req` necesitan `svn.exe` (proyectos SVN) o `git.exe` (proyectos Git) — `detect_vcs` decide cuál usar según lo que encuentre bajo el workspace, nunca hay que indicarlo a mano.
-> Subversion: instalar CLI con la **misma versión que TortoiseSVN** para evitar conflictos de working copy. Sin CLI, degrada a instrucciones manuales vía TortoiseSVN.
-> Git: cualquier `git.exe` 2.x reciente. Sin CLI, degrada a instrucciones manuales vía TortoiseGit.
-
-```
-/rs-diff [Solution.sln]
-```
-Cambios pendientes de commit, agrupados por solución/proyecto (SVN: modificado/añadido/eliminado/sin versionar; Git: modificado/staged/sin trackear/conflicto).
-
-```
-/rs-commit <Solution>.sln
-```
-Filtro de scope + diff + mensaje de commit sugerido. Requiere confirmación explícita antes de ejecutar. En Git, `commit` y `push` se confirman por separado — `git commit` es solo local, el `push` es lo que llega al repo compartido.
-
-```
-/rs-historial [Solution.sln] [N]
-```
-Historial de ejecuciones del pipeline y commits (SVN o Git). Ejemplo: `/rs-historial RSProcIN.sln 5`
-
-```
-/rs-deshacer <Solution>.sln
-```
-Deshace los cambios **pendientes de commit** del último cambio del pipeline, revirtiéndolos a su estado versionado (SVN o Git). No toca commits ya hechos ni la BD. ⛔ Pide confirmación explícita antes de revertir (previsualiza qué se revierte/elimina).
-
-```
-/rs-release-notes [Solution] [N] [--desde YYYY-MM-DD]
-```
-Convierte el historial de commits (SVN/Git) en notas de versión funcionales agrupadas (nuevo / correcciones / BD / interno), en lenguaje de negocio/QA. Ejemplo: `/rs-release-notes RSProcIN 30`
-
-```
-/rs-validar-req "<requerimiento>" --rev <revisiones> [--sln <Solution.sln>] [--session]
-```
-Valida si los commits (SVN o Git) implementan lo requerido. Detecta tests faltantes.
-- `--rev` revisión/es SVN o hash(es) de commit Git, separados por coma (obligatorio)
-- `--sln` inferida del diff si se omite
-- `--session` incluye transcript de sesión Claude para análisis más completo
-
-Ejemplo: `/rs-validar-req "validar importe positivo y menor al límite" --rev 1234` (SVN) o `--rev a1b2c3d` (Git)
-
-### Base de datos
-
-```
-/rs-erd [workspace]
-```
-Gestión del modelo BD: actualizar desde BD real, visualizar ERD interactivo (drag/zoom, edición de descripciones, export SQL/CSV/SVG/PNG), generar DDL, exportar a Oracle Data Modeler.
-
-La toolbar del ERD deja visible lo diario (subvista, buscador, filtro, `Fit view`, `PKs`, `Guardar`)
-y agrupa el resto en cuatro menús: **Vista · Modelo · Exportar · Importar**.
-
-El HTML del ERD no caduca: si solo cambió `BD\<proyecto>-model.json`, basta usar
-**`Importar ▾` → "Abrir modelo…"** para recargarlo en caliente — regenerar solo hace falta si cambió
-la plantilla del plugin. Al guardar, el widget escribe sobre ese mismo fichero (navegadores con
-File System Access API).
-
-```
-/rs-comparar-modelo [workspace]
-```
-Drift entre `BD/<proyecto>-model.json` y el esquema real. Ofrece generar scripts de migración y sincronizar el modelo post-migración.
-
-```
-/rs-sync-indexes [workspace]
-```
-Sincroniza índices desde la BD real al modelo (solo Oracle). Preserva índices `source=manual`.
-
-```
-/rs-seed <Solution>.sln <tabla> [N]
-```
-Genera INSERTs **sintéticos** de prueba para una tabla (dev/test), respetando tipo, longitud, nullabilidad, FKs y unicidad del modelo. Escribe un `.sql` en `C:\AIS\<proyecto>\scripts\`; no lo ejecuta. Complementa el instalador (que vuelca paramétricas reales). Ejemplo: `/rs-seed RSProcIN.sln RCLIENTES 20`
-
-```
-/rs-comparar-entornos [id1] [id2] [tablas]
-```
-Diff de esquema entre **dos conexiones** de `.rs-databases.json` (p.ej. dev vs pro): tablas/columnas/tipos/longitudes/índices divergentes. Solo lectura (SELECT). Detecta desincronizaciones antes de un despliegue. Ejemplo: `/rs-comparar-entornos dev pro`
-
-```
-/rs-generar-dalc <NombreTabla> en <Solution>.sln
-```
-Genera clases DALC completas desde el modelo BD. Ejemplo: `/rs-generar-dalc RCLIENTES en RSProcIN.sln`
-
-```
-/rs-migrar <Solution>.sln a <ORACLE|SQLSERVER>
-```
-Adapta DALCs y SQL entre SQL Server ↔ Oracle.
-
-### Instalación
-
-```
-/rs-instalador [<Proyecto>|<workspace>]
-```
-Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`:
-`EXES\` (procesos batch activos en Release), `AgendaWeb\` (publicación web), `ServiceManager\` +
-`Modulos\` (host net8 + módulos activos) y `Scripts\` (DDL de tablas sin schema + un fichero de
-inserts por tabla paramétrica). Los procesos batch y módulos activos por cliente se guardan en
-`docs\<Proyecto>-instalador.json`: si no existe, el comando lo crea preguntando; si existe, lo muestra
-y pregunta si añadir alguno más. Las tablas paramétricas salen de `subviews["Parametricas"]` del
-`model.json`.
-
-### Testing
-
-```
-/rs-crear-tests <Solution>.sln
-```
-Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios para las clases públicas.
-
-```
-/rs-cobertura <Solution>.sln
-```
-Mapa de cobertura de tests: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Cobertura aproximada (por referencia, no por ejecución). Complementa `/rs-crear-tests` mostrando dónde faltan.
-
-```
-/rs-test <Solution>.sln
-```
-Ejecuta `dotnet test` sobre la solución y reporta passed/failed/skipped, como modo directo (sin lanzar el pipeline completo). Si no hay proyecto de test, deriva a `/rs-crear-tests`.
-
-### Documentación e idiomas
-
-```
-/rs-doc <Solution>.sln
-```
-Genera y **persiste** el resumen por-solución (propósito, estructura, tablas, flujo, configuración) en `docs/agentic_manual/soluciones/<Solution>.md`. El pipeline lo refresca cuando cambia la estructura.
-
-> **Documentación en el pipeline.** El manual técnico de convenciones (`docs/agentic_manual/tecnica/`) es INPUT: el planner clasifica la tarea con su índice maestro y core lee los docs que aplican + el CHECKLIST antes de emitir código. La doc **funcional** y el **resumen por-solución** se actualizan automáticamente tras un cambio; el **manual técnico** solo se toca por **propuesta que un humano confirma** (cuando el cambio introduce un patrón reutilizable nuevo) — es la referencia compartida por todas las soluciones.
-
-```
-/rs-idiomas <Solution>.sln
-```
-Escanea `.aspx` en busca de controles AIS y genera INSERTs para `RIDIOMA`/`RCONTROLES`. Solo Online.
-Reglas clave: mensajes de error (`Idm.Texto`) solo llevan RIDIOMA; IDTEXTO libre siempre consultado contra RIDIOMA real (nunca por huecos de `coerr.cs`); salida a `C:\AIS\<proyecto>\scripts\`.
-
-### Entorno y estadísticas
-
-```
-/rs-env [workspace]
-```
-Valida .rs-databases.json, ruta AIS, dotnet, SVN, modelo BD y docs agentic.
-
-```
-/rs-init
-```
-Prepara un workspace **nuevo** para el plugin: crea `docs/.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje `docs/agentic_manual/` y el primer `model.json`, y valida con `/rs-env`. ⛔ Nunca sobrescribe ficheros existentes. Complementa `/rs-env` (que solo valida).
-
-```
-/rs-stats [solution]
-```
-Estadísticas desde `executions/history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días.
-
-```
-/rs-dashboard
-```
-Versión **visual** de `/rs-stats`: genera un dashboard HTML autónomo (KPIs, distribución por estado, top soluciones, agentes, tendencia 7 días; tema claro/oscuro) desde `executions/history.json` y lo abre en el navegador.
-
-### Jira
-
-```
-/rs-tarea [PROJ-123 | URL]
-```
-Orquesta el ciclo de vida de una tarea de Jira sobre una solución RS: selecciona la issue (búsqueda de tus tareas abiertas o KEY/URL manual) → formatea el requisito al prompt `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline `rs-enterprise-agent`** → tras `/rs-commit`, adjunta los `.sql` generados y transiciona a "En Validación". Es una capa **opcional y aditiva**: no cambia el pipeline; si no la usas, todo funciona igual que antes. `/rs-tarea init` crea el `.jira-dev-config.json`.
-
-- **Requisitos**: MCP **Atlassian Rovo** conectado (búsqueda/lectura/transición/comentario, sin credenciales propias). Para **adjuntar `.sql`** hace falta un Jira API token en `~/.claude/rs-jira-credentials.json` (`{ baseUrl, email, token }`, fuera del repo). Config no-secreta del workspace en `docs\.jira-dev-config.json` (junto a `.rs-databases.json`; `projectKey`, `jiraUser`, `cloudId?`, `statusMap`, `openStatuses?`). Setup completo → `references/jira.md`.
-- Uso interactivo (el MCP Rovo usa auth interactiva; no corre en headless/cron).
+> Dentro de una sesión, una vez resuelta la solución, **toda petición posterior de cambio de código** vuelve a entrar por el planner con aprobación de plan — aunque no repitas el `.sln - `. Las consultas de solo lectura siguen siendo directas.
 
 ---
 
-## MCP Server
+## Leyenda de modelos
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **42 tools** que envuelven los hooks 1:1. Preferente sobre hooks — más eficiente en tokens, con caché en memoria (mtime) y disco (`~/.claude/cache/rs-models`).
+Cada modo elige el modelo según lo que exige la tarea. Aparece junto a cada comando del catálogo:
 
-Registrado automáticamente por el plugin vía `.mcp.json` (raíz del repo):
+| Icono | Modelo | Se usa para |
+|-------|--------|-------------|
+| ⚡ | **Haiku** | Lectura pura / mecánico (esquema, diff, stats) |
+| 🔷 | **Sonnet** | Juicio autocontenido / advisory (auditoría, impacto, cobertura) |
+| 🟣 | **Opus** | Escribe código/SQL de producción, o gate de seguridad/cumplimiento |
 
-```json
-{
-  "mcpServers": {
-    "rs-workspace": {
-      "type": "stdio",
-      "command": "python",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py"],
-      "env": { "PYTHONUTF8": "1" }
-    }
-  }
-}
+---
+
+## El pipeline de desarrollo
+
+El **planner es el cerebro**: analiza el cambio con acceso al modelo BD y al código, emite el bloque `PLAN` (que un humano **debe aprobar**) y la lista autoritativa de etapas `STAGES`. El orquestador **ejecuta `STAGES` en orden sin re-decidir** — el resto de agentes solo aplican el plan.
+
+```
+resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → checklist → log
+   STAGES ⊆ { core, plan-check, validator, tester, build, db-modeler, documentar }
 ```
 
-Protección de contexto:
-- `compile_check` — trunca errores a `max_errors` (default 20)
-- `run_tests` — trunca failures a `max_failures` (default 10)
-- `find_symbol` — trunca matches a `max_results` (default 50)
-- `db_query` — trunca filas a `max_rows` (default 200)
-- `render_erd`, `generate_sql`, `export_dmd` — generan ficheros, nunca cargan el contenido en contexto
-- Modelo BD nunca se carga entero (~180K tokens): `search_model` → `get_model_index` → `get_table_schema`
+| Etapa | Cuándo se ejecuta |
+|-------|-------------------|
+| Validación `.sln` + Scope | Siempre (orquestador) |
+| **planner** 🟣 | Siempre — analiza, valida contra BD y decide STAGES |
+| **Aprobación humana** | Siempre — gate bloqueante, no toca código sin tu OK |
+| `core` 🟣 | Siempre — implementa el cambio |
+| `plan-check` 🔷 | Siempre tras core — verifica que el código cubre **todos** los ítems del PLAN |
+| `validator` 🔷 | Siempre — compila + análisis estático + revisión lógica |
+| `fixer` 🟣 | Si el validator falla (máx 2 ciclos) |
+| `tester` 🔷 | Si hay lógica testeable, o es Online y toca controles/idiomas |
+| `crear-tests` 🔷 | Auto si el tester detecta código nuevo sin cobertura |
+| scripts idiomas | Solo Online — controles/`Idm.Texto`/rebinds nuevos |
+| `build` ⚡ | Tras modificar código, con verificación de evidencia real |
+| `db-modeler` 🟣 | Si añade/modifica tablas o DALCs |
+| `documentar` 🔷 | Si el cambio cumple los criterios de documentación |
+| checklist + log | Siempre — verificación + registro en `history.json` |
 
-Tools disponibles → `references/mcp.md`
+> La validación de tipos/longitudes/motor BD la hace el **planner** en la fase de análisis. Validator y Tester son **bloqueantes**: el build no se ejecuta si fallan.
 
 ---
 
-## Hooks
+## Catálogo de comandos
 
-Scripts PowerShell en `hooks/` — fallback cuando el MCP no está activo (convención Preferente/Fallback en SKILL.md). Lista completa con parámetros → `references/hooks.md`.
+41 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-Hooks de infraestructura (registrados por el plugin en `.claude-plugin/plugin.json`, no invocados por agentes):
-- `skill-trigger.ps1` — UserPromptSubmit: fuerza el disparo de la skill al mencionar `.sln` en workspaces RS
-- `runner/runner.ps1` — Stop: ejecuta los builds encolados (batch-build / online-publish / copy-ais)
+### 1. Pipeline principal
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-enterprise-agent <Solution>.sln - <cambio>` 🟣 | Lanza el pipeline completo de desarrollo. Ej: `/rs-enterprise-agent RSProcIN.sln - añadir validación de fecha` |
 
 ---
 
-## Modelo de BD
+### 2. Análisis y calidad de código
+
+Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-audit <Solution>.sln` 🔷 | Auditoría estática de calidad (naming, estructura, lógica, seguridad) de **toda** la solución. |
+| `/rs-analizar <Solution>.sln [rev\|ficheros]` 🔷 | Análisis de calidad/riesgo de **un diff concreto** (el delta, no toda la solución). Por defecto, cambios pendientes. |
+| `/rs-review <Solution>.sln [--rev <r>] [--pr <n> [owner/repo]]` 🟣 | Revisión de un cambio con **veredicto de bloqueo** `APRUEBA / CAMBIOS / BLOQUEA` (riesgo + seguridad + BD sobre el delta). Opcional: publica en un PR de GitHub. |
+| `/rs-impacto <clase\|método\|tabla> en <Solution>.sln` 🔷 | Mapa de todas las referencias a un símbolo, con clasificación de riesgo. Ej: `/rs-impacto RCLIENTES en RSProcIN.sln` |
+| `/rs-dead-code <Solution>.sln` 🔷 | Inverso de impacto: símbolos sin referencias. Marca como "no concluyente" puntos de entrada, handlers `.aspx`, reflexión/DI. Advisory, no borra. |
+| `/rs-hotspots <Solution>.sln` 🔷 | Puntos calientes de riesgo cruzando frecuencia de cambios (churn VCS) con complejidad. Ranking para priorizar tests/refactor. |
+| `/rs-security <Solution>.sln` 🟣 | Scan de seguridad: SQL injection, credenciales hardcoded, XSS, input sin validar. Findings con severidad y `archivo:línea`. |
+
+---
+
+### 3. Refactor y correcciones (escriben código)
+
+⛔ **Escriben código.** Todos piden **confirmación humana** antes de aplicar cambios.
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-rename <Solution>.sln <viejo> a <nuevo>` 🟣 | Renombrado seguro: localiza todas las referencias y las reescribe. Avisa de referencias cross-solución y colisiones. Ej: `/rs-rename RSProcIN.sln GrabarCobro a RegistrarCobro` |
+| `/rs-format <Solution>.sln [fichero]` 🟣 | Auto-fix de convenciones (naming/usings/formato) — el complemento de `/rs-audit`. ⛔ Solo formato, **nunca lógica**; renombrados públicos se derivan a `/rs-rename`. |
+| `/rs-migrar <Solution>.sln a <ORACLE\|SQLSERVER>` 🟣 | Adapta DALCs y SQL entre SQL Server ↔ Oracle. Alto impacto: reescribe SQL en todo el scope. |
+| `/rs-generar-dalc <Tabla> en <Solution>.sln` 🔷 | Genera clases DALC completas desde el modelo BD. Ej: `/rs-generar-dalc RCLIENTES en RSProcIN.sln` |
+
+---
+
+### 4. Base de datos y modelo
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-schema <tabla\|keyword>` ⚡ | Esquema real de una o varias tablas: columnas, tipos, longitudes, nullabilidad, índices. Consulta pura. Ej: `/rs-schema RCLIENTES` |
+| `/rs-erd [workspace]` 🟣 | Gestión del **modelo BD**: actualiza desde BD real, visualiza ERD interactivo (drag/zoom, edición de descripciones, export SQL/CSV/SVG/PNG), genera DDL, exporta a Oracle Data Modeler. |
+| `/rs-comparar-modelo [workspace]` ⚡ | Drift entre `BD/<proyecto>-model.json` y el esquema real. Ofrece generar scripts de migración y sincronizar. |
+| `/rs-comparar-entornos [id1] [id2] [tablas]` 🔷 | Diff de esquema entre **dos conexiones** de `.rs-databases.json` (ej. dev vs pro): tablas/columnas/tipos/longitudes/índices divergentes. ⛔ Solo SELECT. Ej: `/rs-comparar-entornos dev pro` |
+| `/rs-sync-indexes [workspace]` ⚡ | Sincroniza índices desde la BD real al modelo (solo Oracle). Preserva índices `source=manual`. |
+| `/rs-seed <Solution>.sln <tabla> [N]` 🔷 | Genera INSERTs sintéticos de prueba respetando tipo/longitud/nullabilidad/FKs/unicidad. Salida a `C:\AIS\<proyecto>\scripts\`. ⛔ No ejecuta contra la BD. Ej: `/rs-seed RSProcIN.sln RCLIENTES 20` |
+
+---
+
+### 5. Rendimiento y validación BD
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-validar-bd <Solution>.sln <DALC\|clase\|tabla>` 🔷 | Valida código C# contra la BD real: tipos, longitudes (truncamiento silencioso), nullabilidad, compatibilidad de motor. Ej: `/rs-validar-bd RSProcIN.sln CobrosDalc.cs` |
+| `/rs-perf <Solution>.sln [DALC\|tabla]` 🟣 | Rendimiento de acceso a BD: cruza el SQL de los DALC contra los índices del modelo → índices que faltan, full-scans, filtros no-sargables (`UPPER(col)=`, `LIKE '%x'`), `SELECT *` en tablas anchas. |
+
+---
+
+### 6. Testing
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-test <Solution>.sln` ⚡ | Ejecuta `dotnet test` y reporta passed/failed/skipped. Sin lanzar el pipeline. Si no hay proyecto de test, deriva a `/rs-crear-tests`. |
+| `/rs-crear-tests <Solution>.sln` 🔷 | Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios para las clases públicas. |
+| `/rs-cobertura <Solution>.sln` 🔷 | Mapa de cobertura: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Advisory. |
+
+---
+
+### 7. Control de versiones (SVN o Git)
+
+> `detect_vcs` decide automáticamente SVN o Git según el workspace — nunca hay que indicarlo. Sin el CLI correspondiente, degradan a instrucciones manuales vía TortoiseSVN/TortoiseGit.
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-diff [Solution.sln]` ⚡ | Cambios pendientes de commit, agrupados por solución/proyecto. |
+| `/rs-commit <Solution>.sln` 🔷 | Filtro de scope + diff + mensaje de commit sugerido. **Confirmación explícita** antes de ejecutar. En Git, `commit` y `push` se confirman por separado. |
+| `/rs-deshacer <Solution>.sln` 🔷 | Revierte los cambios **pendientes** del último cambio del pipeline a su estado versionado. ⛔ Gate de confirmación. No toca commits ya hechos ni la BD. |
+| `/rs-historial [Solution.sln] [N]` ⚡ | Historial de ejecuciones del pipeline y commits. Ej: `/rs-historial RSProcIN.sln 5` |
+| `/rs-validar-req "<req>" --rev <r> [--sln <S>] [--session]` 🟣 | Valida si los commits implementan lo requerido. Detecta tests faltantes. `--rev` = revisión SVN o hash Git (coma para varios); `--session` incluye el transcript de la sesión. |
+| `/rs-release-notes [Solution] [N] [--desde YYYY-MM-DD]` 🔷 | Convierte el historial de commits en notas de versión funcionales agrupadas (✨ nuevo · 🐛 correcciones · 🗄️ BD · ⚙️ interno), en lenguaje de negocio/QA. |
+
+---
+
+### 8. Documentación e idiomas
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-doc <Solution>.sln` 🔷 | Genera y **persiste** el resumen por-solución (propósito, estructura, tablas, flujo, config) en `docs/agentic_manual/soluciones/`. |
+| `/rs-doc-drift <Solution>.sln [--rev <r>]` 🔷 | Cruza los cambios recientes contra la doc funcional y marca secciones obsoletas / incompletas / sin doc. Advisory, no reescribe. |
+| `/rs-idiomas <Solution>.sln` 🟣 | Escanea `.aspx`, busca controles AIS y genera INSERTs para `RIDIOMA`/`RCONTROLES`. **Solo Online.** Salida a `C:\AIS\<proyecto>\scripts\`. |
+
+> **Documentación en el pipeline.** El manual técnico de convenciones (`docs/agentic_manual/tecnica/`) es **input**: el planner clasifica la tarea y core lee los docs que aplican antes de emitir código. La doc **funcional** y el **resumen por-solución** se actualizan automáticamente tras un cambio; el manual técnico solo se toca por **propuesta que un humano confirma**.
+
+---
+
+### 9. Comprensión y onboarding
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-explicar <Solution>.sln <clase\|método\|proceso>` 🔷 | Explica en lenguaje natural qué hace, su flujo de datos y efectos laterales. Puntual, no persiste. Ej: `/rs-explicar RSProcIN.sln CobrosDalc` |
+| `/rs-estructura <Solution>.sln` ⚡ | Mapa de capas, grafo de dependencias, detección de referencias circulares. |
+| `/rs-deps [proyecto]` ⚡ | Dependencias entre soluciones: proyectos compartidos, conflictos de versión NuGet. Ej: `/rs-deps RSDalc` |
+
+---
+
+### 10. Entorno, estadísticas y dashboard
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-init` 🔷 | Bootstrap de un workspace nuevo: crea `.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje de docs y el primer `model.json`. ⛔ Nunca sobrescribe. |
+| `/rs-env [workspace]` ⚡ | Valida `.rs-databases.json`, ruta AIS, dotnet, SVN/Git, modelo BD y docs agentic. |
+| `/rs-stats [solution]` ⚡ | Estadísticas de `history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días. |
+| `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
+| `/rs-help` ⚡ | Renderiza **esta guía** (README) a un HTML navegable con formato (índice, tablas, tema claro/oscuro) y lo abre en el navegador. Ideal para pasar a usuarios. |
+
+---
+
+### 11. Instalador de cliente
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, y `Scripts\` (DDL + inserts de tablas paramétricas). La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
+
+---
+
+### 12. Jira
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-tarea [PROJ-123 \| URL]` | Orquesta el ciclo de una tarea de Jira: selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config. |
+
+> **Requisitos**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron).
+
+---
+
+## Qué hay por debajo
+
+No necesitas esto para usar el plugin, pero explica cómo funciona.
+
+### MCP Server
+
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **43 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+
+**Protección de contexto** — nunca satura la conversación:
+- `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
+- `render_erd`, `render_dashboard`, `generate_sql`, `export_dmd` generan **ficheros**, nunca cargan el contenido en contexto.
+- El modelo BD (~180K tokens) nunca se carga entero: `search_model` → `get_model_index` → `get_table_schema`.
+
+Lista completa → `references/mcp.md`.
+
+### Hooks
+
+Scripts PowerShell en `hooks/` — fallback cuando el MCP no está activo. Dos hooks de infraestructura corren solos:
+- `skill-trigger.ps1` — fuerza el disparo del plugin al mencionar una `.sln` en workspaces RS.
+- `runner/runner.ps1` — ejecuta los builds encolados (batch-build / online-publish / copy-ais).
+
+Lista completa → `references/hooks.md`.
+
+### Modelo de BD
 
 Modelo JSON vivo en `BD/<proyecto>-model.json`:
-- Tablas y columnas desde el esquema real (SQL Server / Oracle)
-- Relaciones inferidas desde código DALC (JOINs, WHERE cruzados) con nivel de confianza
-- Índices sincronizables desde BD; descripciones semánticas editables
-- Export a DDL Oracle/SQL Server y Oracle Data Modeler (.dmd)
-- Detección de drift vs BD real + generación automática de scripts de migración
-- Merge seguro: preserva siempre `source="manual"` y descripciones; tablas ausentes se marcan `orphan`, nunca se borran
-
----
-
-## Estructura
-
-```
-.claude-plugin/
-  marketplace.json        marketplace de un solo plugin (source: "./")
-  plugin.json             manifiesto del plugin: nombre, versión, hooks SessionStart/Stop/UserPromptSubmit
-.mcp.json                 registro del MCP server rs-workspace
-skills/
-  rs-enterprise-agent/
-    SKILL.md              instrucciones principales del pipeline + modos directos
-  rs-plugin-dev/
-    SKILL.md              meta-skill: modifica el propio plugin (/rs-plugin-dev)
-  rs-jira/
-    SKILL.md              orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
-agents/                   45 subagentes: pipeline y modos directos
-commands/                 definiciones de slash commands
-hooks/                    scripts PowerShell (build, SVN, BD, análisis, trigger, jira-attach)
-mcp/                      servidor MCP con 42 tools
-references/               documentación de referencia (cargada bajo demanda)
-  arquitectura.md         stack de capas uCollect, convenciones web Online
-  hooks.md                lista completa de hooks con parámetros
-  jira.md                 setup de la integración Jira (config + credenciales)
-  mcp.md                  lista completa de MCP tools
-docs/
-  plugin-architecture.md  anatomía interna del plugin + patrón de extensión (fuente canónica)
-scripts/                  utilidades python (analyze-dalc, export-dmd, generate-sql, render-erd)
-runner/                   runner.ps1 — ejecutor de builds (Stop hook)
-executions/               history.json — historial de ejecuciones
-assets/                   widget ERD inline
-```
+- Tablas y columnas desde el esquema real (SQL Server / Oracle).
+- Relaciones inferidas desde código DALC con nivel de confianza.
+- Índices sincronizables desde BD; descripciones semánticas editables.
+- Export a DDL y Oracle Data Modeler (`.dmd`).
+- Detección de drift + generación de scripts de migración.
+- **Merge seguro**: preserva siempre `source="manual"` y descripciones; tablas ausentes se marcan `orphan`, nunca se borran.
 
 ---
 
 ## Reglas clave
 
-- Validator y Tester son bloqueantes — build no ejecuta si fallan
-- Scope estricto: solo proyectos incluidos en la .sln activa
-- Build con verificación de evidencia: nunca "build OK" sin output real del runner
-- Modelo BD preserva siempre descripciones y relaciones manuales
-- Scripts idiomas (RIDIOMA/RCONTROLES) obligatorios en Online según el gate de core.md (controles nuevos, Idm.Texto nuevos, rebinds de grid)
-- Scripts SQL generados siempre a `C:\AIS\<proyecto>\scripts\`
-- Sin svn CLI instalado: svn-add degrada a TortoiseProc → instrucciones manuales
-- Sin git CLI instalado: git-add degrada a TortoiseGitProc → instrucciones manuales
-- VCS nunca se asume — `detect_vcs` decide SVN/Git/ninguno antes de cualquier modo de diff/commit
+- **Aprobación humana del plan** obligatoria antes de tocar código (no aplica a los modos de solo lectura).
+- Validator y Tester son **bloqueantes** — el build no se ejecuta si fallan.
+- **Scope estricto**: solo proyectos incluidos en la `.sln` activa.
+- **Build con evidencia**: nunca "build OK" sin output real del runner.
+- El modelo BD preserva siempre descripciones y relaciones manuales.
+- Scripts SQL generados siempre a `C:\AIS\<proyecto>\scripts\`.
+- Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos.
+- **VCS nunca se asume** — `detect_vcs` decide SVN/Git/ninguno antes de cualquier diff/commit.
+- Los comandos que **escriben** (`/rs-rename`, `/rs-format`, `/rs-migrar`, `/rs-commit`, `/rs-deshacer`, pipeline) piden confirmación antes de aplicar.
 
 ---
 
-## Desarrollo del plugin
+## Requisitos y resolución de problemas
 
-- Fuente canónica: el repo Git `https://github.com/vgege86/rs-enterprise-plugin.git` (privado). El checkout local del mantenedor es solo eso, un checkout — nada del plugin debe depender de su ruta.
-- **Anatomía interna y patrón de extensión** → `docs/plugin-architecture.md`. Léelo antes de añadir un modo, un agente, una tool MCP o un hook.
-- **Modificar el plugin de forma guiada** → skill `rs-plugin-dev` (`/rs-plugin-dev <qué cambiar>`): lee el doc de arquitectura, planifica, pide aprobación antes de escribir, **sube la versión** (obligatorio, es lo que dispara la detección de actualización) y sincroniza la documentación.
+**Requisitos de la máquina:**
+
+| Componente | Para qué |
+|------------|----------|
+| Python 3.11+ | MCP server |
+| .NET SDK | `dotnet build` / `dotnet test` |
+| PowerShell 7+ | Hooks |
+| Visual Studio + MSBuild | Builds Online (vía vswhere) |
+| Subversion CLI **o** Git CLI 2.x | Diff/commit/historial (según el proyecto) |
+
+> Subversion: instala el CLI con la **misma versión que TortoiseSVN** para evitar conflictos de working copy.
+
+**Primer arranque en un workspace nuevo:** ejecuta `/rs-init` (crea la config de BD, el andamiaje de docs y el primer modelo BD), luego `/rs-env` para validar que todo está en su sitio.
+
+Guía de problemas comunes → `references/troubleshooting.md`.
+
+---
+
+## Para mantenedores del plugin
+
+- **Fuente canónica**: el repo Git privado `https://github.com/vgege86/rs-enterprise-plugin.git`. El checkout local es solo un checkout — nada del plugin debe depender de su ruta.
+- **Anatomía interna y patrón de extensión** → `docs/plugin-architecture.md`. Léelo antes de añadir un modo, agente, tool MCP o hook.
+- **Modificar el plugin de forma guiada** → `/rs-plugin-dev <qué cambiar>`: lee el doc de arquitectura, planifica, pide aprobación, **sube la versión** (obligatorio) y sincroniza la documentación.
 - ⛔ Nunca editar la copia cacheada por Claude Code (`~/.claude/plugins/cache/...`) — es un snapshot, se pisa en cada update.
-- Tras cualquier cambio (agentes, referencias, `SKILL.md`, hooks, MCP, commands, skills) → **bump de versión** en `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (idénticas), luego `/plugin marketplace update rs-enterprise-agent` (o reinstalar) y reiniciar Claude Code.
+- Tras cualquier cambio → **bump de versión** en `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (idénticas), luego `/plugin marketplace update rs-enterprise-agent` y reiniciar.
+
+### Estructura del repo
+
+```
+.claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
+.mcp.json         registro del MCP server rs-workspace
+skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira
+agents/           46 subagentes: pipeline y modos directos
+commands/         43 definiciones de slash commands
+hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
+mcp/              servidor MCP con 43 tools
+references/       documentación de referencia (carga bajo demanda)
+docs/             plugin-architecture.md (fuente canónica) + agentic_manual
+scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)
+runner/           runner.ps1 — ejecutor de builds (Stop hook)
+tests/            suite de tests del plugin (pytest + Pester)
+executions/       history.json — historial de ejecuciones
+assets/           widget ERD inline
+```

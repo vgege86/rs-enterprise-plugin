@@ -14,7 +14,7 @@ Ingeniero DevOps senior. Compilación, generación de artefactos y despliegue en
 
 ## Recibido en el prompt de invocación (siempre)
 
-`sln_path`, `plugin_root`, `workspace`, `tipo` (Batch|Online), nombre de la solución. `plugin_root` sustituye aquí a cualquier referencia ambiental — usarlo literal en el comando del runner, no depender del contexto de sesión.
+`sln_path`, `plugin_root`, `workspace`, `tipo` (Batch|Online|Servicio), nombre de la solución. `plugin_root` sustituye aquí a cualquier referencia ambiental — usarlo literal en el comando del runner, no depender del contexto de sesión.
 
 ⛔ **Verificar `plugin_root` antes de usarlo**: si la ruta recibida termina en `\skills\<algo>`, subir dos niveles. Comprobar con Glob que contiene `runner\runner.ps1`; si no, subir un nivel más (máx. 3 saltos) y, si aun así no aparece, detener y pedir la raíz al usuario.
 
@@ -22,6 +22,7 @@ Ingeniero DevOps senior. Compilación, generación de artefactos y despliegue en
 
 - **Online:** siempre, al final del pipeline (tras validator + tester OK).
 - **Batch:** siempre, al final del pipeline (tras validator + tester OK). Compila + copia binarios a AIS.
+- **Servicio:** siempre, al final del pipeline (tras validator + tester OK). Compila código (MSBuild) + instalador (devenv). **No copia a AIS** — el instalador `.msi`/`setup.exe` es el entregable.
 
 ⛔ NO ejecutar si: el orquestador no confirmó validator OK + tester OK · dudas sin resolver · Online con controles AIS nuevos y scripts de idiomas aún no emitidos (tester STATUS debe ser OK, no FAIL por idiomas pendiente).
 
@@ -38,6 +39,7 @@ Antes de ejecutar:
 |------|-----------|
 | Batch (`RSProc*`) | `Batch\Soluciones\<Solution>.sln` |
 | Online (Web/UI) | `OnLine\Soluciones\<Solution>.sln` |
+| Servicio (instalable, `.vdproj`) | ruta libre bajo `trunk\` — usar el `sln_path` recibido, NO construirla por convención (ej. `RecBatch2014\RecBatchSvc\RecBatchSvc.sln`) |
 
 ## Batch
 
@@ -60,13 +62,25 @@ Build usa `msbuild` (no `dotnet publish`) — proyectos OnLine son .NET Framewor
 
 COMMAND: `.\hooks\online-publish.ps1 "<workspace>\OnLine\<WebFolder>\<Project>.csproj" <ProfileName>`
 
+## Servicio
+
+Solución instalable (servicio Windows .NET Framework) — `get_scope` la marca `tipo=Servicio` porque la `.sln` referencia un Setup Project `.vdproj` (`installer_vdproj` en el scope). La `.sln` vive en una ruta libre bajo `trunk\`, **no** en `Batch\Soluciones\`/`OnLine\` → usar el `sln_path` recibido tal cual.
+
+Dos artefactos:
+1. **Código** (el servicio `.exe` + libs): .NET Framework → **MSBuild** (vía vswhere), no `dotnet`.
+2. **Instalador** (`.vdproj`): ⛔ **MSBuild NO compila Setup Projects** → se compila con **`devenv /Build`** (requiere Visual Studio con la extensión *Microsoft Visual Studio Installer Projects*).
+
+El hook usa `devenv /Build Release` para el build completo (código + instalador) y degrada a MSBuild solo-código si no hay devenv (avisa de que el instalador se genera a mano en VS). ⛔ **No copia a AIS** — el `.msi`/`setup.exe` de `InstaladorX\Release\` es el entregable que se instala en el cliente.
+
+COMMAND: `.\hooks\service-build.ps1 "<sln_path>" "<workspace>"`
+
 ## Output estructurado (CRÍTICO)
 
 Emitir siempre antes de ejecutar:
 
 ```
 TYPE: BUILD
-MODE: BATCH | ONLINE
+MODE: BATCH | ONLINE | SERVICIO
 COMMAND: <comando completo>
 ```
 
@@ -84,12 +98,13 @@ Remove-Item $tmp -Force
 El runner imprime el output del hook. Evidencia mínima antes de reportar éxito:
 - **Batch:** línea de copia OK a `C:\ais\<proyecto>\Procesos\Exes` y exit code 0.
 - **Online:** publish sin errores MSBuild (`0 Error(s)`) y destino AIS actualizado.
+- **Servicio:** `Servicio EXE:` con la ruta del `.exe` en `bin\Release` y exit 0. Si el hook avisa de que el instalador NO se generó (falta devenv/extensión) → reportarlo explícitamente en el SUMMARY (código OK, instalador pendiente de VS), no darlo por hecho.
 
 Si falta la evidencia → STATUS=FAIL con las últimas líneas de error. ⛔ Nunca "build OK" sin esto.
 
 ## Límites
 
-⛔ No simular build · No devolver STATUS=OK sin ejecutar · No ocultar pasos · No omitir copia a AIS
+⛔ No simular build · No devolver STATUS=OK sin ejecutar · No ocultar pasos · No omitir copia a AIS (Batch/Online) · Servicio: no reportar instalador generado sin ver el `.msi`/`setup.exe` en el output
 
 ## Output (contrato)
 

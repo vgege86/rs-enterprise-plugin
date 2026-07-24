@@ -241,7 +241,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**42 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**43 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -272,7 +272,7 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 ⚠️ Los 3 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
 de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output discarded`). Ver
 CHANGELOG 2.15.9.
-- `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / copy-ais).
+- `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / service-build / copy-ais).
 
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
 usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
@@ -291,7 +291,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD |
-| `references/mcp.md` | Catálogo completo de las 42 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 43 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |

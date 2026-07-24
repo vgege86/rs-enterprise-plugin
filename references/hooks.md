@@ -79,6 +79,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/analyze-dalc.ps1` | `<workspace> <proyecto> [-SolutionPath <sln>]` | Infiere relaciones desde JOINs/WHERE en DALCs |
 | `hooks/render-erd.ps1` | `<workspace> [-Proyecto <nombre>]` | Genera ERD HTML y lo abre en navegador → `{path, table_count}` |
 | `hooks/render-dashboard.ps1` | `<workspace>` | Genera dashboard HTML de estadísticas (executions/history.json) y lo abre → `{path, opened}`. Fallback 1:1 de `render_dashboard` |
+| `hooks/render-help.ps1` | `<workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y lo abre → `{path, opened}`. Fallback 1:1 de `render_help` |
 | `hooks/generate-sql.ps1` | `<workspace> [-Proyecto <nombre>] [-Motor ORACLE\|SQLSERVER]` | Genera DDL SQL → `C:\AIS\<proyecto-lowercase>\scripts\<proyecto>-ddl-<motor>.sql` |
 | `hooks/export-dmd.ps1` | `<workspace> [-Proyecto <nombre>]` | Exporta a Oracle Data Modeler `.dmd` |
 
@@ -120,6 +121,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 |--------|-----------|-------------|
 | `hooks/batch-build.ps1` | `<Solution> "<workspace>"` | Build Debug+Release y copia binarios a `C:\ais\<proyecto>\Procesos\Exes` |
 | `hooks/online-publish.ps1` | `<csproj> [<Profile>]` | Publish MSBuild con perfil — `FolderProfile1` es solo el default del script, NO asumir que es el nombre real: verificar `<WebFolder>\Properties\PublishProfiles\*.pubxml` antes |
+| `hooks/service-build.ps1` | `<slnPath> [<workspace>]` | Build de solución `tipo=Servicio` — código con MSBuild + instalador `.vdproj` con devenv (degrada a solo-código si falta devenv). No copia a AIS; el `.msi`/`setup.exe` es el entregable |
 | `hooks/copy-ais.ps1` | `<source> <workspace>` | Copia binarios a destino AIS del proyecto |
 
 ## Scripts de utilidad (manuales)

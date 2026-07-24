@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — Guía de usuario</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --accent: #6639ba;
+    --accent-soft: #f3eefb;
+    --code-bg: #f6f8fa;
+    --table-head: #f6f8fa;
+    --table-zebra: #fbfcfd;
+    --quote-bg: #f8f9fb;
+    --maxw: 900px;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --border: #30363d;
+    --accent: #b389f5;
+    --accent-soft: #1c1630;
+    --code-bg: #161b22;
+    --table-head: #161b22;
+    --table-zebra: #11151b;
+    --quote-bg: #12161d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --border: #30363d;
+      --accent: #b389f5;
+      --accent-soft: #1c1630;
+      --code-bg: #161b22;
+      --table-head: #161b22;
+      --table-zebra: #11151b;
+      --quote-bg: #12161d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  header.bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 24px;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  header.bar .brand { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+  header.bar .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .theme-toggle {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  main {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 32px 24px 96px;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; margin: 1.6em 0 0.6em; scroll-margin-top: 72px; }
+  h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 0.2em; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
+  h3 { font-size: 1.2em; }
+  h4 { font-size: 1.02em; color: var(--muted); }
+  p { margin: 0.8em 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { margin: 0.6em 0; padding-left: 1.5em; }
+  li { margin: 0.25em 0; }
+  li > ul { margin: 0.25em 0; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+  code {
+    font-family: "SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.12em 0.4em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 1em 0;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 0.85em; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.6em 1em;
+    border-left: 3px solid var(--accent);
+    background: var(--quote-bg);
+    border-radius: 0 8px 8px 0;
+    color: var(--fg);
+  }
+  .table-wrap { overflow-x: auto; margin: 1.1em 0; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.93em; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--table-head); font-weight: 600; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: var(--table-zebra); }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  footer.foot { max-width: var(--maxw); margin: 0 auto; padding: 24px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">{title}<small>guía de usuario</small></div>
+  <button class="theme-toggle" id="themeToggle" type="button">◐ Tema</button>
+</header>
+<main>
+{content}
+</main>
+<footer class="foot">
+  Generado automáticamente desde <code>README.md</code> · {generated_ts} · <code>/rs-help</code>
+</footer>
+<script>
+  (function () {
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = localStorage.getItem("rs-help-theme"); } catch (e) {}
+    if (saved === "dark" || saved === "light") root.setAttribute("data-theme", saved);
+    document.getElementById("themeToggle").addEventListener("click", function () {
+      var cur = root.getAttribute("data-theme");
+      if (!cur) {
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        cur = prefersDark ? "dark" : "light";
+      }
+      var next = cur === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("rs-help-theme", next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

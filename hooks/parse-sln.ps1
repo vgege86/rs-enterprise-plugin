@@ -27,10 +27,23 @@ $slnDir   = $slnFile.DirectoryName
 $slnName  = $slnFile.BaseName   # sin .sln
 $content  = Get-Content $SlnPath -Encoding UTF8
 
-# Inferir tipo desde nombre y ruta
+# Detectar proyecto instalador (Visual Studio Setup Project .vdproj). Un .sln que empaqueta un
+# instalador es una solución "Servicio" (ej. servicio Windows con su instalador), no Batch/Online.
+# El .vdproj NO lo compila MSBuild → el build lo hace con devenv (ver agents/rs-editor-build.md).
+$installerVdproj = $null
+foreach ($line in $content) {
+    if ($line -match 'Project\([^)]+\)\s*=\s*"[^"]+",\s*"([^"]+\.vdproj)"') {
+        $installerVdproj = [System.IO.Path]::GetFullPath((Join-Path $slnDir ($Matches[1].Trim().Replace('/', '\'))))
+        break
+    }
+}
+
+# Inferir tipo desde nombre y ruta. 'Servicio' = solución instalable (lleva .vdproj), típicamente
+# un servicio Windows .NET Framework construido con MSBuild (código) + devenv (instalador).
 $tipo = if ($slnName -match '^RSProc') { 'Batch' }
         elseif ($SlnPath -match '\\OnLine\\') { 'Online' }
         elseif ($SlnPath -match '\\Batch\\') { 'Batch' }
+        elseif ($installerVdproj) { 'Servicio' }
         else { 'Unknown' }
 
 # Extraer rutas de .csproj
@@ -61,6 +74,13 @@ if ($SlnPath -match '\\(Batch|OnLine)\\Soluciones\\') {
 elseif ($SlnPath -match '\\OnLine\\AISServiceManager\\') {
     $workspace = $SlnPath.Substring(0, $SlnPath.IndexOf('\OnLine\'))
 }
+# Soluciones fuera de Batch\Soluciones\ / OnLine\ (ej. RecBatch2014\, RSManager\, Servicios\...):
+# en el layout RS todo cuelga de <Proyecto>\trunk\ — el workspace es ese trunk, no la carpeta del
+# .sln. Sin esta regla, docs\.rs-databases.json y el modelo BD resuelven contra la carpeta del .sln.
+elseif ($SlnPath -match '(?i)\\trunk\\') {
+    $idx = $SlnPath.ToLower().IndexOf('\trunk\')
+    $workspace = $SlnPath.Substring(0, $idx + 6)   # incluye "\trunk"
+}
 
 @{
     solution   = $slnName
@@ -71,4 +91,5 @@ elseif ($SlnPath -match '\\OnLine\\AISServiceManager\\') {
     scope_dirs = $projectDirs
     projects   = $projects
     project_count = $projects.Count
+    installer_vdproj = $installerVdproj
 } | ConvertTo-Json -Depth 4

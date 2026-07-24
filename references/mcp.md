@@ -10,7 +10,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | Tool | Uso |
 |------|-----|
 | `ping()` | Health check — **version**, **server_path**, hooks_dir, hooks_found, svn_cli, git_cli, python version. NO spawnea subprocesos: `svn_cli`/`git_cli` = `null` si aún no se comprobaron (perezoso, se resuelven al usar una tool VCS). `server_path`/`version` delatan si se está sirviendo una copia obsoleta fuera del plugin |
-| `get_scope(sln_path)` | Paso 2b — parsea .sln → scope_dirs, tipo, workspace |
+| `get_scope(sln_path)` | Paso 1b — parsea .sln → scope_dirs, tipo (Batch/Online/Servicio/Unknown), workspace (resuelto al trunk), installer_vdproj. Servicio = solución con Setup Project .vdproj |
 | `validate_solution(sln_path)` | Paso 2 — confirma que la .sln existe y es accesible |
 | `detect_vcs(workspace)` | Detecta SVN/Git subiendo por las carpetas → `{vcs, root}`. Llamar antes de cualquier tool `svn_*`/`git_*` |
 | `get_db_config(workspace)` | Paso BD — lee .rs-databases.json → motor, datasource, schema (principal) + conexiones[], motores[] |
@@ -47,6 +47,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `analyze_dalc(workspace, sln_path?)` | Infiere relaciones entre tablas analizando código DALC |
 | `render_erd(workspace)` | Genera ERD HTML y abre navegador — sin cargar modelo en contexto |
 | `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (executions/history.json) y abre navegador — sin cargar el HTML en contexto |
+| `render_help(workspace)` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y abre navegador — sin cargar el HTML en contexto |
 | `check_env(workspace)` | Valida entorno: .rs-databases.json, AIS, dotnet, SVN, Git, modelo BD → checks[] |
 | `generate_sql(workspace, motor?)` | Genera DDL SQL a fichero — devuelve ruta, SQL no entra en contexto |
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |

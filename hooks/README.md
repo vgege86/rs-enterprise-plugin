@@ -31,6 +31,7 @@ Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (ra
 |--------|-----|
 | `batch-build.ps1 <Solution> <workspace>` | Build Debug+Release + copia a AIS |
 | `online-publish.ps1 <Solution> <workspace> <profile>` | Build + publish Online con msbuild |
+| `service-build.ps1 <slnPath> <workspace>` | Build de servicio Windows (tipo=Servicio): código MSBuild + instalador .vdproj con devenv. No copia a AIS |
 | `copy-ais.ps1 <source> <workspace>` | Copia bin/Release completo a AIS |
 
 ### Análisis y scope
@@ -75,6 +76,8 @@ Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (ra
 | `check-env.ps1 <workspace>` | Valida .rs-databases.json, AIS, dotnet, SVN, modelo BD → JSON |
 | `log-execution.ps1 <workspace> <sln> <task> [-Status]` | Registra ejecución en executions/history.json |
 | `find-doc-section.ps1 <workspace> <keyword>` | Busca sección en docs funcionales para UpdateDocs |
+| `render-dashboard.ps1 <workspace>` | HTML de estadísticas del pipeline (executions/history.json) → lo abre en navegador |
+| `render-help.ps1 <workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) → lo abre en navegador |
 
 ### Jira
 | Script | Uso |

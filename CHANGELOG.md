@@ -1,5 +1,63 @@
 # RS Enterprise Agent — Changelog
 
+## 2.23.0 — 2026-07-24
+
+### Feat: soporte de soluciones `tipo=Servicio` (servicio Windows + instalador .vdproj)
+
+Hasta ahora `get_scope` solo reconocía `.sln` bajo `Batch\Soluciones\` u `OnLine\` — cualquier otra
+(servicios, utilidades bajo `trunk\` como `RecBatch2014\`, `RSManager\`, `Servicios\`) devolvía
+`tipo=Unknown` **y** un `workspace` mal resuelto (la carpeta del `.sln` en vez del trunk), rompiendo
+las tools de BD/config para esas soluciones.
+
+**`parse-sln.ps1` (`get_scope`):**
+- Nuevo `tipo=Servicio` cuando el `.sln` referencia un Setup Project `.vdproj` (solución instalable,
+  típicamente un servicio Windows .NET Framework). Señal estructural — no mal-clasifica utilidades
+  sin instalador (AES256, Encriptador… siguen `Unknown`).
+- Nuevo campo de salida `installer_vdproj` (ruta del `.vdproj`).
+- **Fix `workspace`:** para `.sln` fuera de `Batch\Soluciones\`/`OnLine\`, resuelve el workspace al
+  `…\trunk` (antes = carpeta del `.sln`). Arregla la resolución de `docs\.rs-databases.json` y del
+  modelo BD para RecBatchSvc **y** para todas las `.sln` de raíz. Verificado sin regresión en Batch
+  (IncDemaJudi) y Online (AgendaWebB2Impact).
+
+**Nueva rama de build `Servicio`** (`agents/rs-editor-build.md` + `hooks/service-build.ps1`):
+- Código (.NET Framework) con **MSBuild** (vía vswhere); instalador `.vdproj` con **devenv** (MSBuild
+  no compila Setup Projects). Degrada a solo-código con aviso si falta devenv o la extensión
+  *Installer Projects*. ⛔ **No copia a AIS** — el `.msi`/`setup.exe` es el entregable que se instala
+  como servicio en el cliente. ⚠️ La rama devenv no se puede probar end-to-end en CI (requiere VS +
+  extensión); se valida al correr el pipeline sobre una solución Servicio real.
+
+Ficheros: `hooks/parse-sln.ps1`, `hooks/service-build.ps1` (nuevo), `agents/rs-editor-build.md`,
+`mcp/rs-workspace-server.py` (desc `get_scope`), `skills/rs-enterprise-agent/SKILL.md`,
+`docs/plugin-architecture.md`, `references/mcp.md`, `references/hooks.md`, `hooks/README.md`, bump.
+**Hooks 48 → 49; nuevo `tipo=Servicio`.** (La reubicación del DT del servicio RecBatch en la doc de
+cada cliente se hace en el repo del cliente, no aquí.)
+
+## 2.22.0 — 2026-07-24
+
+### Feat: `/rs-help` — guía de usuario navegable + reescritura del README
+
+**Reescritura del README como guía de usuario.** El `README.md` pasa a estar orientado a usuario
+final (índice navegable, leyenda de modelos ⚡/🔷/🟣, catálogo de comandos en 12 categorías con
+tablas comando→qué-hace, sección de requisitos y primer arranque). Corrige counts que habían
+quedado obsoletos respecto al código real y documenta los 41 modos directos.
+
+**`/rs-help` (`rs-help`, ⚡ Haiku)** — nuevo modo directo que renderiza el propio `README.md` a un
+HTML autónomo (tema claro/oscuro, tablas con formato, anclas de índice GitHub-style, sin
+dependencias externas) y lo abre en el navegador. Pensado para pasar la guía a usuarios. Reproduce
+el patrón de `/rs-dashboard`: script `scripts/render-help.py` (conversor Markdown→HTML solo stdlib)
++ plantilla `scripts/help-template.html` + hook `hooks/render-help.ps1` + tool MCP `render_help`
+(genera el fichero, **no** lo carga en contexto). La fuente es el README del plugin, así que la guía
+se mantiene sola al día. Salida a `<workspace>\executions\rs-help.html`.
+
+Además: se añadieron a `hooks/README.md` las entradas de `render-dashboard.ps1` (gap previo) y
+`render-help.ps1`.
+
+Ficheros: `scripts/render-help.py` + `scripts/help-template.html` + `hooks/render-help.ps1` + tool
+`render_help`, `agents/rs-help.md`, `commands/rs-help.md`, `skills/rs-enterprise-agent/SKILL.md`
+(fila en la tabla de modos), `README.md` (reescritura + counts), `docs/plugin-architecture.md`
+(43 tools), `references/mcp.md`, `references/hooks.md`, `hooks/README.md`, bump de versión.
+**MCP 42 → 43 tools; hooks 47 → 48; agentes 45 → 46; comandos 42 → 43; modos directos 40 → 41.**
+
 ## 2.21.0 — 2026-07-23
 
 ### Feat: tests del plugin + dashboard de estadísticas + 4 modos directos
