@@ -339,6 +339,14 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
     if blob_cols:
         lines.append(f"-- AVISO: columnas binarias grandes emitidas como NULL (no inlineables): "
                      f"{', '.join(blob_cols)}")
+    # Cabecera de sesión Oracle: SET DEFINE OFF evita que un '&' en los datos se interprete como
+    # variable de sustitución de sqlplus; los NLS_*_FORMAT fijan el formato de fecha/timestamp para
+    # que los literales importen igual en cualquier entorno (independiente del NLS del cliente).
+    if cfg["motor"] == "ORACLE":
+        lines.append("")
+        lines.append("SET DEFINE OFF;")
+        lines.append("ALTER SESSION SET NLS_DATE_FORMAT='YYYY-MM-DD HH24:MI:SS';")
+        lines.append("ALTER SESSION SET NLS_TIMESTAMP_FORMAT='YYYY-MM-DD HH24:MI:SS';")
     lines.append("")
     n = 0
     cols_csv = ", ".join(col_names)
@@ -355,6 +363,11 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
 
     if n == 0:
         lines.append("-- (sin filas)")
+
+    # commit final: sqlplus no auto-commitea — sin esto los inserts se perderían al cerrar sesión.
+    if cfg["motor"] == "ORACLE":
+        lines.append("")
+        lines.append("commit;")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # utf-8-sig (BOM): las herramientas gráficas Oracle (SQL Developer/TOAD/PL-SQL Developer)

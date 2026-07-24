@@ -1,5 +1,25 @@
 # RS Enterprise Agent — Changelog
 
+## 2.23.2 — 2026-07-24
+
+### Feat: scripts de inserts del instalador con cabecera/commit de sesión Oracle
+
+Los `.sql` de inserts de tablas paramétricas que genera el instalador
+(`scripts/installer-inserts.py`, `generate_table_file`) ahora, **solo para Oracle**, incluyen:
+- Al inicio (tras los comentarios):
+  ```
+  SET DEFINE OFF;
+  ALTER SESSION SET NLS_DATE_FORMAT='YYYY-MM-DD HH24:MI:SS';
+  ALTER SESSION SET NLS_TIMESTAMP_FORMAT='YYYY-MM-DD HH24:MI:SS';
+  ```
+  `SET DEFINE OFF` evita que un `&` en los datos se interprete como variable de sustitución de
+  sqlplus; los `NLS_*_FORMAT` fijan el formato de fecha/timestamp para que los literales importen
+  igual en cualquier entorno.
+- Al final: `commit;` (sqlplus no auto-commitea → sin esto los inserts se perderían al cerrar sesión).
+
+SQL Server queda **sin cambios** (esa sintaxis es específica de Oracle/sqlplus). Verificado generando
+para ambos motores.
+
 ## 2.23.1 — 2026-07-24
 
 ### Fix (crítico): cada tool MCP tardaba ~3 min por llamada (`_run_ps` sin `stdin`)
