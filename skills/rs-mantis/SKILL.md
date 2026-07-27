@@ -41,7 +41,9 @@ existentes > reimplementar nada.
 - MantisBT no tiene endpoint de "transiciones" como Jira: el estado es un **campo** que se cambia
   con `transition -Id -Status <nombre>` (`PATCH /issues/{id}`). Un nombre de estado desconocido
   devuelve el error tal cual lo reporta Mantis — revisar `statusMap` o usar `get` para ver el estado
-  actual.
+  actual. ⚠️ El workflow es **ordenado y sin saltos** (`new→acknowledged→assigned→confirmed`): para
+  llevar una issue a un estado no adyacente usar `advance` (recorre la cadena paso a paso), no
+  `transition` — ver Fases 3/4.
 
 # Raíz del plugin (`plugin_root`)
 

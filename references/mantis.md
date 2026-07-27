@@ -26,8 +26,10 @@ API solo responde por el front controller, así que la **base real** que usa el 
 
 (p. ej. `GET {baseUrl}/api/rest/index.php/projects` + token → 200). Esta forma es además **más
 portable**: funciona con y sin rewrite activo, por eso es la que construye `New-MantisRequest` en
-`hooks/lib-mantis.ps1`. Verificado en vivo contra la instancia objetivo: 41 proyectos, estados en
-uso `assigned`/`resolved`/`closed`, categorías incluyen `General`/`Evolutivo`/`Incidencia`.
+`hooks/lib-mantis.ps1`. Verificado en vivo contra la instancia objetivo: 41 proyectos; estados del
+workflow `new`/`acknowledged`/`assigned`/`confirmed`/`resolved`/`closed` (etiquetas ES
+nueva/aceptada/asignada/confirmada/resuelta/cerrada); categorías incluyen
+`General`/`Evolutivo`/`Incidencia`.
 
 ## Config del workspace — `docs\.mantis-dev-config.json`
 
