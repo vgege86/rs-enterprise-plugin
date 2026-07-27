@@ -44,7 +44,7 @@ function Invoke-MantisHttp {
 }
 
 # Validar el comando antes de resolver credenciales (guarda pura, sin red ni fichero).
-$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download")
+$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download", "me")
 if ($validCommands -notcontains $Command.ToLower()) {
     Fail "Comando desconocido: $Command. Válidos: $($validCommands -join ', ')."
 }
@@ -96,6 +96,10 @@ switch ($Command.ToLower()) {
     "projects" {
         $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/projects")
         Emit @{ success = $true; projects = $data.projects }
+    }
+    "me" {
+        $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/users/me")
+        Emit @{ success = $true; id = $data.id; name = $data.name; real_name = $data.real_name }
     }
     "get" {
         $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues/$Id")

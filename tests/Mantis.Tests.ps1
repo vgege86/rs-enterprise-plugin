@@ -55,6 +55,50 @@ Describe "lib-mantis New-MantisRequest" {
     }
 }
 
+Describe "lib-mantis Get-MantisAdvancePath" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
+        $script:chain = @('new', 'acknowledged', 'assigned', 'confirmed')
+    }
+
+    It "new -> assigned devuelve 2 pasos intermedios" {
+        $r = Get-MantisAdvancePath $script:chain "new" "assigned"
+        $r.Count | Should -Be 2
+        $r | Should -Be @('acknowledged', 'assigned')
+    }
+
+    It "acknowledged -> assigned devuelve un solo paso (array)" {
+        $r = Get-MantisAdvancePath $script:chain "acknowledged" "assigned"
+        $r.Count  | Should -Be 1
+        $r[0]     | Should -Be "assigned"
+    }
+
+    It "assigned -> assigned (mismo estado) devuelve array vacío" {
+        $r = Get-MantisAdvancePath $script:chain "assigned" "assigned"
+        $r.Count | Should -Be 0
+    }
+
+    It "assigned -> confirmed devuelve un solo paso" {
+        $r = Get-MantisAdvancePath $script:chain "assigned" "confirmed"
+        $r.Count | Should -Be 1
+        $r[0]    | Should -Be "confirmed"
+    }
+
+    It "new -> confirmed devuelve la cadena completa de 3 pasos" {
+        $r = Get-MantisAdvancePath $script:chain "new" "confirmed"
+        $r.Count | Should -Be 3
+        $r | Should -Be @('acknowledged', 'assigned', 'confirmed')
+    }
+
+    It "confirmed -> assigned (retroceso) lanza" {
+        { Get-MantisAdvancePath $script:chain "confirmed" "assigned" } | Should -Throw
+    }
+
+    It "closed -> assigned (estado actual fuera de cadena) lanza" {
+        { Get-MantisAdvancePath $script:chain "closed" "assigned" } | Should -Throw
+    }
+}
+
 Describe "mantis-cli.ps1 guardas (pre-red)" {
     BeforeAll {
         $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
@@ -70,6 +114,12 @@ Describe "mantis-cli.ps1 guardas (pre-red)" {
 
     It "credenciales ausentes → success:false con instrucción" {
         $out = & $script:cli -Command "projects" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "Credenciales no encontradas"
+    }
+
+    It "me con -CredPath inválido → success:false con instrucción (pasa por resolución de credenciales)" {
+        $out = & $script:cli -Command "me" -CredPath "X:\no-existe.json" | ConvertFrom-Json
         $out.success | Should -Be $false
         $out.error   | Should -Match "Credenciales no encontradas"
     }

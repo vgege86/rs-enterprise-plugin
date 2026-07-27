@@ -22,6 +22,21 @@ function Protect-MantisToken {
     return $Text.Replace($Token, "***")
 }
 
+# Calcula el tramo de la cadena ordenada de estados a recorrer (uno a uno) para ir
+# de $Current a $Target, sin saltos. Devuelve SIEMPRE un array (incluso de 0 o 1 elemento).
+function Get-MantisAdvancePath {
+    param([string[]]$Chain, [string]$Current, [string]$Target)
+    $ci = [array]::IndexOf($Chain, $Current)
+    $ti = [array]::IndexOf($Chain, $Target)
+    if ($ci -lt 0) { throw "Estado actual '$Current' no está en la cadena de transición." }
+    if ($ti -lt 0) { throw "Estado destino '$Target' no está en la cadena de transición." }
+    if ($ti -lt $ci) { throw "No se puede retroceder de '$Current' a '$Target' (el protocolo solo avanza)." }
+    if ($ti -eq $ci) { $result = @() } else { $result = @($Chain[($ci + 1)..$ti]) }
+    # ,$result (comma unario) evita que PowerShell "desenrolle" un array de 1 elemento al
+    # devolverlo por la pipeline: sin esto, la llamadora recibiría un string suelto, no un array.
+    return ,$result
+}
+
 function New-MantisRequest {
     param(
         [string]$BaseUrl,
