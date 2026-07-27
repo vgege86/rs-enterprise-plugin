@@ -2,9 +2,9 @@
 
 La skill `rs-jira` orquesta el ciclo de vida de una tarea de Jira sobre una solución uCollect/RS.
 Jira se opera con el MCP **Atlassian Rovo** (ya conectado en la sesión): búsqueda, lectura,
-transición y comentario **no requieren credenciales propias**. El único hueco es **adjuntar
-ficheros** (Rovo no expone attachment), que cubre `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach` con credenciales
-propias.
+transición, comentario, crear y asignar **no requieren credenciales propias**. Los huecos son
+**adjuntar y descargar ficheros** (Rovo no expone attachment ni download), cubiertos por
+`jira_attach` y `jira_download` con credenciales propias.
 
 ⚠️ El MCP `rs-workspace` **solo interviene en la Fase 4** (`jira_attach` / `log_execution`). Las Fases
 1–3 (selección, formateo, transición) usan **solo Atlassian Rovo** — por eso la auto-verificación de la
