@@ -97,6 +97,10 @@ Describe "lib-mantis Get-MantisAdvancePath" {
     It "closed -> assigned (estado actual fuera de cadena) lanza" {
         { Get-MantisAdvancePath $script:chain "closed" "assigned" } | Should -Throw
     }
+
+    It "assigned -> nonexistent (estado destino fuera de cadena) lanza" {
+        { Get-MantisAdvancePath $script:chain "assigned" "nonexistent" } | Should -Throw
+    }
 }
 
 Describe "mantis-cli.ps1 guardas (pre-red)" {
@@ -203,5 +207,37 @@ Describe "mantis-cli attach/download validación" {
         $out = & $script:cli -Command "download" -Id 42 -FileId 7 -CredPath "X:\no-existe.json" | ConvertFrom-Json
         $out.success | Should -Be $false
         $out.error   | Should -Match "(?i)out|destino"
+    }
+}
+
+Describe "mantis-cli advance validación" {
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+
+    It "advance sin -Chain → success:false" {
+        $out = & $script:cli -Command "advance" -Id 42 -To "assigned" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "Chain"
+    }
+    It "advance sin -To → success:false" {
+        $out = & $script:cli -Command "advance" -Id 42 -Chain "new,assigned" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)to|destino"
+    }
+}
+
+Describe "mantis-cli advance fallo de red" {
+    BeforeAll {
+        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+        $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-advance-net-" + [guid]::NewGuid() + ".json")
+        $script:dummyToken = "DUMMY-TOKEN-ADVANCE"
+        @{ baseUrl = "http://127.0.0.1:1"; token = $script:dummyToken } | ConvertTo-Json | Set-Content -Path $script:tmp -Encoding UTF8
+    }
+    AfterAll { Remove-Item -Force $script:tmp -ErrorAction SilentlyContinue }
+
+    It "conexión rechazada en el GET inicial → JSON válido con success:false, error no vacío, sin filtrar el token" {
+        $out = & $script:cli -Command "advance" -Id 42 -To "assigned" -Chain "new,acknowledged,assigned,confirmed" -CredPath $script:tmp | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Not -BeNullOrEmpty
+        $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
     }
 }

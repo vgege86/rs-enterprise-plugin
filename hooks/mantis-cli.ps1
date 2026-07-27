@@ -10,6 +10,9 @@ param(
     [string]$Description,
     [int]$Handler,
     [string]$Status,
+    [string]$To,
+    [string]$Chain,
+    [string]$HandlerStatus = "assigned",
     [string]$Text,
     [string]$Files,
     [int]$FileId,
@@ -44,7 +47,7 @@ function Invoke-MantisHttp {
 }
 
 # Validar el comando antes de resolver credenciales (guarda pura, sin red ni fichero).
-$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download", "me")
+$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download", "me", "advance")
 if ($validCommands -notcontains $Command.ToLower()) {
     Fail "Comando desconocido: $Command. Válidos: $($validCommands -join ', ')."
 }
@@ -79,6 +82,11 @@ switch ($Command.ToLower()) {
         if (-not $Id)     { Fail "Falta -Id." }
         if (-not $FileId) { Fail "Falta -FileId." }
         if (-not $Out)    { Fail "Falta -Out (ruta destino)." }
+    }
+    "advance" {
+        if (-not $Id)    { Fail "Falta -Id." }
+        if (-not $To)    { Fail "Falta -To (estado destino)." }
+        if (-not $Chain) { Fail "Falta -Chain (cadena ordenada de estados, coma-separada)." }
     }
 }
 
@@ -158,6 +166,24 @@ switch ($Command.ToLower()) {
         if (-not $r.ok) { Fail (Protect-MantisToken "HTTP $($r.status). $($r.body)" $cred.token) }
         [IO.File]::WriteAllText($Out, $r.body)
         Emit @{ success = $true; id = $Id; file = $Out }
+    }
+    "advance" {
+        $cur = (Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues/$Id")).issues[0].status.name
+        $chainArr = @($Chain -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        try { $path = @(Get-MantisAdvancePath $chainArr $cur $To) } catch { Fail $_.Exception.Message }
+        if ($path.Count -eq 0) {
+            Emit @{ success = $true; id = $Id; from = $cur; applied = @(); to = $cur; note = "ya en el estado destino" }
+        } else {
+            $applied = @()
+            foreach ($step in $path) {
+                $body = @{ status = @{ name = $step } }
+                if ($Handler -and $step -eq $HandlerStatus) { $body.handler = @{ id = $Handler } }
+                $r = Invoke-MantisHttp (New-MantisRequest $cred.baseUrl "PATCH" "/issues/$Id" $body) $cred.token
+                if (-not $r.ok) { Fail (Protect-MantisToken "advance: paso a '$step' falló (HTTP $($r.status)). Aplicados: $($applied -join ', '). $($r.body)" $cred.token) }
+                $applied += $step
+            }
+            Emit @{ success = $true; id = $Id; from = $cur; applied = $applied; to = $To }
+        }
     }
     default { Fail "Comando aún no implementado: $Command." }
 }
