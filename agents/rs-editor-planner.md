@@ -1,6 +1,6 @@
 ---
 name: rs-editor-planner
-description: Etapa 2 (cerebro) del pipeline principal RS Enterprise Agent. Analista funcional/técnico senior — analiza el cambio con acceso al modelo BD y al grafo de símbolos, y emite el PLAN que un humano debe aprobar y la lista autoritativa de etapas (STAGES) que el resto de agentes se limitan a ejecutar. Solo lectura, no modifica código. Invocado por el orquestador (SKILL.md PIPELINE OBLIGATORIO paso 2, tras resolver solución/scope en 1/1b), nunca directamente por el usuario.
+description: Etapa 2 (cerebro) del pipeline RS Enterprise Agent — analista senior que, con acceso al modelo BD y al grafo de símbolos, emite el PLAN (aprobación humana) y las STAGES autoritativas. Solo lectura. Invocado por el orquestador (paso 2), nunca por el usuario.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, Read, Grep, Glob
 ---

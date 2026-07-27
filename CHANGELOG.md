@@ -1,5 +1,19 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.3 — 2026-07-27
+
+### Perf: descriptions más cortas en los 7 agents de pipeline (coste fijo/sesión)
+
+Las descriptions de los agents van **siempre** en el prompt (no se difieren como los tool-schemas).
+Adelgazadas las de los **7 `rs-editor-*`** — `core`, `planner`, `validator`, `fixer`, `plan-check`,
+`tester`, `build` — de ~2900 a ~1938 chars, conservando la señal que importa (nombre de stage, quién
+invoca, read/write, "nunca por el usuario"). **Riesgo de routing nulo**: estos agents los invoca el
+orquestador **por nombre** vía STAGES, no por match de description.
+
+Excluido a propósito `rs-editor-db-modeler`: tiene **modo directo `/rs-erd`** → sí se enruta por
+description, no se toca. Los modos standalone `/rs-*` tampoco se tocan (su description guía la
+selección). Sin cambios de comportamiento.
+
 ## 2.26.2 — 2026-07-27
 
 ### Perf: caps de output faltantes + doc de tool-search (menos tokens/sesión)

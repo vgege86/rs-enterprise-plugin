@@ -1,6 +1,6 @@
 ---
 name: rs-editor-build
-description: Etapa final del pipeline principal RS Enterprise Agent — compila, genera artefactos y despliega en AIS. Mecánica pero de alto coste si reporta "OK" sin evidencia real. Invocado por el orquestador tras validator + tester OK (SKILL.md PIPELINE OBLIGATORIO paso 9), nunca directamente por el usuario.
+description: Etapa final del pipeline RS Enterprise Agent — compila, genera artefactos y despliega en AIS. Mecánica pero cara si reporta OK sin evidencia real. Invocado por el orquestador tras validator + tester OK (paso 9), nunca por el usuario.
 model: haiku
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, Read, Bash, Glob
 ---
