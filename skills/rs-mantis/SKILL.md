@@ -26,8 +26,12 @@ existentes > reimplementar nada.
 - ⛔ **Nunca imprimir ni loguear el token de Mantis** ni el contenido de
   `~/.claude/rs-mantis-credentials.json`. `mantis-cli.ps1` ya redacta el token en sus mensajes de
   error (`Protect-MantisToken`), pero no reproducir el fichero de credenciales por ningún motivo.
-- No hardcodear nombres de estado ("assigned"/"resolved" pueden variar por instalación) — resolver
-  siempre las transiciones con el `statusMap` de `docs\.mantis-dev-config.json`.
+- No hardcodear nombres de estado ("assigned"/"confirmed" pueden variar por instalación) — resolver
+  siempre las transiciones con el `statusMap` y el `statusChain` de `docs\.mantis-dev-config.json`.
+- Esta instancia usa un workflow **encadenado, sin saltos** (`statusChain`:
+  `new → acknowledged → assigned → confirmed`, ver Fases 3 y 4): mover una issue varios estados va
+  siempre por `advance` (recorre la cadena paso a paso), nunca por `transition` suelto salvo que el
+  salto sea de un solo paso.
 - No adivinar la `.sln` — **siempre preguntarla** al usuario (Fase 2).
 - ⛔ La **Fase 2 no analiza código** — encuadra el requisito desde la issue de Mantis (resumen,
   descripción, notas) y aclaraciones del usuario. El análisis técnico (columnas, catálogo,
@@ -90,7 +94,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin_root>/hooks/mantis-
 - Subcomandos reales del hook (detalle completo en `<plugin_root>/references/mantis.md`):
   `projects`, `list -Project <id> [-PageSize <n>]`, `get -Id <n>`,
   `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]`,
-  `transition -Id <n> -Status <nombre>`, `comment -Id <n> -Text <s>`,
+  `transition -Id <n> -Status <nombre>` (salto directo de un paso — no usar para avanzar varios
+  estados, ver `advance`), `advance -Id <n> -To <nombre> -Chain <csv> [-Handler <id>]
+  [-HandlerStatus <nombre>]` (recorre `statusChain` paso a paso desde el estado actual hasta `-To`,
+  sin saltarse ninguno; devuelve `applied` con los estados por los que pasó), `me` (→
+  `{id,name,real_name}`, usuario del token — sin argumentos), `comment -Id <n> -Text <s>`,
   `attach -Id <n> -Files <a,b>`, `download -Id <n> -FileId <f> -Out <ruta>`.
 
 # Config del workspace
@@ -100,8 +108,13 @@ workspace es el cwd de la sesión). Campos:
 - `projects` — lista curada `[{ id, name }, ...]` de proyectos Mantis del cliente (gestionada con
   `/rs-mantis proyectos`).
 - `defaultCategory` — categoría por defecto al crear una issue (p. ej. `"General"`).
-- `statusMap` — `{ "inProgress": "<nombre estado>", "inValidation": "<nombre estado>" }` (nombres
-  reales del workflow de la instancia, p. ej. `assigned`/`resolved` — confirmar con `get` o
+- `statusChain` — array **ordenado** de nombres de estado del workflow de la instancia, tal como los
+  recorre `advance` sin saltarse ninguno (p. ej. `["new", "acknowledged", "assigned", "confirmed"]`
+  — verificado en vivo en la instancia objetivo, ver `references/mantis.md`).
+- `statusMap` — `{ "inProgress": "<nombre estado>", "inValidation": "<nombre estado>" }`, atajos
+  dentro de `statusChain` que usan las Fases 3 y 4: `inProgress` = estado de "En Proceso" (en la
+  instancia objetivo, `assigned` = Asignada) e `inValidation` = estado de "En Validación" (en la
+  instancia objetivo, `confirmed` = Confirmada — nombres reales del workflow, confirmar con `get` o
   `/rs-mantis proyectos` si no se conocen).
 
 Si el fichero **no existe** → ofrecer `/rs-mantis init` (subrutina más abajo). Las **credenciales**
@@ -148,15 +161,25 @@ issue es ambigua → **preguntar al usuario**, no explorar el repositorio.
    gate 2b del pipeline (Fase 3).
 
 ### Fase 3 — En Proceso + lanzamiento
-1. ⛔ Confirmar con el usuario antes de tocar Mantis. Esta confirmación cubre **tres escrituras**:
-   transicionar a "En Proceso" (paso 2), comentar el prompt (paso 3) y lanzar el pipeline (paso 4).
-   Enumerarlas al pedir la confirmación.
-2. **Transición** → si el `issue.status` ya obtenido coincide con `statusMap.inProgress`, saltar
-   (idempotente); si no, `mantis-cli.ps1 transition -Id <n> -Status <statusMap.inProgress>`.
-3. **Nota del prompt** → `mantis-cli.ps1 comment -Id <n> -Text "<prompt aprobado>"`: dejar como nota
+1. **Resolver el desarrollador** → `mantis-cli.ps1 me` → tomar `id` de la respuesta (usuario del
+   token). No requiere confirmación (es una lectura); se necesita antes del paso 3 para fijar el
+   handler.
+2. ⛔ Confirmar con el usuario antes de tocar Mantis. Esta confirmación cubre **tres escrituras**:
+   avanzar el estado a "En Proceso" (paso 3), comentar el prompt (paso 4) y lanzar el pipeline
+   (paso 5). Enumerarlas al pedir la confirmación.
+3. **Avance de estado** → `mantis-cli.ps1 advance -Id <n> -To <statusMap.inProgress> -Chain
+   "<statusChain joined by ','>" -Handler <me.id> -HandlerStatus <statusMap.inProgress>`. Esto
+   recorre la cadena (p. ej. Nueva→Aceptada→Asignada) paso a paso sin saltar ninguno, y en el paso
+   que llega a `statusMap.inProgress` fija además el `handler` al desarrollador resuelto en el
+   paso 1. `advance` es **idempotente hacia delante**: si la issue ya está en `statusMap.inProgress`
+   (o después, dentro de la cadena) no hace ningún cambio y devuelve `applied: []`. Si `success` es
+   `false`, mostrar el `error` tal cual (puede incluir qué pasos sí se aplicaron antes de fallar,
+   `Aplicados: ...`) y **parar la fase** — no reintentar automáticamente ni asumir que se alcanzó el
+   estado destino.
+4. **Nota del prompt** → `mantis-cli.ps1 comment -Id <n> -Text "<prompt aprobado>"`: dejar como nota
    el prompt exacto `<Solucion>.sln - <cambio>` que se pasará al orquestador, para trazar en Mantis
    qué se lanzó.
-4. **Lanzar el pipeline**: continuar como orquestador de `skills/rs-enterprise-agent/SKILL.md`
+5. **Lanzar el pipeline**: continuar como orquestador de `skills/rs-enterprise-agent/SKILL.md`
    (PIPELINE OBLIGATORIO) con el prompt aprobado `<Solucion>.sln - <cambio>`. El pipeline aplica su
    propio gate 2b (aprobación del plan técnico) — es una aprobación **distinta** de la Fase 2
    (encuadre del requisito); ambas se mantienen.
@@ -165,14 +188,19 @@ issue es ambigua → **preguntar al usuario**, no explorar el repositorio.
 1. Esperar a que el usuario pida el commit.
 2. Ejecutar `/rs-commit` (flujo `detect_vcs` → subagente `rs-commit`, que ramifica SVN/Git). Anotar
    la revisión resultante.
-3. Tras confirmar el commit OK:
-   - **SQL** → comprobar si hay `.sql` en `C:\AIS\<proyecto-lowercase>\scripts\` generados en la
-     tarea (`proyecto` = carpeta anterior a `trunk\`). Si hay → ⛔ confirmar →
-     `mantis-cli.ps1 attach -Id <n> -Files <a,b>` (adjunto real; requiere
-     `~/.claude/rs-mantis-credentials.json`). Si el hook falla por credenciales, avisar cómo
-     crearlas (`references/mantis.md`) y seguir sin adjuntar.
-   - **Transición** → ⛔ confirmar → `mantis-cli.ps1 transition -Id <n> -Status
-     <statusMap.inValidation>`.
+3. Tras confirmar el commit OK — **orden estricto: primero confirmar el estado, después adjuntar**
+   (protocolo del cliente: "cuando el orquestador termina se pasa a Confirmada y es cuando se suben
+   los scripts"):
+   - **Avance de estado** → ⛔ confirmar → `mantis-cli.ps1 advance -Id <n> -To
+     <statusMap.inValidation> -Chain "<statusChain joined by ','>"` (recorre Asignada→Confirmada sin
+     saltar pasos; idempotente hacia delante igual que en Fase 3). Si `success` es `false`, mostrar
+     el `error` (incluye `applied` con los pasos que sí se llegaron a aplicar antes del fallo) y
+     **parar aquí** — no adjuntar scripts sobre una issue que no llegó a "En Validación".
+   - **SQL** → solo **una vez confirmado** el paso anterior: comprobar si hay `.sql` en
+     `C:\AIS\<proyecto-lowercase>\scripts\` generados en la tarea (`proyecto` = carpeta anterior a
+     `trunk\`). Si hay → ⛔ confirmar → `mantis-cli.ps1 attach -Id <n> -Files <a,b>` (adjunto real;
+     requiere `~/.claude/rs-mantis-credentials.json`). Si el hook falla por credenciales, avisar
+     cómo crearlas (`references/mantis.md`) y seguir sin adjuntar.
    - ⚠️ **Primer uso vivo de `rs-workspace` en toda la skill** (mismo hueco que en `rs-jira`) →
      **Trazabilidad** → `mcp__plugin_rs-enterprise-agent_rs-workspace__log_execution(workspace,
      solution, task="Mantis #<id>: <resumen>", status, agents)` incluyendo el id de Mantis, para
@@ -201,9 +229,10 @@ Gestiona la lista curada `projects[]` de `docs\.mantis-dev-config.json`:
 # Subrutina `/rs-mantis init`
 
 Scaffolding de `docs\.mantis-dev-config.json`:
-1. Proponer el JSON con `projects: []`, `defaultCategory: "General"` y un `statusMap` de partida
-   (p. ej. `{ "inProgress": "assigned", "inValidation": "resolved" }` — confirmar los nombres reales
-   con el usuario, o con `mantis-cli.ps1 get`/`projects` si los conoce).
+1. Proponer el JSON con `projects: []`, `defaultCategory: "General"`, un `statusChain` de partida
+   (p. ej. `["new", "acknowledged", "assigned", "confirmed"]`) y un `statusMap` de partida (p. ej.
+   `{ "inProgress": "assigned", "inValidation": "confirmed" }` — confirmar los nombres reales y el
+   orden de la cadena con el usuario, o con `mantis-cli.ps1 get`/`projects` si los conoce).
 2. ⛔ Solo tras aprobación explícita, escribir el fichero.
 3. Recordar añadirlo al ignore de VCS (no contiene secretos, pero es config local del workspace).
 4. Sugerir continuar con `/rs-mantis proyectos` para poblar `projects[]`.

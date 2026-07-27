@@ -41,7 +41,8 @@ config de Jira). **No contiene secretos** (aun así, recomendado añadirlo al ig
     { "id": 8,  "name": "ClienteX 2024" }
   ],
   "defaultCategory": "General",
-  "statusMap": { "inProgress": "assigned", "inValidation": "resolved" }
+  "statusChain": ["new", "acknowledged", "assigned", "confirmed"],
+  "statusMap": { "inProgress": "assigned", "inValidation": "confirmed" }
 }
 ```
 
@@ -49,9 +50,18 @@ config de Jira). **No contiene secretos** (aun así, recomendado añadirlo al ig
   varios; a menudo uno nuevo por año, los viejos siguen abiertos). No se filtra por nombre porque
   los nombres de cliente en Mantis no son consistentes. Se gestiona con `/rs-mantis proyectos`.
 - `defaultCategory` — categoría por defecto al crear una issue.
-- `statusMap` — nombres **reales** de los estados del workflow Mantis (varían por instalación). En
-  la instancia objetivo se confirmaron en vivo con token real: por defecto `assigned` (En Proceso)
-  y `resolved` (En Validación).
+- `statusChain` — la cadena **ordenada** de nombres de estado del workflow de esta instancia, de
+  inicial a final, tal como los recorre el subcomando `advance` (ver más abajo). Verificado en vivo
+  contra la instancia objetivo: `new` (Nueva) → `acknowledged` (Aceptada) → `assigned` (Asignada) →
+  `confirmed` (Confirmada) → `resolved` (Resuelta) → `closed` (Cerrada), con etiquetas en español.
+  `statusChain` solo necesita cubrir el tramo que la skill recorre (`new`..`confirmed`); no hace
+  falta incluir `resolved`/`closed` si no se transiciona hasta ahí.
+- `statusMap` — **atajos** dentro de la cadena que usan las fases de la skill: `inProgress` → nombre
+  de estado para "En Proceso" (en la instancia objetivo, `assigned` = Asignada, el paso en que el
+  desarrollo se entrega al pipeline RS) e `inValidation` → nombre de estado para "En Validación" (en
+  la instancia objetivo, `confirmed` = Confirmada, el paso al terminar el pipeline — y solo entonces
+  se adjuntan los scripts SQL, ver Fase 4 de la skill). Estos nombres deben ser valores presentes en
+  `statusChain`.
 
 Scaffolding rápido: `/rs-mantis proyectos` (lista todos los proyectos que ve el token, numerados
 `id — nombre (estado)`, y permite **Añadir** a la lista existente sin duplicar por `id`, o
@@ -86,7 +96,9 @@ Header de autenticación: `Authorization: <token>` — token **crudo**, **sin** 
 | `list -Project <id> [-PageSize <n>]` | `GET /issues?project_id={id}&page_size={n}` | issues del proyecto |
 | `get -Id <n>` | `GET /issues/{id}` | leer una issue |
 | `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` | `POST /issues` | crear issue |
-| `transition -Id <n> -Status <name>` | `PATCH /issues/{id}` body `{"status":{"name":"<name>"}}` | cambiar estado |
+| `transition -Id <n> -Status <name>` | `PATCH /issues/{id}` body `{"status":{"name":"<name>"}}` | cambiar estado (un solo salto, sin recorrer la cadena) |
+| `advance -Id <n> -To <name> -Chain <csv> [-Handler <id>] [-HandlerStatus <name>]` | `GET /issues/{id}` + N × `PATCH /issues/{id}` | recorre `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltos |
+| `me` | `GET /users/me` | usuario del token (`{id,name,real_name}`) |
 | `comment -Id <n> -Text <s>` | `POST /issues/{id}/notes` body `{"text":"<s>"}` | añadir nota |
 | `attach -Id <n> -Files a,b` | `POST /issues/{id}/files` (multipart, campo `files[]`) | adjuntar ficheros |
 | `download -Id <n> -FileId <f> -Out <ruta>` | `GET /issues/{id}/files/{f}` | descargar un adjunto |
@@ -95,19 +107,64 @@ Notas de contrato:
 - `create` devuelve `{ success, id, issue }` con el id de la issue creada.
 - `attach` reutiliza el multipart de `jira-attach.ps1` (`ByteArrayContent` +
   `MultipartFormDataContent`), un `HttpClient` propio (no pasa por `Invoke-MantisHttp`).
+- `advance` devuelve `{ success, id, from, applied, to }` (o `note: "ya en el estado destino"` si no
+  hay nada que recorrer). Ver detalle del protocolo en la sección siguiente.
+- `me` devuelve `{ success, id, name, real_name }` — no requiere `-Id` ni ningún otro argumento.
 - Todos los subcomandos validan argumentos obligatorios (guarda pura, sin red) y luego
   credenciales presentes/completas **antes** de la llamada HTTP; si faltan, el error remite a este
   documento.
+
+## Protocolo de transición ordenada (`advance` + `me`)
+
+Esta instancia de Mantis usa un workflow **encadenado sin saltos**: una issue no puede pasar
+directamente de `new` a `assigned`, tiene que recorrer `acknowledged` primero. Verificado en vivo:
+`new` (Nueva) → `acknowledged` (Aceptada) → `assigned` (Asignada) → `confirmed` (Confirmada) →
+`resolved` (Resuelta) → `closed` (Cerrada).
+
+`transition` (un `PATCH` directo a un nombre de estado) no respeta esto — si el estado destino no es
+alcanzable en un salto desde el actual, Mantis devuelve el error del workflow tal cual. Por eso, para
+mover una issue varios pasos (p. ej. de `new` a `assigned`), la skill usa `advance` en vez de
+`transition`:
+
+```
+mantis-cli.ps1 advance -Id <n> -To assigned -Chain "new,acknowledged,assigned,confirmed" -Handler <id> -HandlerStatus assigned
+```
+
+- **`-Chain`** es la cadena ordenada completa (viene de `statusChain` en la config del workspace),
+  coma-separada.
+- `advance` primero lee el estado actual de la issue (`GET /issues/{id}`), calcula el tramo de la
+  cadena entre el estado actual y `-To` (sin incluir el actual), y aplica un `PATCH` por cada paso
+  intermedio, **en orden**, sin saltárselos.
+- **Idempotente hacia delante**: si la issue ya está en `-To` (o después de él dentro de la cadena),
+  no hace ningún `PATCH` y devuelve `applied: []` con `note: "ya en el estado destino"`.
+- **No permite retroceder**: si `-To` está *antes* que el estado actual en la cadena, `Get-MantisAdvancePath`
+  lanza error y el hook responde `success:false` con el `error` correspondiente — no reordena ni
+  fuerza un retroceso.
+- **Fallo a mitad de camino**: si un `PATCH` intermedio falla (HTTP no-2xx), `advance` **para ahí** y
+  devuelve `success:false` con un `error` que incluye qué pasos sí se aplicaron (`Aplicados: ...`) —
+  la issue queda en un estado intermedio real de Mantis, no en `-To`. Quien llama a `advance` debe
+  leer ese detalle y decidir cómo seguir (reintentar el tramo restante, avisar al usuario), nunca
+  asumir que `-To` se alcanzó.
+- **`-Handler` / `-HandlerStatus`**: si se pasan, el `PATCH` del paso cuyo nombre coincide con
+  `-HandlerStatus` (por defecto `assigned`) incluye también `"handler":{"id":<Handler>}` en el body —
+  así el handler se fija en el mismo paso en que la issue pasa a Asignada, no en una llamada aparte.
+  El id del handler es el del propio usuario del token, resuelto con `me` (ver abajo) — es decir, el
+  desarrollador que ejecuta el pipeline se asigna a sí mismo la issue al ponerla en curso.
+
+`me` (`GET /users/me`) resuelve la identidad del token: `{ id, name, real_name }`. La skill lo llama
+una vez en la Fase 3 para obtener el `id` que pasa como `-Handler` a `advance`.
 
 ## Nota sobre estados
 
 MantisBT **no tiene un endpoint de "transiciones"** como Jira (`getTransitions`/
 `transitionJiraIssue`): el estado es simplemente un **campo** de la issue, que se cambia con
 `PATCH /issues/{id}` enviando `{"status":{"name":"<nombre>"}}`. Por eso `statusMap` en
-`.mantis-dev-config.json` guarda **nombres de estado destino** (`assigned`, `resolved`, …), no ids
+`.mantis-dev-config.json` guarda **nombres de estado destino** (`assigned`, `confirmed`, …), no ids
 de transición — y esos nombres varían por instalación/workflow, por lo que deben confirmarse con
 token real (`get`, o `GET /projects/{id}`) antes de fijarlos en la config. Un nombre de estado
-desconocido hace que `transition` devuelva el error tal cual lo reporta Mantis.
+desconocido hace que `transition` devuelva el error tal cual lo reporta Mantis. Además, esta
+instancia impone un workflow **encadenado** (ver sección anterior): `transition` solo sirve para
+saltos válidos de un paso; para recorrer varios estados en orden sin saltárselos, usar `advance`.
 
 ## Seguridad
 
