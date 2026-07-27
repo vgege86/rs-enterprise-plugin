@@ -95,13 +95,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin_root>/hooks/mantis-
   ni siquiera al depurar un fallo. El hook ya se encarga de redactarlo en sus errores.
 - Subcomandos reales del hook (detalle completo en `<plugin_root>/references/mantis.md`):
   `projects`, `list -Project <id> [-PageSize <n>]`, `get -Id <n>`,
-  `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]`,
-  `transition -Id <n> -Status <nombre>` (salto directo de un paso — no usar para avanzar varios
-  estados, ver `advance`), `advance -Id <n> -To <nombre> -Chain <csv> [-Handler <id>]
-  [-HandlerStatus <nombre>]` (recorre `statusChain` paso a paso desde el estado actual hasta `-To`,
-  sin saltarse ninguno; devuelve `applied` con los estados por los que pasó), `me` (→
-  `{id,name,real_name}`, usuario del token — sin argumentos), `comment -Id <n> -Text <s>`,
-  `attach -Id <n> -Files <a,b>`, `download -Id <n> -FileId <f> -Out <ruta>`.
+  `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` (con `-Handler`
+  deja la issue **asignada** vía PATCH tras el alta, con pausa+retry), `transition -Id <n> -Status
+  <nombre>` (salto directo de un paso — no usar para avanzar varios estados, ver `advance`),
+  `advance -Id <n> -To <nombre> -Chain <csv> [-Handler <id>] [-HandlerStatus <nombre>]` (recorre
+  `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltarse ninguno; cada PATCH con
+  pausa ~800ms + retry porque la instancia da 500 ante PATCH rápidos seguidos — ver
+  `references/mantis.md`; devuelve `applied` con los estados por los que pasó), `assign -Id <n>
+  -Handler <id>` (fija el handler de una issue existente), `me` (→ `{id,name,real_name}`, usuario del
+  token — sin argumentos), `comment -Id <n> -Text <s>`, `attach -Id <n> -Files <a,b>`,
+  `download -Id <n> -FileId <f> -Out <ruta>`.
 
 # Config del workspace
 
@@ -126,9 +129,12 @@ Si el fichero **no existe** → ofrecer `/rs-mantis init` (subrutina más abajo)
 # FASES (flujo estricto, no saltar)
 
 ### Fase 0 — Proyecto
-Leer `projects[]` de la config → listar `id — nombre` numerado → el usuario elige el proyecto de la
-tarea. Si la lista está vacía o la config no existe → derivar a `/rs-mantis proyectos` (subrutina)
-antes de continuar.
+Leer `projects[]` de la config. ⛔ **Nunca asumir/inferir el proyecto** — resolver según cuántos hay:
+- **1 solo proyecto curado** → usarlo directamente (es el único, no es asumir).
+- **más de uno** → listar `id — nombre` numerado y ⛔ **preguntar cuál** usar; no elegir por él.
+- **ninguno** (lista vacía o config inexistente) → `mantis-cli.ps1 projects` (los que ve el token) →
+  listar candidatos `id — nombre (estado)` y ⛔ **preguntar cuál/cuáles añadir** (deriva a
+  `/rs-mantis proyectos` / `init`). No continuar con un proyecto supuesto hasta que el usuario elija.
 
 ### Fase 1 — Tarea
 Dos ramas:
@@ -138,12 +144,15 @@ Dos ramas:
     estén cerradas/resueltas y listar `id — resumen (estado)` numeradas para elegir, o
   - el usuario da directamente el **id global** de la issue → `mantis-cli.ps1 get -Id <n>`.
 - **b) Crear** (`create`) → pedir categoría (por defecto `defaultCategory` de la config), resumen y
-  descripción → ⛔ confirmar → `mantis-cli.ps1 create -Project <id> -Category <s> -Summary <s>
-  -Description <s>`. Con el `id` devuelto, dos submodos (aclarar con el usuario cuál si no se
-  desprende ya de su petición inicial):
+  descripción → **resolver el usuario del token** (`mantis-cli.ps1 me` → `id`, lectura, sin
+  confirmación) → ⛔ confirmar → `mantis-cli.ps1 create -Project <id> -Category <s> -Summary <s>
+  -Description <s> -Handler <me.id>`. ⛔ **Toda issue creada queda asignada al usuario del token**
+  (`-Handler <me.id>`): `create` la deja asignada vía PATCH tras el alta (ver `references/mantis.md`),
+  también en *crear-suelto* — que antes no avanzaba estado y dejaba la issue sin handler. Con el `id`
+  devuelto, dos submodos (aclarar con el usuario cuál si no se desprende ya de su petición inicial):
   - **crear-y-trabajar** → continuar a la Fase 2 con la issue recién creada.
-  - **crear-suelto** → alta y fin: confirmar el `id` creado y parar aquí (registro de tarea/bug sin
-    arrancar desarrollo).
+  - **crear-suelto** → alta y fin: confirmar el `id` creado (ya asignado a `me`) y parar aquí
+    (registro de tarea/bug sin arrancar desarrollo).
 
 ### Fase 2 — Encuadre del requisito (NO análisis técnico)
 ⛔ **Esta fase traduce la issue a un requisito accionable — NO analiza el código.** Trabaja **solo**

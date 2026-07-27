@@ -1,5 +1,26 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.0 — 2026-07-27
+
+### Fix + Feat: `rs-mantis` — rate de PATCH, handler siempre y proyecto sin asumir
+
+- **Sensibilidad de rate en PATCH** (`hooks/mantis-cli.ps1`): la instancia objetivo devuelve HTTP 500
+  ante `PATCH` consecutivos rápidos al mismo `/issues/{id}` — un `transition` aislado funciona, dos
+  seguidos fallan. Nueva función `Invoke-MantisPatchRetry`: `Start-Sleep 800ms` **antes** de cada
+  intento (cubre la pausa entre PATCH y la posterior al GET inicial) + retry ×3 con backoff ante
+  5xx/no-2xx. La usan `advance` (cada paso de la cadena), `create` (follow-up de handler) y `assign`.
+  Verificado: con la pausa pasa toda la cadena `new→acknowledged→assigned→confirmed`.
+- **Toda issue creada queda asignada al usuario del token**: `create` hace el alta **sin** handler
+  (Mantis lo rechaza en estado `new`) y lo fija con un `PATCH {handler:{id}}` tras crear (verificado
+  200 sobre issue existente). Nuevo subcomando reutilizable **`assign -Id -Handler`**. `SKILL.md`
+  Fase 1b resuelve `me` y pasa `-Handler <me.id>` en ambos submodos — cerrando el hueco de
+  *crear-suelto*, que no avanza estado y dejaba la issue sin handler.
+- **Fase 0 nunca asume el proyecto** (`SKILL.md`): 1 proyecto curado → se usa; más de uno → listar y
+  preguntar cuál; ninguno → listar candidatos que ve el token y preguntar cuál/cuáles añadir. No se
+  trabaja con un proyecto supuesto.
+
+11 subcomandos (`+assign`). Sin cambios en el pipeline. Detalle en `references/mantis.md`.
+
 ## 2.25.0 — 2026-07-27
 
 ### Feat: `rs-jira` — crear issues, asignar y descargar adjuntos (paridad con `rs-mantis`)

@@ -46,8 +46,26 @@ function Invoke-MantisHttp {
     } finally { $client.Dispose() }
 }
 
+# PATCH con pausa previa + reintentos. La instancia (soporte.ais-int.net/mantis) devuelve HTTP 500
+# ante PATCH consecutivos rápidos al mismo /issues/{id}: uno aislado funciona, dos seguidos fallan.
+# Verificado: con ~800ms de pausa + retry pasa toda la cadena new→acknowledged→assigned→confirmed.
+# El Start-Sleep va ANTES de cada intento → cubre a la vez la pausa entre PATCH sucesivos y la de
+# después del GET inicial de estado (el primer PATCH ya espera). Detalle en references/mantis.md.
+function Invoke-MantisPatchRetry {
+    param($BaseUrl, [string]$PathAndQuery, $BodyObj, [string]$Token, [int]$Attempts = 3, [int]$DelayMs = 800)
+    $r = $null
+    $delay = $DelayMs
+    for ($i = 1; $i -le $Attempts; $i++) {
+        Start-Sleep -Milliseconds $delay
+        $r = Invoke-MantisHttp (New-MantisRequest $BaseUrl "PATCH" $PathAndQuery $BodyObj) $Token
+        if ($r.ok) { return $r }
+        $delay = $delay * 2   # backoff para el siguiente intento (solo si queda alguno)
+    }
+    return $r
+}
+
 # Validar el comando antes de resolver credenciales (guarda pura, sin red ni fichero).
-$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download", "me", "advance")
+$validCommands = @("projects", "get", "list", "create", "transition", "comment", "attach", "download", "me", "advance", "assign")
 if ($validCommands -notcontains $Command.ToLower()) {
     Fail "Comando desconocido: $Command. Válidos: $($validCommands -join ', ')."
 }
@@ -88,6 +106,10 @@ switch ($Command.ToLower()) {
         if (-not $To)    { Fail "Falta -To (estado destino)." }
         if (-not $Chain) { Fail "Falta -Chain (cadena ordenada de estados, coma-separada)." }
     }
+    "assign" {
+        if (-not $Id)      { Fail "Falta -Id." }
+        if (-not $Handler) { Fail "Falta -Handler (id del usuario al que asignar)." }
+    }
 }
 
 # Resolver credenciales (falla limpio antes de tocar red).
@@ -124,9 +146,17 @@ switch ($Command.ToLower()) {
             project     = @{ id = $Project }
             category    = @{ name = $Category }
         }
-        if ($Handler) { $bodyObj.handler = @{ id = $Handler } }
-        $data = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues" $bodyObj)
-        Emit @{ success = $true; id = $data.issue.id; issue = $data.issue }
+        # Alta SIN handler: Mantis puede rechazar un handler en estado 'new'. El handler se fija
+        # después con un PATCH (verificado 200 sobre issue existente), reutilizando pausa+retry.
+        $data  = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues" $bodyObj)
+        $newId = $data.issue.id
+        if ($Handler) {
+            $r = Invoke-MantisPatchRetry $cred.baseUrl "/issues/$newId" @{ handler = @{ id = $Handler } } $cred.token
+            if (-not $r.ok) {
+                Fail (Protect-MantisToken "issue #$newId creada pero no se pudo asignar el handler (HTTP $($r.status)) tras reintentos. $($r.body)" $cred.token)
+            }
+        }
+        Emit @{ success = $true; id = $newId; issue = $data.issue; handler = $Handler }
     }
     "transition" {
         $data = Get-Json (New-MantisRequest $cred.baseUrl "PATCH" "/issues/$Id" @{ status = @{ name = $Status } })
@@ -178,12 +208,20 @@ switch ($Command.ToLower()) {
             foreach ($step in $path) {
                 $body = @{ status = @{ name = $step } }
                 if ($Handler -and $step -eq $HandlerStatus) { $body.handler = @{ id = $Handler } }
-                $r = Invoke-MantisHttp (New-MantisRequest $cred.baseUrl "PATCH" "/issues/$Id" $body) $cred.token
-                if (-not $r.ok) { Fail (Protect-MantisToken "advance: paso a '$step' falló (HTTP $($r.status)). Aplicados: $($applied -join ', '). $($r.body)" $cred.token) }
+                # Pausa (~800ms) + retry: la instancia da 500 ante PATCH rápidos seguidos al mismo
+                # issue. El Start-Sleep del helper aplica también tras el GET inicial de estado.
+                $r = Invoke-MantisPatchRetry $cred.baseUrl "/issues/$Id" $body $cred.token
+                if (-not $r.ok) { Fail (Protect-MantisToken "advance: paso a '$step' falló (HTTP $($r.status)) tras reintentos. Aplicados: $($applied -join ', '). $($r.body)" $cred.token) }
                 $applied += $step
             }
             Emit @{ success = $true; id = $Id; from = $cur; applied = $applied; to = $To }
         }
+    }
+    "assign" {
+        # Fija el handler de una issue existente (PATCH {handler:{id}}) con pausa+retry.
+        $r = Invoke-MantisPatchRetry $cred.baseUrl "/issues/$Id" @{ handler = @{ id = $Handler } } $cred.token
+        if (-not $r.ok) { Fail (Protect-MantisToken "assign: no se pudo asignar el handler (HTTP $($r.status)) tras reintentos. $($r.body)" $cred.token) }
+        Emit @{ success = $true; id = $Id; handler = $Handler }
     }
     default { Fail "Comando aún no implementado: $Command." }
 }

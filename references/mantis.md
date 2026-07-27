@@ -97,16 +97,25 @@ Header de autenticación: `Authorization: <token>` — token **crudo**, **sin** 
 | `projects` | `GET /projects` | listar todos los proyectos que ve el token |
 | `list -Project <id> [-PageSize <n>]` | `GET /issues?project_id={id}&page_size={n}` | issues del proyecto |
 | `get -Id <n>` | `GET /issues/{id}` | leer una issue |
-| `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` | `POST /issues` | crear issue |
+| `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` | `POST /issues` (+ `PATCH` de handler) | crear issue; con `-Handler` la deja **asignada** (ver nota) |
 | `transition -Id <n> -Status <name>` | `PATCH /issues/{id}` body `{"status":{"name":"<name>"}}` | cambiar estado (un solo salto, sin recorrer la cadena) |
-| `advance -Id <n> -To <name> -Chain <csv> [-Handler <id>] [-HandlerStatus <name>]` | `GET /issues/{id}` + N × `PATCH /issues/{id}` | recorre `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltos |
+| `advance -Id <n> -To <name> -Chain <csv> [-Handler <id>] [-HandlerStatus <name>]` | `GET /issues/{id}` + N × `PATCH /issues/{id}` | recorre `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltos (PATCH con pausa+retry) |
+| `assign -Id <n> -Handler <id>` | `PATCH /issues/{id}` body `{"handler":{"id":<id>}}` | fija el handler de una issue existente (pausa+retry) |
 | `me` | `GET /users/me` | usuario del token (`{id,name,real_name}`) |
 | `comment -Id <n> -Text <s>` | `POST /issues/{id}/notes` body `{"text":"<s>"}` | añadir nota |
 | `attach -Id <n> -Files a,b` | `POST /issues/{id}/files` (multipart, campo `files[]`) | adjuntar ficheros |
 | `download -Id <n> -FileId <f> -Out <ruta>` | `GET /issues/{id}/files/{f}` | descargar un adjunto |
 
 Notas de contrato:
-- `create` devuelve `{ success, id, issue }` con el id de la issue creada.
+- `create` devuelve `{ success, id, issue, handler }` con el id de la issue creada. El alta (`POST
+  /issues`) se hace **sin handler** (Mantis puede rechazar un handler en estado `new`); si se pasa
+  `-Handler`, tras crear se hace un `PATCH {handler:{id}}` (con pausa+retry, ver abajo) para dejarla
+  **asignada** — verificado que devuelve 200 sobre una issue recién creada. Si ese PATCH falla, el
+  hook devuelve `success:false` incluyendo el id ya creado en el mensaje (la issue existe, no se
+  perdió). Regla de la skill: **toda issue creada por `rs-mantis` queda asignada al usuario del
+  token** (`-Handler <me.id>`), también en el submodo *crear-suelto* que no avanza estado.
+- `assign` fija el handler de una issue existente en una sola llamada; es el primitivo reutilizable
+  que usan tanto el follow-up de `create` como cualquier reasignación puntual.
 - `attach` reutiliza el multipart de `jira-attach.ps1` (`ByteArrayContent` +
   `MultipartFormDataContent`), un `HttpClient` propio (no pasa por `Invoke-MantisHttp`).
 - `advance` devuelve `{ success, id, from, applied, to }` (o `note: "ya en el estado destino"` si no
@@ -154,7 +163,24 @@ mantis-cli.ps1 advance -Id <n> -To assigned -Chain "new,acknowledged,assigned,co
   desarrollador que ejecuta el pipeline se asigna a sí mismo la issue al ponerla en curso.
 
 `me` (`GET /users/me`) resuelve la identidad del token: `{ id, name, real_name }`. La skill lo llama
-una vez en la Fase 3 para obtener el `id` que pasa como `-Handler` a `advance`.
+para obtener el `id` que pasa como `-Handler` — en la Fase 3 a `advance` (fija el handler al pasar a
+`assigned`) y en la Fase 1b a `create` (deja la issue asignada desde el alta, incluso en
+*crear-suelto*, que no avanza estado).
+
+## Sensibilidad de rate en PATCH (pausa + retry)
+
+⚠️ La instancia objetivo (`soporte.ais-int.net/mantis`) devuelve **HTTP 500** ante `PATCH`
+consecutivos rápidos al mismo `/issues/{id}`. Verificado en vivo: un `transition` aislado funciona;
+**dos PATCH seguidos sin pausa fallan**; con una pausa de **~800ms + reintentos** pasa toda la cadena
+`new→acknowledged→assigned→confirmed`.
+
+Mitigación en `hooks/mantis-cli.ps1` (`Invoke-MantisPatchRetry`): antes de **cada** intento de PATCH
+hace `Start-Sleep 800ms` y reintenta hasta **3 veces** con backoff (×2) ante `5xx`/no-2xx. Como el
+`Start-Sleep` va *antes* del envío, cubre a la vez la pausa **entre PATCH sucesivos** y la de
+**después del GET inicial** de estado (el primer PATCH ya espera). Lo usan `advance` (cada paso de la
+cadena), `create` (follow-up de handler) y `assign`. `transition` (un solo PATCH aislado) no lo
+necesita y va directo. Efecto secundario: una cadena `new→confirmed` tarda ~2,4s+ de pausas — es el
+precio de no comerse el 500.
 
 ## Nota sobre estados
 

@@ -179,8 +179,10 @@ Tercera tanda (v2.21.0): `rs-dashboard` (haiku) genera un dashboard HTML de `his
 elemento en lenguaje natural; `rs-doc-drift` (sonnet) doc funcional vs delta de código; `rs-test`
 (haiku) ejecuta `run_tests` como modo suelto; `rs-format` (opus) auto-fix de convenciones con **gate**
 (solo formato/naming, deriva renombrados públicos a `rs-rename`). Esta versión añade además la primera
-**suite de tests del plugin** (`tests/`: pytest de funciones puras del MCP + Pester de la guarda de
-`db-query.ps1`, cableados en CI).
+**suite de tests del plugin** (`tests/`: pytest de funciones puras del MCP + Pester de las guardas de
+`db-query.ps1` y `mantis-cli.ps1`, cableados en CI). ⚠️ Los `*.Tests.ps1` usan `Join-Path` con varios
+`ChildPath` (`-AdditionalChildPath`), disponible solo en **PowerShell 7** — correrlos con `pwsh`
+(el intérprete del CI, `shell: pwsh`), **no** con `powershell` (5.1), que falla al enlazar el 3.er arg.
 
 Segunda tanda de modos directos (v2.20.0), todos **agente-solo** (sin hooks/tools nuevos): `rs-cobertura`
 (sonnet) mapa de cobertura de tests; `rs-dead-code` (sonnet) inverso de `rs-impacto`, símbolos sin

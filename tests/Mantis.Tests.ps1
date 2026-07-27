@@ -225,6 +225,21 @@ Describe "mantis-cli advance validación" {
     }
 }
 
+Describe "mantis-cli assign validación" {
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+
+    It "assign sin -Handler → success:false (guarda pura, sin red)" {
+        $out = & $script:cli -Command "assign" -Id 42 -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)handler"
+    }
+    It "assign sin -Id → success:false" {
+        $out = & $script:cli -Command "assign" -Handler 7 -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)id"
+    }
+}
+
 Describe "mantis-cli advance fallo de red" {
     BeforeAll {
         $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"

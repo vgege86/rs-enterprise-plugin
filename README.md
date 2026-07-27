@@ -286,9 +286,11 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
+| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue (siempre **asignada al usuario del token**) → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. El proyecto **nunca se asume**: si hay más de uno (o ninguno) se listan y se pregunta. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
 
 > **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
+>
+> **Nota de rate**: la instancia devuelve HTTP 500 ante `PATCH` rápidos seguidos al mismo issue; `mantis-cli.ps1` intercala ~800ms + retry con backoff en `advance`/`create`/`assign` (ver `references/mantis.md`).
 
 ---
 
