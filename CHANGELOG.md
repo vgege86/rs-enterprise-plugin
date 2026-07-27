@@ -1,5 +1,58 @@
 # RS Enterprise Agent — Changelog
 
+## 2.24.0 — 2026-07-27
+
+### Feat: integración MantisBT — skill `rs-mantis` + cliente REST autónomo
+
+Nueva skill **`rs-mantis`** (`/rs-mantis`), orquestador del ciclo de vida de una issue de MantisBT
+sobre una solución uCollect/RS que espeja `rs-jira` (selección/creación → formateo → transición a
+"En Proceso" → lanza el pipeline → commit → adjunta SQL → transición a "En Validación"), y que además
+permite **crear issues nuevas** (crear-y-trabajar / crear-suelto) — algo que `rs-jira` no hace.
+
+**Cliente REST autónomo** (`hooks/mantis-cli.ps1` + `hooks/lib-mantis.ps1`), 10 subcomandos:
+`projects`/`list`/`get`/`create`/`transition`/`advance`/`me`/`comment`/`attach`/`download`. A
+diferencia de Jira (MCP Atlassian Rovo), MantisBT no tiene MCP equivalente — **motivo de no
+envolverlo en tools del MCP `rs-workspace`**: dependería del proceso `python.exe` vivo desde la
+primera fase, exponiéndose al falso positivo de CrowdStrike que cuelga el turno hasta 1800s (ver
+`docs/crowdstrike-fp-justification.md`; `rs-jira` solo toca `rs-workspace` en su Fase 4 por la misma
+razón). Un hook PowerShell autónomo invocado por Bash esquiva `python.exe` por completo.
+
+**Base REST**: `{baseUrl}/api/rest/index.php` — el rewrite `.htaccess` está **inactivo** en la
+instancia objetivo (`/api/rest/projects` → 404), así que `New-MantisRequest` usa siempre la forma vía
+front controller (funciona con y sin rewrite).
+
+**Protocolo de transición ordenada** (`advance` + `me`): esta instancia de Mantis usa un workflow
+**encadenado, sin saltos** — verificado en vivo `new` (Nueva) → `acknowledged` (Aceptada) →
+`assigned` (Asignada) → `confirmed` (Confirmada) → `resolved` (Resuelta) → `closed` (Cerrada). El
+subcomando `advance -Id -To -Chain [-Handler] [-HandlerStatus]` recorre `statusChain` paso a paso
+desde el estado actual hasta el destino, un `PATCH /issues/{id}` por salto, sin saltarse ninguno; es
+idempotente hacia delante (si la issue ya está en el destino o después, no hace nada) y, si un paso
+intermedio falla, se detiene ahí y reporta en `applied` qué estados sí llegó a aplicar. El
+subcomando `me` (`GET /users/me`) resuelve `{id,name,real_name}` del usuario del token. En la Fase 3
+de la skill, `me` resuelve el id del desarrollador una vez y `advance` lo fija como `handler` en el
+paso que llega a "En Proceso" (`assigned`) — el desarrollador se autoasigna la issue al ponerla en
+curso. En la Fase 4, el orden es ahora **estricto**: primero `advance` hasta "En Validación"
+(`confirmed`), y **solo después** de confirmado ese paso se adjuntan los scripts SQL (antes ambos
+pasos no tenían un orden explícito) — protocolo acordado con el cliente: "cuando el orquestador
+termina se pasa a Confirmada y es cuando se suben los scripts". Nuevo campo `statusChain` en
+`docs\.mantis-dev-config.json` (array ordenado de nombres de estado); `statusMap` pasa a
+`{ "inProgress": "assigned", "inValidation": "confirmed" }` (antes `"inValidation": "resolved"`).
+
+**Config y credenciales**: lista curada de proyectos en `docs\.mantis-dev-config.json` (workspace,
+sin secretos, misma convención que `.rs-databases.json`) + token en
+`~/.claude/rs-mantis-credentials.json` (fuera del repo). `/rs-mantis proyectos` gestiona la lista
+curada; `/rs-mantis init` crea el config del workspace (ahora también con `statusChain`).
+
+**Estado de verificación**: lecturas (`projects`/`get`/`list`) **verificadas en vivo** contra
+`soporte.ais-int.net` (200 OK, 41 proyectos; estados `new`/`acknowledged`/`assigned`/`confirmed`/
+`resolved`/`closed` con etiquetas en español). Los subcomandos de escritura (`create`/`transition`/
+`advance`/`comment`/`attach`) están **unit-testeados**; la verificación en vivo de escritura queda
+**pendiente** sobre una issue de prueba autorizada.
+
+Ficheros: `hooks/mantis-cli.ps1`, `hooks/lib-mantis.ps1`, `skills/rs-mantis/SKILL.md`,
+`commands/rs-mantis.md`, `references/mantis.md`, `tests/Mantis.Tests.ps1`, `README.md`, bump de
+versión.
+
 ## 2.23.3 — 2026-07-24
 
 ### Feat: instalador genera un script maestro `_run_all.sql` (ejecuta todos los inserts de golpe)
