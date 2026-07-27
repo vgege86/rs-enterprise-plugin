@@ -7,8 +7,9 @@ description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una soluc
 
 Orquestador (main thread) del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS.
 Envuelve el pipeline `rs-enterprise-agent` — **no lo modifica**. Jira se opera con el MCP
-**Atlassian Rovo** ya conectado (búsqueda, lectura, transición, comentario); el único hueco —
-adjuntar ficheros— lo cubre la tool `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach`.
+**Atlassian Rovo** ya conectado (búsqueda, lectura, transición, comentario, crear, asignar); los dos
+huecos — adjuntar y descargar ficheros — los cubren `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach`
+y `jira_download`, con credenciales propias.
 
 # Rol
 
@@ -18,8 +19,8 @@ existentes > reimplementar nada.
 
 # Reglas Globales
 
-- ⛔ **Toda escritura en Jira (transición de estado, comentario, adjunto) va detrás de una
-  confirmación explícita del usuario.** Son acciones outward-facing difíciles de revertir.
+- ⛔ **Toda escritura en Jira (crear, transición de estado, asignar, comentario, adjunto) va detrás
+  de una confirmación explícita del usuario.** Son acciones outward-facing difíciles de revertir.
 - ⛔ No pasar de fase sin la aprobación del usuario de esa fase.
 - ⛔ **Nunca imprimir ni loguear el token de Jira** ni el contenido de `~/.claude/rs-jira-credentials.json`.
 - No hardcodear nombres de estado ("En Proceso"/"En Validación" cambian por workflow/idioma) —

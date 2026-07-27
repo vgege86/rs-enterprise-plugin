@@ -57,18 +57,35 @@ if ($outDir -and -not (Test-Path $outDir)) {
     try { New-Item -ItemType Directory -Path $outDir -Force | Out-Null } catch { Fail "No se pudo crear el directorio destino: $outDir" }
 }
 
-# --- request GET (HttpClient con redirects, compatible con Windows PowerShell 5.1) ---
+# --- request GET (HttpClient sin auto-redirect: la Authorization NO debe reenviarse a un host
+#     cross-host en el 302 de Jira hacia su storage de media, p.ej. una URL presignada de AWS) ---
 try {
     Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
     $handler = New-Object System.Net.Http.HttpClientHandler
-    $handler.AllowAutoRedirect = $true
+    $handler.AllowAutoRedirect = $false
     $client  = New-Object System.Net.Http.HttpClient($handler)
     $basic   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$email`:$token"))
-    $client.DefaultRequestHeaders.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue("Basic", $basic)
-    $client.DefaultRequestHeaders.Add("X-Atlassian-Token", "no-check")
 
-    $url  = "$baseUrl/rest/api/3/attachment/content/$FileId"
-    $resp = $client.GetAsync($url).GetAwaiter().GetResult()
+    $url = "$baseUrl/rest/api/3/attachment/content/$FileId"
+    $resp = $null
+    $maxHops = 5
+    for ($hop = 0; $hop -le $maxHops; $hop++) {
+        $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $url)
+        if ($hop -eq 0) {
+            # Solo la petición inicial a Jira lleva credenciales propias.
+            $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue("Basic", $basic)
+            $req.Headers.Add("X-Atlassian-Token", "no-check")
+        }
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+
+        $status = [int]$resp.StatusCode
+        if ($status -ge 300 -and $status -lt 400 -and $resp.Headers.Location) {
+            $location = $resp.Headers.Location
+            $url = if ($location.IsAbsoluteUri) { $location.AbsoluteUri } else { (New-Object System.Uri([System.Uri]$url, $location)).AbsoluteUri }
+            continue
+        }
+        break
+    }
 
     if (-not $resp.IsSuccessStatusCode) {
         Fail "Jira devolvió HTTP $([int]$resp.StatusCode) al descargar el adjunto $FileId."
