@@ -116,3 +116,18 @@ Describe "mantis-cli fallo de red" {
         $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
     }
 }
+
+Describe "mantis-cli attach/download validación" {
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+
+    It "attach con fichero inexistente → success:false" {
+        $out = & $script:cli -Command "attach" -Id 42 -Files "X:\no-existe.sql" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)fichero no encontrado"
+    }
+    It "download sin -Out → success:false" {
+        $out = & $script:cli -Command "download" -Id 42 -FileId 7 -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)out|destino"
+    }
+}

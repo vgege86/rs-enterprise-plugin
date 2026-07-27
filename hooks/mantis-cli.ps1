@@ -67,6 +67,19 @@ switch ($Command.ToLower()) {
         if (-not $Id)   { Fail "Falta -Id." }
         if (-not $Text) { Fail "Falta -Text (texto del comentario)." }
     }
+    "attach" {
+        if (-not $Id)    { Fail "Falta -Id." }
+        if (-not $Files) { Fail "Falta -Files." }
+        foreach ($f in ($Files -split ',')) {
+            $p = $f.Trim(); if (-not $p) { continue }
+            if (-not (Test-Path $p)) { Fail "Fichero no encontrado: $p" }
+        }
+    }
+    "download" {
+        if (-not $Id)     { Fail "Falta -Id." }
+        if (-not $FileId) { Fail "Falta -FileId." }
+        if (-not $Out)    { Fail "Falta -Out (ruta destino)." }
+    }
 }
 
 # Resolver credenciales (falla limpio antes de tocar red).
@@ -110,6 +123,35 @@ switch ($Command.ToLower()) {
     "comment" {
         $null = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues/$Id/notes" @{ text = $Text })
         Emit @{ success = $true; id = $Id }
+    }
+    "attach" {
+        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+        $client = New-Object System.Net.Http.HttpClient
+        try {
+            $client.DefaultRequestHeaders.Add("Authorization", $cred.token)
+            $content = New-Object System.Net.Http.MultipartFormDataContent
+            foreach ($f in ($Files -split ',')) {
+                $p = $f.Trim(); if (-not $p) { continue }
+                $path  = (Resolve-Path $p).Path
+                $bytes = [IO.File]::ReadAllBytes($path)
+                $part  = New-Object System.Net.Http.ByteArrayContent(,$bytes)
+                $part.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream")
+                $content.Add($part, "files[]", (Split-Path $path -Leaf))
+            }
+            $url  = "$($cred.baseUrl)/api/rest/index.php/issues/$Id/files"
+            $resp = $client.PostAsync($url, $content).GetAwaiter().GetResult()
+            $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            if (-not $resp.IsSuccessStatusCode) { Fail (Protect-MantisToken "HTTP $([int]$resp.StatusCode). $body" $cred.token) }
+            $attached = @()
+            foreach ($f in ($Files -split ',')) { $p = $f.Trim(); if ($p) { $attached += (Split-Path $p -Leaf) } }
+            Emit @{ success = $true; id = $Id; attached = $attached; count = $attached.Count }
+        } finally { if ($content) { $content.Dispose() }; $client.Dispose() }
+    }
+    "download" {
+        $r = Invoke-MantisHttp (New-MantisRequest $cred.baseUrl "GET" "/issues/$Id/files/$FileId") $cred.token
+        if (-not $r.ok) { Fail (Protect-MantisToken "HTTP $($r.status). $($r.body)" $cred.token) }
+        [IO.File]::WriteAllText($Out, $r.body)
+        Emit @{ success = $true; id = $Id; file = $Out }
     }
     default { Fail "Comando aún no implementado: $Command." }
 }
