@@ -126,6 +126,19 @@ Describe "mantis-cli fallo de red" {
             $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
         } finally { Remove-Item -Force $tmpFile -ErrorAction SilentlyContinue }
     }
+
+    It "transition (verbo PATCH) con conexión rechazada → error de red, NO ArgumentNullException por verbo nulo" {
+        # Regresión: en .NET Framework 4.x, [System.Net.Http.HttpMethod]::PATCH no existe como
+        # propiedad estática (solo se añadió en .NET Core 2.1) y devuelve $null, lo que hace que
+        # HttpRequestMessage($null, url) lance ArgumentNullException. transition es el ÚNICO
+        # comando que usa PATCH, así que este es el único caso que lo detecta.
+        $out = & $script:cli -Command transition -Id 42 -Status assigned -CredPath $script:tmp | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Not -BeNullOrEmpty
+        $out.error   | Should -Not -Match "(?i)ArgumentNullException"
+        $out.error   | Should -Not -Match "(?i)valor no puede ser nulo"
+        $out.error   | Should -Not -Match "(?i)cannot be null"
+    }
 }
 
 Describe "mantis-cli attach/download validación" {

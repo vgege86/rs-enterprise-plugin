@@ -31,7 +31,7 @@ function Invoke-MantisHttp {
     $client = New-Object System.Net.Http.HttpClient
     try {
         $client.DefaultRequestHeaders.Add("Authorization", $Token)
-        $msg = New-Object System.Net.Http.HttpRequestMessage ([System.Net.Http.HttpMethod]::$($Req.Method), $Req.Url)
+        $msg = New-Object System.Net.Http.HttpRequestMessage((New-Object System.Net.Http.HttpMethod($Req.Method)), $Req.Url)
         if ($Req.Body) {
             $msg.Content = New-Object System.Net.Http.StringContent($Req.Body, [Text.Encoding]::UTF8, "application/json")
         }
