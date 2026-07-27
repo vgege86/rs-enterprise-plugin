@@ -1,5 +1,23 @@
 # RS Enterprise Agent — Changelog
 
+## 2.25.0 — 2026-07-27
+
+### Feat: `rs-jira` — crear issues, asignar y descargar adjuntos (paridad con `rs-mantis`)
+
+Tres capacidades que ya tenía `rs-mantis` llegan a `rs-jira`:
+
+- **Crear issue** (Fase 1b, submodos crear-y-trabajar / crear-suelto) vía `createJiraIssue`, replicando
+  los campos **informados** de la última tarea asignada al usuario (blocklist de campos de sistema;
+  confirmación humana; loop de reintento acotado guiado por el error de Jira al no existir `createmeta`
+  en Rovo).
+- **Asignar** la issue al desarrollador (`me` = `atlassianUserInfo`): al crear (`assignee` en el alta) y
+  en Fase 3 tras la transición (`editJiraIssue`); un 403 no-assignable no bloquea el flujo.
+- **Descargar adjuntos** a `docs/`: hook autónomo `hooks/jira-download.ps1` (GET autenticado a
+  `/rest/api/3/attachment/content/{id}`, token redactado) expuesto como tool
+  `jira_download(issue_key, file_id, out)`; triggers en Fase 1 (oferta) y subrutina `/rs-tarea descargar`.
+
+Sin cambios en el pipeline `rs-enterprise-agent`. Detalle en `references/jira.md`.
+
 ## 2.24.0 — 2026-07-27
 
 ### Feat: integración MantisBT — skill `rs-mantis` + cliente REST autónomo
