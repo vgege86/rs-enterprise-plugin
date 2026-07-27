@@ -82,8 +82,9 @@ workspace es el cwd de la sesión). Campos:
 Si el fichero **no existe** → ofrecer scaffolding (`/rs-tarea init`): proponer el JSON con los
 campos y, ⛔ solo tras aprobación, escribirlo. Recordar añadirlo al ignore de VCS. Las
 **credenciales** (`baseUrl`, `email`, `token` para adjuntar) viven aparte en
-`~/.claude/rs-jira-credentials.json` (fuera del repo) — solo se necesitan en la Fase 4 si hay SQL
-que adjuntar; ver `references/jira.md`.
+`~/.claude/rs-jira-credentials.json` (fuera del repo) — se necesitan en la Fase 4 si hay SQL
+que adjuntar, y también en Fase 1 si se descargan adjuntos (oferta + subrutina `/rs-tarea descargar`);
+ver `references/jira.md`.
 
 # FASES (flujo estricto, no saltar)
 
