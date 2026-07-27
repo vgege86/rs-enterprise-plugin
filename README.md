@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **2.21.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **2.24.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -288,7 +288,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 |---------|----------|
 | `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
 
-> **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Uso interactivo (no corre en headless/cron).
+> **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
 
 ---
 
@@ -374,7 +374,7 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 ```
 .claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
 .mcp.json         registro del MCP server rs-workspace
-skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira
+skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
 agents/           46 subagentes: pipeline y modos directos
 commands/         43 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
