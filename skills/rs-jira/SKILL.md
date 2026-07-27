@@ -42,9 +42,12 @@ significa que el MCP no exista. Cargar SIEMPRE el schema primero con ToolSearch:
 CrowdStrike el proceso `python.exe` del MCP queda bloqueado y la llamada **no responde hasta el timeout
 de 1800s** (FP conocido, `docs/crowdstrike-fp-justification.md`) — congela el turno entero. El modelo NO
 puede "detectar" ese cuelgue: una tool call bloqueante simplemente espera. Por eso aquí solo se
-comprueba **presencia en el registro**, nunca se ejecuta. `rs-workspace` solo se usa en la **Fase 4**
-(`jira_attach`/`log_execution`); su verificación viva se difiere allí. Fases 1–3 son **solo Atlassian
-Rovo**.
+comprueba **presencia en el registro**, nunca se ejecuta. La dependencia real de Fases 1–3 es
+**Atlassian Rovo**; `rs-workspace` no se toca al arranque en ningún caso. Su primer uso **vivo** llega
+con la primera llamada real que se haga a una de sus tools — que puede ser **antes** de Fase 4 si el
+usuario acepta la oferta de descarga de adjuntos (Fase 1) o ejecuta `/rs-tarea descargar`
+(`jira_download`), o si no, en Fase 4 (`jira_attach`/`log_execution`). La verificación viva de
+`rs-workspace` siempre se difiere a ese primer uso real, sea cual sea.
 
 1. **Atlassian Rovo** (dependencia real de Fases 1–3, verificar primero) → comprobar si el nombre
    `mcp__claude_ai_Atlassian_Rovo__atlassianUserInfo` (u otras `...Atlassian_Rovo__*`:
@@ -58,7 +61,8 @@ Rovo**.
      avisar y ⛔ parar.
 2. **rs-workspace** (solo presencia, ⛔ **sin llamar a `ping`**) → comprobar únicamente que el nombre
    `mcp__plugin_rs-enterprise-agent_rs-workspace__ping` **aparece en el registro** de tools deferred de la sesión:
-   - **aparece** → suficiente para seguir; la comprobación viva se hace en Fase 4 al usar `jira_attach`.
+   - **aparece** → suficiente para seguir; la comprobación viva se hace en el primer uso real (descarga
+     de adjuntos en Fase 1/`descargar`, o si no, `jira_attach`/`log_execution` en Fase 4).
    - **no aparece** ni siquiera en la lista de deferred → el server MCP no está configurado en la sesión
      → avisar (reinstalar/actualizar plugin) y ⛔ parar.
 
@@ -172,7 +176,8 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
 2. Ejecutar `/rs-commit` (flujo `detect_vcs` → subagente `rs-commit`, que ramifica SVN/Git). Anotar la
    revisión resultante.
 3. Tras confirmar el commit OK:
-   - ⚠️ **Primer uso vivo de `rs-workspace` en toda la skill.** Si la llamada a `jira_attach` (o
+   - ⚠️ **Primer uso vivo de `rs-workspace` en el flujo principal** (la subrutina de descarga de Fase 1,
+     si se invocó antes, ya lo habrá tocado). Si la llamada a `jira_attach` (o
      `log_execution`) **no responde en segundos** → proceso MCP `python.exe` bloqueado por el EDR
      (CrowdStrike FP, `docs/crowdstrike-fp-justification.md`). El commit y las transiciones de Jira **ya
      están hechos**; reportar cierre **parcial** (sin adjunto/log, con la causa EDR) en vez de colgar el
