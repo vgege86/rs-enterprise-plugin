@@ -30,6 +30,7 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
   - [10. Entorno, estadísticas y dashboard](#10-entorno-estadísticas-y-dashboard)
   - [11. Instalador de cliente](#11-instalador-de-cliente)
   - [12. Jira](#12-jira)
+  - [13. Mantis](#13-mantis)
 - [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
 - [Reglas clave](#reglas-clave)
 - [Requisitos y resolución de problemas](#requisitos-y-resolución-de-problemas)
@@ -278,6 +279,16 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-tarea [PROJ-123 \| URL]` | Orquesta el ciclo de una tarea de Jira: selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config. |
 
 > **Requisitos**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron).
+
+---
+
+### 13. Mantis
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
+
+> **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Uso interactivo (no corre en headless/cron).
 
 ---
 

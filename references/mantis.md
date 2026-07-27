@@ -10,8 +10,8 @@ Motivo de esta arquitectura: si las operaciones Mantis fueran tools del MCP `rs-
 dependerían del proceso `python.exe` vivo desde la primera fase, exponiéndose al falso positivo de
 CrowdStrike que cuelga el turno hasta 1800s (ver `docs/crowdstrike-fp-justification.md`). `rs-jira`
 solo toca `rs-workspace` en su Fase 4 por la misma razón. Un hook autónomo esquiva `python.exe` por
-completo, tiene un único camino de auth (API token) y es testeable de punta a punta con HTTP
-mockeado.
+completo, tiene un único camino de auth (API token) y es testeable con guardas puras y un test de
+fallo de red local, sin tocar la instancia real.
 
 Instancia objetivo: `https://soporte.ais-int.net/mantis/` — REST API 2.x confirmada viva.
 

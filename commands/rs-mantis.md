@@ -19,6 +19,6 @@ pipeline — Fase 3 launches that pipeline with the formatted prompt. Mantis ope
 autonomous REST client `hooks/mantis-cli.ps1` (no MCP; token auth) instead of an MCP integration.
 
 Read `<plugin_root>/skills/rs-mantis/SKILL.md` — `plugin_root` resolved per SKILL.md "Raíz del
-plugin" (normalize the received path, verify it contains `hooks\` and `runner\`) — and run its
+plugin" (normalize the received path, verify it contains `hooks\`) — and run its
 phases (F0 proyecto · F1 selección/creación · F2 formateo · F3 transición+lanzamiento · F4
 commit+cierre), respecting every ⛔ gate. Relay Mantis results and the pipeline output verbatim.

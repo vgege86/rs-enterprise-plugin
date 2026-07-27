@@ -1,5 +1,40 @@
 # RS Enterprise Agent — Changelog
 
+## 2.24.0 — 2026-07-27
+
+### Feat: integración MantisBT — skill `rs-mantis` + cliente REST autónomo
+
+Nueva skill **`rs-mantis`** (`/rs-mantis`), orquestador del ciclo de vida de una issue de MantisBT
+sobre una solución uCollect/RS que espeja `rs-jira` (selección/creación → formateo → transición a
+"En Proceso" → lanza el pipeline → commit → adjunta SQL → transición a "En Validación"), y que además
+permite **crear issues nuevas** (crear-y-trabajar / crear-suelto) — algo que `rs-jira` no hace.
+
+**Cliente REST autónomo** (`hooks/mantis-cli.ps1` + `hooks/lib-mantis.ps1`), 8 subcomandos:
+`projects`/`list`/`get`/`create`/`transition`/`comment`/`attach`/`download`. A diferencia de Jira
+(MCP Atlassian Rovo), MantisBT no tiene MCP equivalente — **motivo de no envolverlo en tools del MCP
+`rs-workspace`**: dependería del proceso `python.exe` vivo desde la primera fase, exponiéndose al
+falso positivo de CrowdStrike que cuelga el turno hasta 1800s (ver
+`docs/crowdstrike-fp-justification.md`; `rs-jira` solo toca `rs-workspace` en su Fase 4 por la misma
+razón). Un hook PowerShell autónomo invocado por Bash esquiva `python.exe` por completo.
+
+**Base REST**: `{baseUrl}/api/rest/index.php` — el rewrite `.htaccess` está **inactivo** en la
+instancia objetivo (`/api/rest/projects` → 404), así que `New-MantisRequest` usa siempre la forma vía
+front controller (funciona con y sin rewrite).
+
+**Config y credenciales**: lista curada de proyectos en `docs\.mantis-dev-config.json` (workspace,
+sin secretos, misma convención que `.rs-databases.json`) + token en
+`~/.claude/rs-mantis-credentials.json` (fuera del repo). `/rs-mantis proyectos` gestiona la lista
+curada; `/rs-mantis init` crea el config del workspace.
+
+**Estado de verificación**: lecturas (`projects`/`get`/`list`) **verificadas en vivo** contra
+`soporte.ais-int.net` (200 OK, 41 proyectos). Los subcomandos de escritura (`create`/`transition`/
+`comment`/`attach`) están **unit-testeados**; la verificación en vivo de escritura queda **pendiente**
+sobre una issue de prueba autorizada.
+
+Ficheros: `hooks/mantis-cli.ps1`, `hooks/lib-mantis.ps1`, `skills/rs-mantis/SKILL.md`,
+`commands/rs-mantis.md`, `references/mantis.md`, `tests/Mantis.Tests.ps1`, `README.md`, bump de
+versión.
+
 ## 2.23.3 — 2026-07-24
 
 ### Feat: instalador genera un script maestro `_run_all.sql` (ejecuta todos los inserts de golpe)

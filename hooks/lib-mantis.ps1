@@ -6,7 +6,7 @@ function Get-MantisCreds {
     if (-not (Test-Path $Path)) {
         throw "Credenciales no encontradas: $Path. Crea el fichero con { baseUrl, token } (ver references/mantis.md)."
     }
-    try { $c = Get-Content -Raw -Path $Path | ConvertFrom-Json }
+    try { $c = Get-Content -Raw -Path $Path -Encoding UTF8 | ConvertFrom-Json }
     catch { throw "No se pudo parsear $Path como JSON." }
     $baseUrl = ("$($c.baseUrl)").TrimEnd('/')
     $token   = "$($c.token)"
