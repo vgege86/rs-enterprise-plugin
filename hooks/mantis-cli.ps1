@@ -145,6 +145,8 @@ switch ($Command.ToLower()) {
             $attached = @()
             foreach ($f in ($Files -split ',')) { $p = $f.Trim(); if ($p) { $attached += (Split-Path $p -Leaf) } }
             Emit @{ success = $true; id = $Id; attached = $attached; count = $attached.Count }
+        } catch {
+            Fail (Protect-MantisToken "Error al adjuntar: $($_.Exception.Message)" $cred.token)
         } finally { if ($content) { $content.Dispose() }; $client.Dispose() }
     }
     "download" {

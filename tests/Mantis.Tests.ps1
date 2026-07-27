@@ -115,6 +115,17 @@ Describe "mantis-cli fallo de red" {
         $out.error   | Should -Not -BeNullOrEmpty
         $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
     }
+
+    It "attach con conexión rechazada → JSON válido con success:false y error no vacío (no crashea, token no filtrado)" {
+        $tmpFile = Join-Path ([IO.Path]::GetTempPath()) ("mantis-attach-" + [guid]::NewGuid() + ".txt")
+        Set-Content -Path $tmpFile -Value "contenido de prueba" -Encoding UTF8
+        try {
+            $out = & $script:cli -Command "attach" -Id 42 -Files $tmpFile -CredPath $script:tmp | ConvertFrom-Json
+            $out.success | Should -Be $false
+            $out.error   | Should -Not -BeNullOrEmpty
+            $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
+        } finally { Remove-Item -Force $tmpFile -ErrorAction SilentlyContinue }
+    }
 }
 
 Describe "mantis-cli attach/download validación" {
