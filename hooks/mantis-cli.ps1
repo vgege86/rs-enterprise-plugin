@@ -38,6 +38,8 @@ function Invoke-MantisHttp {
         $resp = $client.SendAsync($msg).GetAwaiter().GetResult()
         $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         return @{ ok = $resp.IsSuccessStatusCode; status = [int]$resp.StatusCode; body = $body }
+    } catch {
+        return @{ ok = $false; status = 0; body = $_.Exception.Message }
     } finally { $client.Dispose() }
 }
 

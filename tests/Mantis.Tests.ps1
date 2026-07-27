@@ -74,3 +74,20 @@ Describe "mantis-cli.ps1 guardas (pre-red)" {
         $out.error   | Should -Match "Credenciales no encontradas"
     }
 }
+
+Describe "mantis-cli fallo de red" {
+    BeforeAll {
+        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+        $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-net-" + [guid]::NewGuid() + ".json")
+        $script:dummyToken = "DUMMY-TOKEN-XYZ"
+        @{ baseUrl = "http://127.0.0.1:1"; token = $script:dummyToken } | ConvertTo-Json | Set-Content -Path $script:tmp -Encoding UTF8
+    }
+    AfterAll { Remove-Item -Force $script:tmp -ErrorAction SilentlyContinue }
+
+    It "conexión rechazada → JSON válido con success:false y error no vacío (no crashea)" {
+        $out = & $script:cli -Command "projects" -CredPath $script:tmp | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Not -BeNullOrEmpty
+        $out.error   | Should -Not -Match ([regex]::Escape($script:dummyToken))
+    }
+}
