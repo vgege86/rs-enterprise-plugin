@@ -617,9 +617,13 @@ def vcs_revert(workspace: Workspace, files: str, dry_run: bool = False) -> str:
     return json.dumps(_run_ps("vcs-revert.ps1", *args), ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Escanea código → SQL injection, credenciales hardcodeadas, XSS, input sin validar. Findings con severidad y archivo:línea.")
-def security_scan(sln_path: str) -> str:
-    return json.dumps(_run_ps("security-scan.ps1", sln_path), ensure_ascii=False, indent=2)
+@mcp.tool(description="Escanea código → SQL injection, credenciales hardcodeadas, XSS, input sin validar. Findings con severidad y archivo:línea. Los conteos por severidad (critical/high/medium/low/total_findings) siempre vienen completos; max_findings limita el detalle en contexto (default 50).")
+def security_scan(sln_path: str, max_findings: int = 50) -> str:
+    result = _run_ps("security-scan.ps1", sln_path)
+    if isinstance(result.get("findings"), list) and len(result["findings"]) > max_findings:
+        result["findings_truncated"] = len(result["findings"])
+        result["findings"] = result["findings"][:max_findings]
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Actualiza tablas específicas de model.json desde BD real. Llamar post-migración. tables = coma-separadas.")
@@ -812,8 +816,8 @@ def get_model_index(workspace: Workspace) -> str:
     }, ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Busca keyword en nombres de tablas, columnas y descripciones del modelo BD. Alternativa a cargar model.json completo cuando se busca dónde vive un concepto. Devuelve tablas/columnas que hacen match.")
-def search_model(workspace: Workspace, keyword: str) -> str:
+@mcp.tool(description="Busca keyword en nombres de tablas, columnas y descripciones del modelo BD. Alternativa a cargar model.json completo cuando se busca dónde vive un concepto. Devuelve tablas/columnas que hacen match. max_results limita tablas devueltas en contexto (default 100).")
+def search_model(workspace: Workspace, keyword: str, max_results: int = 100) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     config = _get_config(workspace)
     if "error" in config: return json.dumps(config, ensure_ascii=False)
@@ -846,10 +850,12 @@ def search_model(workspace: Workspace, keyword: str) -> str:
                 "matching_columns": matching_cols,
             })
 
+    total = len(results)
     return json.dumps({
-        "keyword":        keyword,
-        "tables_matched": len(results),
-        "results":        results,
+        "keyword":          keyword,
+        "tables_matched":   total,
+        "results":          results[:max_results],
+        "results_truncated": total > max_results,
     }, ensure_ascii=False, indent=2)
 
 

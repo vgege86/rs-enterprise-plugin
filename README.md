@@ -67,6 +67,12 @@ Para actualizar tras una versión nueva:
 
 **Requisitos** (detalle abajo): Python 3.11+, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
 
+> 💡 **Menos tokens por sesión**: el MCP `rs-workspace` corre en **stdio**, así que Claude Code puede
+> **diferir** los schemas de sus tools (no se cargan en el prompt hasta que se usan). Actívalo con la
+> variable de entorno `ENABLE_TOOL_SEARCH=auto` (o en `settings.json` → `env`). Con esto, las tools
+> aparecen como *deferred* y se cargan bajo demanda vía `ToolSearch`, ahorrando el coste fijo de sus
+> schemas en cada sesión. No aplica el bug de HTTP MCP (#40314): este server no es HTTP.
+
 ---
 
 ## Cómo se usa (activación)

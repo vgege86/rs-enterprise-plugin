@@ -1,5 +1,19 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.2 — 2026-07-27
+
+### Perf: caps de output faltantes + doc de tool-search (menos tokens/sesión)
+
+- **`search_model`**: nuevo `max_results` (default 100) + flag `results_truncated`; una keyword amplia
+  ya no vuelca todas las tablas coincidentes a contexto.
+- **`security_scan`**: nuevo `max_findings` (default 50) + flag `findings_truncated`; los conteos por
+  severidad (`critical`/`high`/`medium`/`low`/`total_findings`) siguen viniendo **completos** aunque
+  se recorte el detalle. Cierra el hueco que quedaba en el camino de outputs (el resto de tools ya
+  tenían cap: `db_query`, `find_symbol`, `search_code`, `compile_check`, `run_tests`, logs, diffs…).
+- **README**: nota de que el MCP `rs-workspace` corre en **stdio** → los schemas de sus 44 tools se
+  pueden **diferir** con `ENABLE_TOOL_SEARCH=auto`, quitando su coste fijo del prompt de cada sesión
+  (no aplica el bug HTTP #40314). Es la mayor palanca de tokens y no requiere cambio de código.
+
 ## 2.26.1 — 2026-07-27
 
 ### Perf: `rs-mantis` — recorte de contexto en `list`/`create`
