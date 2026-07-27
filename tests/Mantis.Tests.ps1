@@ -54,3 +54,23 @@ Describe "lib-mantis New-MantisRequest" {
         $r.Url | Should -Be "https://x/mantis/api/rest/index.php/issues?project_id=12&page_size=50"
     }
 }
+
+Describe "mantis-cli.ps1 guardas (pre-red)" {
+    BeforeAll {
+        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+    }
+
+    It "existe el hook" { Test-Path $script:cli | Should -BeTrue }
+
+    It "comando desconocido → success:false" {
+        $out = & $script:cli -Command "frobnicate" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)comando"
+    }
+
+    It "credenciales ausentes → success:false con instrucción" {
+        $out = & $script:cli -Command "projects" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "Credenciales no encontradas"
+    }
+}
