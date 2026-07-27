@@ -49,6 +49,18 @@ if ($validCommands -notcontains $Command.ToLower()) {
     Fail "Comando desconocido: $Command. Válidos: $($validCommands -join ', ')."
 }
 
+# Validar args obligatorios por comando (guarda pura, antes de credenciales/red).
+switch ($Command.ToLower()) {
+    "get"    { if (-not $Id)      { Fail "Falta -Id." } }
+    "list"   { if (-not $Project) { Fail "Falta -Project." } }
+    "create" {
+        if (-not $Project)     { Fail "Falta -Project." }
+        if (-not $Summary)     { Fail "Falta -Summary (resumen de la issue)." }
+        if (-not $Description) { Fail "Falta -Description." }
+        if (-not $Category)    { Fail "Falta -Category." }
+    }
+}
+
 # Resolver credenciales (falla limpio antes de tocar red).
 try { $cred = Get-MantisCreds $CredPath } catch { Fail $_.Exception.Message }
 
@@ -65,14 +77,23 @@ switch ($Command.ToLower()) {
         Emit @{ success = $true; projects = $data.projects }
     }
     "get" {
-        if (-not $Id) { Fail "Falta -Id." }
         $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues/$Id")
         Emit @{ success = $true; issue = $data.issues[0] }
     }
     "list" {
-        if (-not $Project) { Fail "Falta -Project." }
         $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues?project_id=$Project&page_size=$PageSize")
         Emit @{ success = $true; issues = $data.issues }
+    }
+    "create" {
+        $bodyObj = @{
+            summary     = $Summary
+            description = $Description
+            project     = @{ id = $Project }
+            category    = @{ name = $Category }
+        }
+        if ($Handler) { $bodyObj.handler = @{ id = $Handler } }
+        $data = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues" $bodyObj)
+        Emit @{ success = $true; id = $data.issue.id; issue = $data.issue }
     }
     default { Fail "Comando aún no implementado: $Command." }
 }

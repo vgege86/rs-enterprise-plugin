@@ -75,6 +75,16 @@ Describe "mantis-cli.ps1 guardas (pre-red)" {
     }
 }
 
+Describe "mantis-cli create validación" {
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+
+    It "create sin -Summary → success:false antes de tocar red" {
+        $out = & $script:cli -Command "create" -Project 12 -Category "General" -Description "x" -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)summary|resumen"
+    }
+}
+
 Describe "mantis-cli fallo de red" {
     BeforeAll {
         $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
