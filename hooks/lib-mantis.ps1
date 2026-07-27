@@ -21,3 +21,21 @@ function Protect-MantisToken {
     if (-not $Token) { return $Text }
     return $Text.Replace($Token, "***")
 }
+
+function New-MantisRequest {
+    param(
+        [string]$BaseUrl,
+        [string]$Method,
+        [string]$PathAndQuery,
+        $BodyObj = $null
+    )
+    $body = $null
+    if ($null -ne $BodyObj) { $body = ConvertTo-Json $BodyObj -Depth 8 -Compress }
+    return @{
+        Method = $Method
+        # index.php: el rewrite .htaccess no está activo en la instancia (verificado en vivo);
+        # esta forma funciona con y sin rewrite (más portable).
+        Url    = "$BaseUrl/api/rest/index.php$PathAndQuery"
+        Body   = $body
+    }
+}

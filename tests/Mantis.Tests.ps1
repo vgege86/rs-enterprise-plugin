@@ -32,3 +32,25 @@ Describe "lib-mantis credenciales" {
         Protect-MantisToken "texto" "" | Should -Be "texto"
     }
 }
+
+Describe "lib-mantis New-MantisRequest" {
+    BeforeAll { . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1") }
+
+    It "compone la url con base /api/rest/index.php" {
+        $r = New-MantisRequest "https://x/mantis" "GET" "/projects"
+        $r.Url    | Should -Be "https://x/mantis/api/rest/index.php/projects"
+        $r.Method | Should -Be "GET"
+        $r.Body   | Should -BeNullOrEmpty
+    }
+
+    It "serializa el body a JSON compacto" {
+        $r = New-MantisRequest "https://x/mantis" "PATCH" "/issues/42" @{ status = @{ name = "assigned" } }
+        $r.Url  | Should -Be "https://x/mantis/api/rest/index.php/issues/42"
+        $r.Body | Should -Be '{"status":{"name":"assigned"}}'
+    }
+
+    It "respeta query strings en el path" {
+        $r = New-MantisRequest "https://x/mantis" "GET" "/issues?project_id=12&page_size=50"
+        $r.Url | Should -Be "https://x/mantis/api/rest/index.php/issues?project_id=12&page_size=50"
+    }
+}
