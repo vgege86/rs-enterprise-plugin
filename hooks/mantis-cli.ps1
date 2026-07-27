@@ -59,6 +59,14 @@ switch ($Command.ToLower()) {
         if (-not $Description) { Fail "Falta -Description." }
         if (-not $Category)    { Fail "Falta -Category." }
     }
+    "transition" {
+        if (-not $Id)     { Fail "Falta -Id." }
+        if (-not $Status) { Fail "Falta -Status (nombre del estado destino)." }
+    }
+    "comment" {
+        if (-not $Id)   { Fail "Falta -Id." }
+        if (-not $Text) { Fail "Falta -Text (texto del comentario)." }
+    }
 }
 
 # Resolver credenciales (falla limpio antes de tocar red).
@@ -94,6 +102,14 @@ switch ($Command.ToLower()) {
         if ($Handler) { $bodyObj.handler = @{ id = $Handler } }
         $data = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues" $bodyObj)
         Emit @{ success = $true; id = $data.issue.id; issue = $data.issue }
+    }
+    "transition" {
+        $data = Get-Json (New-MantisRequest $cred.baseUrl "PATCH" "/issues/$Id" @{ status = @{ name = $Status } })
+        Emit @{ success = $true; id = $Id; status = $Status }
+    }
+    "comment" {
+        $null = Get-Json (New-MantisRequest $cred.baseUrl "POST" "/issues/$Id/notes" @{ text = $Text })
+        Emit @{ success = $true; id = $Id }
     }
     default { Fail "Comando aún no implementado: $Command." }
 }

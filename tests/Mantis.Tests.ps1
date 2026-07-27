@@ -85,6 +85,21 @@ Describe "mantis-cli create validación" {
     }
 }
 
+Describe "mantis-cli transition/comment validación" {
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+
+    It "transition sin -Status → success:false" {
+        $out = & $script:cli -Command "transition" -Id 42 -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)status|estado"
+    }
+    It "comment sin -Text → success:false" {
+        $out = & $script:cli -Command "comment" -Id 42 -CredPath "X:\no-existe.json" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "(?i)text|texto|comentario"
+    }
+}
+
 Describe "mantis-cli fallo de red" {
     BeforeAll {
         $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
