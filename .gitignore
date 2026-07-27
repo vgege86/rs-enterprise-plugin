@@ -14,6 +14,9 @@ docs/superpowers/
 __pycache__/
 *.pyc
 
+# Entorno virtual local para correr la suite (pip install -r requirements.txt)
+.venv/
+
 # Restos de SVN y temporales
 .svn/
 *.bak

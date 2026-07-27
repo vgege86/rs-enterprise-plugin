@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **2.24.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **2.25.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 

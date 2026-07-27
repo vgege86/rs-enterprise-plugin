@@ -858,6 +858,11 @@ def jira_attach(issue_key: str, files: str) -> str:
     return json.dumps(_run_ps("jira-attach.ps1", "-IssueKey", issue_key, "-Files", files), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Descarga un adjunto de una issue de Jira Cloud a la ruta 'out'. Cubre el hueco del MCP Atlassian Rovo (no expone descarga). Lee credenciales de ~/.claude/rs-jira-credentials.json. file_id = id numérico de fields.attachment[].id. Usado por la skill rs-jira (Fase 1 / subrutina descargar).")
+def jira_download(issue_key: str, file_id: str, out: str) -> str:
+    return json.dumps(_run_ps("jira-download.ps1", "-IssueKey", issue_key, "-FileId", file_id, "-Out", out), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Health check: verifica que el servidor MCP está activo y devuelve hooks_dir, nº hooks disponibles y versión Python. NO spawnea subprocesos: svn_cli/git_cli reflejan solo lo ya comprobado (null = aún no comprobado; se resuelve perezosamente al usar una tool VCS).")
 def ping() -> str:
     import sys as _sys

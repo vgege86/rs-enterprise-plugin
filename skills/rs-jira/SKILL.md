@@ -1,14 +1,15 @@
 ---
 name: rs-jira
-description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar issue → formatear el requisito → transicionar estado → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea", "trabaja la tarea PROJ-123", "coge una tarea de Jira", "mis tareas de Jira", "issue de Jira". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
+description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → asignar → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea", "trabaja la tarea PROJ-123", "coge una tarea de Jira", "crea una tarea en Jira", "mis tareas de Jira", "issue de Jira", "descarga los adjuntos de la issue". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
 ---
 
 # RS Jira
 
 Orquestador (main thread) del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS.
 Envuelve el pipeline `rs-enterprise-agent` — **no lo modifica**. Jira se opera con el MCP
-**Atlassian Rovo** ya conectado (búsqueda, lectura, transición, comentario); el único hueco —
-adjuntar ficheros— lo cubre la tool `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach`.
+**Atlassian Rovo** ya conectado (búsqueda, lectura, transición, comentario, crear, asignar); los dos
+huecos — adjuntar y descargar ficheros — los cubren `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach`
+y `jira_download`, con credenciales propias.
 
 # Rol
 
@@ -18,8 +19,8 @@ existentes > reimplementar nada.
 
 # Reglas Globales
 
-- ⛔ **Toda escritura en Jira (transición de estado, comentario, adjunto) va detrás de una
-  confirmación explícita del usuario.** Son acciones outward-facing difíciles de revertir.
+- ⛔ **Toda escritura en Jira (crear, transición de estado, asignar, comentario, adjunto) va detrás
+  de una confirmación explícita del usuario.** Son acciones outward-facing difíciles de revertir.
 - ⛔ No pasar de fase sin la aprobación del usuario de esa fase.
 - ⛔ **Nunca imprimir ni loguear el token de Jira** ni el contenido de `~/.claude/rs-jira-credentials.json`.
 - No hardcodear nombres de estado ("En Proceso"/"En Validación" cambian por workflow/idioma) —
@@ -42,9 +43,12 @@ significa que el MCP no exista. Cargar SIEMPRE el schema primero con ToolSearch:
 CrowdStrike el proceso `python.exe` del MCP queda bloqueado y la llamada **no responde hasta el timeout
 de 1800s** (FP conocido, `docs/crowdstrike-fp-justification.md`) — congela el turno entero. El modelo NO
 puede "detectar" ese cuelgue: una tool call bloqueante simplemente espera. Por eso aquí solo se
-comprueba **presencia en el registro**, nunca se ejecuta. `rs-workspace` solo se usa en la **Fase 4**
-(`jira_attach`/`log_execution`); su verificación viva se difiere allí. Fases 1–3 son **solo Atlassian
-Rovo**.
+comprueba **presencia en el registro**, nunca se ejecuta. La dependencia real de Fases 1–3 es
+**Atlassian Rovo**; `rs-workspace` no se toca al arranque en ningún caso. Su primer uso **vivo** llega
+con la primera llamada real que se haga a una de sus tools — que puede ser **antes** de Fase 4 si el
+usuario acepta la oferta de descarga de adjuntos (Fase 1) o ejecuta `/rs-tarea descargar`
+(`jira_download`), o si no, en Fase 4 (`jira_attach`/`log_execution`). La verificación viva de
+`rs-workspace` siempre se difiere a ese primer uso real, sea cual sea.
 
 1. **Atlassian Rovo** (dependencia real de Fases 1–3, verificar primero) → comprobar si el nombre
    `mcp__claude_ai_Atlassian_Rovo__atlassianUserInfo` (u otras `...Atlassian_Rovo__*`:
@@ -58,7 +62,8 @@ Rovo**.
      avisar y ⛔ parar.
 2. **rs-workspace** (solo presencia, ⛔ **sin llamar a `ping`**) → comprobar únicamente que el nombre
    `mcp__plugin_rs-enterprise-agent_rs-workspace__ping` **aparece en el registro** de tools deferred de la sesión:
-   - **aparece** → suficiente para seguir; la comprobación viva se hace en Fase 4 al usar `jira_attach`.
+   - **aparece** → suficiente para seguir; la comprobación viva se hace en el primer uso real (descarga
+     de adjuntos en Fase 1/`descargar`, o si no, `jira_attach`/`log_execution` en Fase 4).
    - **no aparece** ni siquiera en la lista de deferred → el server MCP no está configurado en la sesión
      → avisar (reinstalar/actualizar plugin) y ⛔ parar.
 
@@ -78,17 +83,59 @@ workspace es el cwd de la sesión). Campos:
 Si el fichero **no existe** → ofrecer scaffolding (`/rs-tarea init`): proponer el JSON con los
 campos y, ⛔ solo tras aprobación, escribirlo. Recordar añadirlo al ignore de VCS. Las
 **credenciales** (`baseUrl`, `email`, `token` para adjuntar) viven aparte en
-`~/.claude/rs-jira-credentials.json` (fuera del repo) — solo se necesitan en la Fase 4 si hay SQL
-que adjuntar; ver `references/jira.md`.
+`~/.claude/rs-jira-credentials.json` (fuera del repo) — se necesitan en la Fase 4 si hay SQL
+que adjuntar, y también en Fase 1 si se descargan adjuntos (oferta + subrutina `/rs-tarea descargar`);
+ver `references/jira.md`.
 
 # FASES (flujo estricto, no saltar)
 
 ### Fase 1 — Selección de la tarea
-Ofrecer dos vías:
+Ofrecer tres vías:
 - **A) Búsqueda automática** → `searchJiraIssuesUsingJql(cloudId, jql)` con
   `project = <projectKey> AND assignee = <accountId> AND statusCategory = "To Do"`
   (o los `openStatuses` de config). Listar `KEY — resumen (estado)` numerado para que el usuario elija.
 - **B) Manual** → el usuario da la KEY (`PROJ-123`) o la URL → `getJiraIssue(cloudId, issueIdOrKey)`.
+- **C) Crear** (`createJiraIssue`) → alta de una issue nueva. Ver "Fase 1b — Alta de issue".
+- **Adjuntos** → si `fields.attachment[]` de la issue no está vacío, informar "N adjuntos" y **ofrecer**
+  descargarlos (⛔ confirmar). Si acepta → descargar todos a `docs/` (ver subrutina "descargar").
+
+### Fase 1b — Alta de issue (solo si se eligió C en Fase 1)
+Espejo de `rs-mantis` Fase 1b. ⛔ Toda escritura tras confirmación.
+
+1. Pedir `issueTypeName`, `summary`, `description` (summary/description pueden derivarse del encuadre
+   de Fase 2 si el submodo es crear-y-trabajar).
+2. **Replicar "todos los informados" de la última tarea** del usuario:
+   - `searchJiraIssuesUsingJql(cloudId, "project = <projectKey> AND assignee = <me> ORDER BY created DESC")`
+     → `getJiraIssue` del primer resultado.
+   - Copiar a `additional_fields` los campos **no vacíos**, con esta **blocklist (nunca copiar)**:
+     `summary`, `description`, `reporter`, `creator`, `created`, `updated`, `status`, `resolution`,
+     `comment`, `attachment`, `worklog`, `votes`, `watches`, `timetracking`, `progress`,
+     `aggregateprogress`, `subtasks`, `issuelinks`, `key`, `project`, `lastViewed`, `workratio`.
+   - **Copiar si informado**: `priority`, `components`, `labels`, `versions`, `fixVersions`,
+     `duedate`, `environment`, y cualquier `customfield_*` con valor no vacío. `issuetype` lo fija el
+     usuario en el paso 1 (no se copia de la última tarea).
+   - Incluir además `assignee = { accountId: <me> }` (ver "Asignación").
+3. ⛔ **Confirmar**: mostrar al usuario el objeto completo a enviar (todos los campos + valores) →
+   permitir editar/quitar antes de crear.
+4. `createJiraIssue(cloudId, projectKey, issueTypeName, summary, description, additional_fields)`
+   (deferred: `ToolSearch("select:mcp__claude_ai_Atlassian_Rovo__createJiraIssue")` antes de llamar).
+   Manejo de error: si Jira devuelve `field is required` / `is invalid` / `cannot be set` → mostrar el
+   error tal cual, **quitar o preguntar** el campo señalado y reintentar. **Máx 3 intentos**; si sigue
+   fallando → reportar el último error y ⛔ parar (no crear a ciegas; sin `createmeta` en Rovo, el
+   error de Jira es la red de seguridad).
+5. Con la KEY creada, dos submodos (aclarar con el usuario si no se desprende de la petición):
+   - **crear-y-trabajar** → continuar a Fase 2 con la issue creada.
+   - **crear-suelto** → confirmar la KEY y parar aquí (alta sin arrancar desarrollo).
+
+### Asignación (assignee)
+`me` = `accountId` de `atlassianUserInfo` (resuelto en la auto-verificación). Equivale al `-Handler`
+de `rs-mantis`. Se asigna **siempre** (sin flag):
+- **Al crear** (Fase 1b) → `assignee` en `additional_fields`.
+- **Issue existente** → en Fase 3, tras la transición a "En Proceso":
+  `editJiraIssue(cloudId, key, fields = { assignee: { accountId: <me> } })` (deferred:
+  `ToolSearch("select:mcp__claude_ai_Atlassian_Rovo__editJiraIssue")`). Si Jira devuelve **403**
+  (usuario no assignable en el proyecto) → avisar y **seguir** el flujo; la transición ya está hecha,
+  no colgar ni abortar.
 
 ### Fase 2 — Encuadre del requisito (NO análisis técnico)
 ⛔ **Esta fase traduce la issue a un requisito accionable — NO analiza el código.** Trabaja
@@ -108,13 +155,15 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
    gate 2b del pipeline (Fase 3).
 
 ### Fase 3 — Transición a "En Proceso" + lanzamiento
-1. ⛔ Confirmar con el usuario antes de tocar Jira. Esta confirmación cubre **tres escrituras**:
-   comentar el prompt (paso 4), transicionar a "En Proceso" (pasos 2-3) y lanzar el pipeline
-   (paso 5). Enumerarlas al pedir la confirmación.
+1. ⛔ Confirmar con el usuario antes de tocar Jira. Esta confirmación cubre **cuatro escrituras**:
+   comentar el prompt (paso 4), transicionar a "En Proceso" (pasos 2-3), asignar la issue (paso 3b) y
+   lanzar el pipeline (paso 5). Enumerarlas al pedir la confirmación.
 2. `getTransitionsForJiraIssue(cloudId, issueIdOrKey)` → localizar la transición cuyo destino
    coincide con `statusMap.inProgress` (por nombre; si ambiguo, preguntar). Idempotente: si la
    issue ya está en ese estado → saltar la transición.
 3. `transitionJiraIssue(cloudId, issueIdOrKey, transition)`.
+3b. **Asignar al desarrollador** → `editJiraIssue(cloudId, issueIdOrKey, fields={ assignee:{ accountId: <me> } })`
+    (ver "Asignación"). Idempotente: si ya está asignada a `me`, no cambia. Un 403 no bloquea: avisar y seguir.
 4. **Nota del prompt** → `addCommentToJiraIssue(cloudId, issueIdOrKey, body=<prompt aprobado>)`: dejar
    como comentario el prompt exacto `<Solucion>.sln - <cambio>` que se pasará al orquestador, para
    trazar en Jira qué se lanzó. (Deferred: cargar schema con
@@ -129,7 +178,8 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
 2. Ejecutar `/rs-commit` (flujo `detect_vcs` → subagente `rs-commit`, que ramifica SVN/Git). Anotar la
    revisión resultante.
 3. Tras confirmar el commit OK:
-   - ⚠️ **Primer uso vivo de `rs-workspace` en toda la skill.** Si la llamada a `jira_attach` (o
+   - ⚠️ **Primer uso vivo de `rs-workspace` en el flujo principal** (la subrutina de descarga de Fase 1,
+     si se invocó antes, ya lo habrá tocado). Si la llamada a `jira_attach` (o
      `log_execution`) **no responde en segundos** → proceso MCP `python.exe` bloqueado por el EDR
      (CrowdStrike FP, `docs/crowdstrike-fp-justification.md`). El commit y las transiciones de Jira **ya
      están hechos**; reportar cierre **parcial** (sin adjunto/log, con la causa EDR) en vez de colgar el
@@ -150,6 +200,22 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
      parcial (sin nota), no colgar.
 4. **Informe final** escaneable: KEY procesada · estado actual en Jira · ficheros SQL adjuntados
    (si aplica) · revisión de commit. Es el mismo texto que se publicó como nota del resultado.
+
+# Subrutina `/rs-tarea descargar <KEY>`
+
+Descarga adjuntos de una issue a `docs/` del workspace. Requiere `~/.claude/rs-jira-credentials.json`
+(mismas credenciales que adjuntar; ver `references/jira.md`).
+
+1. `getJiraIssue(cloudId, KEY)` → de `fields.attachment[]` listar `id — filename (size)` numerados.
+   Si no hay adjuntos → informar y parar.
+2. El usuario elige uno, varios, o "todos".
+3. Por cada adjunto elegido: `out = docs/<filename>` (si `docs/<filename>` ya existe → sufijo `_2`,
+   `_3`, ...) → `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_download(issue_key=KEY, file_id=<id>, out=<out>)`.
+   - ⚠️ `jira_download` es uso de `rs-workspace` (MCP Python): si **no responde en segundos** → proceso
+     bloqueado por el EDR (CrowdStrike FP, `docs/crowdstrike-fp-justification.md`); reportar el hueco
+     y no colgar (mismo criterio que `jira_attach`).
+   - Si `success:false` (credenciales/404) → mostrar `error` y seguir con el resto de ficheros.
+4. Reportar los ficheros descargados con su ruta en `docs/`.
 
 # Límite
 

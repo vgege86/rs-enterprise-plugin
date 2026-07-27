@@ -2,9 +2,9 @@
 
 La skill `rs-jira` orquesta el ciclo de vida de una tarea de Jira sobre una solución uCollect/RS.
 Jira se opera con el MCP **Atlassian Rovo** (ya conectado en la sesión): búsqueda, lectura,
-transición y comentario **no requieren credenciales propias**. El único hueco es **adjuntar
-ficheros** (Rovo no expone attachment), que cubre `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach` con credenciales
-propias.
+transición, comentario, crear y asignar **no requieren credenciales propias**. Los huecos son
+**adjuntar y descargar ficheros** (Rovo no expone attachment ni download), cubiertos por
+`jira_attach` y `jira_download` con credenciales propias.
 
 ⚠️ El MCP `rs-workspace` **solo interviene en la Fase 4** (`jira_attach` / `log_execution`). Las Fases
 1–3 (selección, formateo, transición) usan **solo Atlassian Rovo** — por eso la auto-verificación de la
@@ -55,6 +55,19 @@ Scaffolding rápido: `/rs-tarea init`.
   {baseUrl}/rest/api/3/issue/{KEY}/attachments` con `X-Atlassian-Token: no-check`.
 - ⛔ El token **nunca** se imprime en output de tool/hook ni se guarda en `.jira-dev-config.json`.
 
+## Descarga de adjuntos — `hooks/jira-download.ps1` (desde 2.25.0)
+
+Reusa las mismas credenciales `~/.claude/rs-jira-credentials.json` (baseUrl, email, token). El hook
+hace Basic auth y `GET {baseUrl}/rest/api/3/attachment/content/{FileId}` (siguiendo redirects),
+escribiendo los bytes en `-Out`. Expuesto como tool `jira_download(issue_key, file_id, out)`.
+
+- **Destino**: la skill descarga a `docs/<filename>` (plano) del workspace; colisión de nombre →
+  sufijo `_2`, `_3`. El hook acepta cualquier `-Out` (ruta alternativa futura solo cambia cómo la
+  skill calcula `-Out`).
+- **Triggers**: (a) oferta en Fase 1 si la issue trae adjuntos; (b) subrutina `/rs-tarea descargar <KEY>`.
+- ⛔ El token nunca se imprime; en fallo (credenciales/404/HTTP no-2xx) devuelve `success:false` sin
+  escribir fichero parcial.
+
 ## Herramientas usadas
 
 | Operación | Herramienta |
@@ -66,7 +79,10 @@ Scaffolding rápido: `/rs-tarea init`.
 | Transiciones disponibles | `getTransitionsForJiraIssue` (Rovo) |
 | Cambiar estado | `transitionJiraIssue` (Rovo) |
 | Comentar | `addCommentToJiraIssue` (Rovo) |
+| Crear issue | `createJiraIssue` (Rovo) |
+| Asignar issue (assignee) | `editJiraIssue` (Rovo) / `assignee` en `createJiraIssue` |
 | Adjuntar `.sql` | `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_attach(issue_key, files)` → hook `jira-attach.ps1` |
+| Descargar adjunto | `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_download(issue_key, file_id, out)` → hook `jira-download.ps1` |
 
 ## Comentarios automáticos de trazabilidad (desde 2.16.0)
 

@@ -9,8 +9,8 @@ Orquestador (main thread) del ciclo de vida de una tarea de MantisBT sobre una s
 Envuelve el pipeline `rs-enterprise-agent` — **no lo modifica**. A diferencia de `rs-jira`, MantisBT
 **no tiene MCP** (no hay Atlassian Rovo equivalente): toda la interacción — leer, listar, crear,
 transicionar, comentar, adjuntar — pasa por el cliente REST autónomo `hooks/mantis-cli.ps1`
-(PowerShell, invocado vía Bash), con autenticación por **API token**. Esta skill además puede
-**crear** tareas nuevas, algo que `rs-jira` no hace.
+(PowerShell, invocado vía Bash), con autenticación por **API token**. Esta skill también puede
+**crear** tareas nuevas.
 
 # Rol
 
