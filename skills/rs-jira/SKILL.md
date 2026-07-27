@@ -90,6 +90,8 @@ Ofrecer tres vías:
   (o los `openStatuses` de config). Listar `KEY — resumen (estado)` numerado para que el usuario elija.
 - **B) Manual** → el usuario da la KEY (`PROJ-123`) o la URL → `getJiraIssue(cloudId, issueIdOrKey)`.
 - **C) Crear** (`createJiraIssue`) → alta de una issue nueva. Ver "Fase 1b — Alta de issue".
+- **Adjuntos** → si `fields.attachment[]` de la issue no está vacío, informar "N adjuntos" y **ofrecer**
+  descargarlos (⛔ confirmar). Si acepta → descargar todos a `docs/` (ver subrutina "descargar").
 
 ### Fase 1b — Alta de issue (solo si se eligió C en Fase 1)
 Espejo de `rs-mantis` Fase 1b. ⛔ Toda escritura tras confirmación.
@@ -191,6 +193,22 @@ define el **qué**. Si la issue es ambigua → **preguntar al usuario**, no expl
      parcial (sin nota), no colgar.
 4. **Informe final** escaneable: KEY procesada · estado actual en Jira · ficheros SQL adjuntados
    (si aplica) · revisión de commit. Es el mismo texto que se publicó como nota del resultado.
+
+# Subrutina `/rs-tarea descargar <KEY>`
+
+Descarga adjuntos de una issue a `docs/` del workspace. Requiere `~/.claude/rs-jira-credentials.json`
+(mismas credenciales que adjuntar; ver `references/jira.md`).
+
+1. `getJiraIssue(cloudId, KEY)` → de `fields.attachment[]` listar `id — filename (size)` numerados.
+   Si no hay adjuntos → informar y parar.
+2. El usuario elige uno, varios, o "todos".
+3. Por cada adjunto elegido: `out = docs/<filename>` (si `docs/<filename>` ya existe → sufijo `_2`,
+   `_3`, ...) → `mcp__plugin_rs-enterprise-agent_rs-workspace__jira_download(issue_key=KEY, file_id=<id>, out=<out>)`.
+   - ⚠️ `jira_download` es uso de `rs-workspace` (MCP Python): si **no responde en segundos** → proceso
+     bloqueado por el EDR (CrowdStrike FP, `docs/crowdstrike-fp-justification.md`); reportar el hueco
+     y no colgar (mismo criterio que `jira_attach`).
+   - Si `success:false` (credenciales/404) → mostrar `error` y seguir con el resto de ficheros.
+4. Reportar los ficheros descargados con su ruta en `docs/`.
 
 # Límite
 
