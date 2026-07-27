@@ -95,7 +95,7 @@ Header de autenticación: `Authorization: <token>` — token **crudo**, **sin** 
 | Subcomando | Llamada REST | Uso |
 |---|---|---|
 | `projects` | `GET /projects` | listar todos los proyectos que ve el token |
-| `list -Project <id> [-PageSize <n>]` | `GET /issues?project_id={id}&page_size={n}` | issues del proyecto |
+| `list -Project <id> [-PageSize <n>]` | `GET /issues?project_id={id}&page_size={n}` | issues del proyecto (proyectadas a `id`/`summary`/`status`) |
 | `get -Id <n>` | `GET /issues/{id}` | leer una issue |
 | `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` | `POST /issues` (+ `PATCH` de handler) | crear issue; con `-Handler` la deja **asignada** (ver nota) |
 | `transition -Id <n> -Status <name>` | `PATCH /issues/{id}` body `{"status":{"name":"<name>"}}` | cambiar estado (un solo salto, sin recorrer la cadena) |
@@ -107,7 +107,11 @@ Header de autenticación: `Authorization: <token>` — token **crudo**, **sin** 
 | `download -Id <n> -FileId <f> -Out <ruta>` | `GET /issues/{id}/files/{f}` | descargar un adjunto |
 
 Notas de contrato:
-- `create` devuelve `{ success, id, issue, handler }` con el id de la issue creada. El alta (`POST
+- `list` **proyecta** cada issue a `{ id, summary, status }` (lo único que la skill usa para elegir
+  `id — resumen (estado)`); no devuelve la issue completa — historial, `custom_fields`, notas y
+  relaciones inflarían el contexto ~10× sin uso. Para el detalle completo de una issue → `get`.
+- `create` devuelve `{ success, id, handler }` con el id de la issue creada (no hace eco de la issue
+  completa: la skill solo usa el id). El alta (`POST
   /issues`) se hace **sin handler** (Mantis puede rechazar un handler en estado `new`); si se pasa
   `-Handler`, tras crear se hace un `PATCH {handler:{id}}` (con pausa+retry, ver abajo) para dejarla
   **asignada** — verificado que devuelve 200 sobre una issue recién creada. Si ese PATCH falla, el

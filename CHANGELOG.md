@@ -1,5 +1,20 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.1 — 2026-07-27
+
+### Perf: `rs-mantis` — recorte de contexto en `list`/`create`
+
+Optimización de tokens en el camino más caliente del cliente REST (`hooks/mantis-cli.ps1`):
+
+- **`list`** ahora **proyecta** cada issue a `{ id, summary, status }` antes de emitir, en vez de
+  volcar la issue completa (historial, `custom_fields`, notas, relaciones). La skill solo usa
+  `id — resumen (estado)` para elegir en Fase 1a → ~10× menos JSON a contexto en proyectos con muchas
+  issues. El detalle completo sigue disponible vía `get`.
+- **`create`** deja de hacer eco de la issue completa (`issue`): la skill solo usa el `id`. Devuelve
+  `{ success, id, handler }`.
+
+Sin cambios de comportamiento en la skill. Detalle en `references/mantis.md`.
+
 ## 2.26.0 — 2026-07-27
 
 ### Fix + Feat: `rs-mantis` — rate de PATCH, handler siempre y proyecto sin asumir

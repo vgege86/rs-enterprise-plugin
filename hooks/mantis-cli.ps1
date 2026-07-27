@@ -137,7 +137,10 @@ switch ($Command.ToLower()) {
     }
     "list" {
         $data = Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues?project_id=$Project&page_size=$PageSize")
-        Emit @{ success = $true; issues = $data.issues }
+        # Proyecta a lo mínimo que la skill usa para elegir (id — resumen (estado)). Las issues
+        # completas (historial, custom_fields, notas, relaciones) inflan el contexto ~10x sin uso.
+        $slim = @($data.issues | ForEach-Object { @{ id = $_.id; summary = $_.summary; status = $_.status } })
+        Emit @{ success = $true; issues = $slim }
     }
     "create" {
         $bodyObj = @{
@@ -156,7 +159,8 @@ switch ($Command.ToLower()) {
                 Fail (Protect-MantisToken "issue #$newId creada pero no se pudo asignar el handler (HTTP $($r.status)) tras reintentos. $($r.body)" $cred.token)
             }
         }
-        Emit @{ success = $true; id = $newId; issue = $data.issue; handler = $Handler }
+        # No se hace eco de la issue completa: la skill solo usa el id (y el handler ya resuelto).
+        Emit @{ success = $true; id = $newId; handler = $Handler }
     }
     "transition" {
         $data = Get-Json (New-MantisRequest $cred.baseUrl "PATCH" "/issues/$Id" @{ status = @{ name = $Status } })
