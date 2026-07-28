@@ -67,11 +67,12 @@ Para actualizar tras una versión nueva:
 
 **Requisitos** (detalle abajo): Python 3.11+, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
 
-> 💡 **Menos tokens por sesión**: el MCP `rs-workspace` corre en **stdio**, así que Claude Code puede
-> **diferir** los schemas de sus tools (no se cargan en el prompt hasta que se usan). Actívalo con la
-> variable de entorno `ENABLE_TOOL_SEARCH=auto` (o en `settings.json` → `env`). Con esto, las tools
-> aparecen como *deferred* y se cargan bajo demanda vía `ToolSearch`, ahorrando el coste fijo de sus
-> schemas en cada sesión. No aplica el bug de HTTP MCP (#40314): este server no es HTTP.
+> 💡 **Menos tokens por sesión (ya automático)**: Claude Code **difiere por defecto** los schemas de
+> las tools MCP de `rs-workspace` — solo se cargan bajo demanda vía tool-search cuando una tarea las
+> usa, ahorrando su coste fijo (~6k tokens/sesión) **sin configurar nada**. ⚠️ **No** pongas
+> `ENABLE_TOOL_SEARCH`: el valor `auto` carga los schemas *upfront* (cuando caben en el 10% del
+> contexto) y `false` los carga todos — ambos **deshacen** el ahorro. Dejar la variable **sin poner**
+> (el default) es lo óptimo. Ver la doc de Claude Code sobre la ventana de contexto.
 
 ---
 

@@ -1,5 +1,15 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.4 — 2026-07-28
+
+### Fix (doc): corrige la nota errónea sobre `ENABLE_TOOL_SEARCH` de 2.26.2
+
+La nota de instalación de 2.26.2 tenía la **semántica invertida**. Según la doc oficial de Claude
+Code (context-window): los schemas de las tools MCP se **difieren por defecto** (tool-search bajo
+demanda) — ese es ya el comportamiento de ahorro, sin configurar nada. `ENABLE_TOOL_SEARCH=auto`
+**carga los schemas upfront** cuando caben en el 10% del contexto, y `=false` los carga todos:
+**ambos deshacen el ahorro**. La recomendación correcta es **no** poner la variable. README corregido.
+
 ## 2.26.3 — 2026-07-27
 
 ### Perf: descriptions más cortas en los 7 agents de pipeline (coste fijo/sesión)
