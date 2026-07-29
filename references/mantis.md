@@ -160,6 +160,12 @@ mantis-cli.ps1 advance -Id <n> -To assigned -Chain "new,acknowledged,assigned,co
   la issue queda en un estado intermedio real de Mantis, no en `-To`. Quien llama a `advance` debe
   leer ese detalle y decidir cómo seguir (reintentar el tramo restante, avisar al usuario), nunca
   asumir que `-To` se alcanzó.
+- ⚠️ **Dos causas distintas de HTTP 500 en `advance`** — no confundirlas al diagnosticar: (a) el
+  **rate de PATCH** (ver sección siguiente), que se manifiesta como un paso intermedio que falla y
+  reintenta; (b) **`status.name` enviado como array** (`{"status":{"name":["assigned"]}}`), que falla
+  siempre y desde el primer paso. La (b) era el bug de ≤2.26.4 (`@( )` sobre el resultado de
+  `Get-MantisAdvancePath`, corregido en 2.26.5): si reaparece, el síntoma es que `advance` manda **un
+  solo** PATCH en vez de uno por paso.
 - **`-Handler` / `-HandlerStatus`**: si se pasan, el `PATCH` del paso cuyo nombre coincide con
   `-HandlerStatus` (por defecto `assigned`) incluye también `"handler":{"id":<Handler>}` en el body —
   así el handler se fija en el mismo paso en que la issue pasa a Asignada, no en una llamada aparte.

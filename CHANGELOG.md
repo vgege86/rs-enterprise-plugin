@@ -1,5 +1,39 @@
 # RS Enterprise Agent — Changelog
 
+## 2.26.5 — 2026-07-29
+
+### Fix: `mantis-cli.ps1 advance` mandaba `status.name` como array anidado (HTTP 500)
+
+Reportado por un agente en ejecución real: `advance` fallaba con **HTTP 500** en el primer paso, y
+no era el 500 por rate de PATCH que documenta `references/mantis.md`.
+
+**Causa** — `hooks/mantis-cli.ps1:207` envolvía el resultado con `@( )`:
+
+```powershell
+$path = @(Get-MantisAdvancePath $chainArr $cur $To)   # ⛔
+```
+
+`Get-MantisAdvancePath` ya devuelve un array vía **comma unario** (`return ,$result`). Sobre una
+función que emite así, `@( )` **no aplana**: recoge el array como **un solo objeto** y lo anida, así
+que `@(...).Count` vale **1 siempre** — para 0, 1 o 3 pasos. Tres fallos de la misma raíz:
+
+1. **HTTP 500**: `foreach ($step in $path)` iteraba una vez con `$step` = el array entero, generando
+   `{"status":{"name":["acknowledged","assigned","confirmed"]}}`.
+2. **Saltos de estado**: un único PATCH en vez de uno por paso — justo lo que `advance` existe para
+   evitar en un workflow encadenado sin saltos.
+3. **Idempotencia rota**: `$path.Count -eq 0` nunca se cumplía → la rama `"ya en el estado destino"`
+   era código muerto y se enviaba `{"status":{"name":[]}}`.
+
+Los tests existentes pasaban en verde porque llamaban a la función **sin** `@( )`: cubrían la
+función pura, no el contrato de consumo.
+
+**Ficheros**: `hooks/mantis-cli.ps1` (quitado el `@( )` + comentario del porqué) ·
+`hooks/lib-mantis.ps1` (contrato de consumo explícito junto al comma unario) ·
+`tests/Mantis.Tests.ps1` (nuevo `Describe` de regresión: elementos `[string]` no anidados, body
+PATCH con `name` string, `Count 0` en mismo estado, y guarda estática de que el fuente del CLI no
+reintroduce el `@( )`) · `references/mantis.md` (distingue las **dos** causas de 500 en `advance`:
+rate de PATCH vs `status.name` como array).
+
 ## 2.26.4 — 2026-07-28
 
 ### Fix (doc): corrige la nota errónea sobre `ENABLE_TOOL_SEARCH` de 2.26.2

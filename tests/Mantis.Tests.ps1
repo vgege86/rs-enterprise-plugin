@@ -103,6 +103,57 @@ Describe "lib-mantis Get-MantisAdvancePath" {
     }
 }
 
+# Regresión 2.26.5: el llamador envolvía el resultado con @( ), que sobre una función que ya emite
+# el array vía comma unario NO aplana — lo anida. Efecto: un solo PATCH con status.name como array
+# (HTTP 500), pasos intermedios saltados y la rama "ya en el estado destino" inalcanzable.
+Describe "lib-mantis Get-MantisAdvancePath contrato de consumo" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
+        $script:chain = @('new', 'acknowledged', 'assigned', 'confirmed')
+        $script:cliSrc = Get-Content -Raw (Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1")
+    }
+
+    It "cada elemento es un string suelto, no un array anidado" {
+        $path = Get-MantisAdvancePath $script:chain "new" "confirmed"
+        $path.Count | Should -Be 3
+        foreach ($step in $path) { $step | Should -BeOfType [string] }
+    }
+
+    It "un solo paso sigue siendo un array de un string" {
+        $path = Get-MantisAdvancePath $script:chain "new" "acknowledged"
+        $path.Count | Should -Be 1
+        $path[0]    | Should -BeOfType [string]
+    }
+
+    It "el body PATCH de cada paso lleva status.name como string, no como array" {
+        $path = Get-MantisAdvancePath $script:chain "new" "acknowledged"
+        $body = ConvertTo-Json @{ status = @{ name = $path[0] } } -Depth 8 -Compress
+        $body | Should -Be '{"status":{"name":"acknowledged"}}'
+    }
+
+    It "mismo estado -> Count 0 (dispara la rama 'ya en el estado destino')" {
+        $path = Get-MantisAdvancePath $script:chain "assigned" "assigned"
+        $path.Count | Should -Be 0
+    }
+
+    # Caracterización del gotcha de PowerShell que causó el bug: fija por qué existe la guarda
+    # estática de abajo. Si algún día @( ) aplanara, este test avisaría de que la guarda sobra.
+    It "envolver con @( ) anida el array (el gotcha que rompía advance)" {
+        $malo = @(Get-MantisAdvancePath $script:chain "new" "confirmed")
+        $malo.Count           | Should -Be 1
+        # -is en vez de `| Should -BeOfType`: la pipeline desenrollaría el array anidado y la
+        # aserción vería sus elementos (strings) en vez del array.
+        ($malo[0] -is [array]) | Should -BeTrue
+        $body = ConvertTo-Json @{ status = @{ name = $malo[0] } } -Depth 8 -Compress
+        $body | Should -Be '{"status":{"name":["acknowledged","assigned","confirmed"]}}'
+    }
+
+    It "mantis-cli.ps1 NO envuelve la llamada con @( )" {
+        $script:cliSrc | Should -Not -Match '@\(\s*Get-MantisAdvancePath'
+        $script:cliSrc | Should -Match '\$path\s*=\s*Get-MantisAdvancePath'
+    }
+}
+
 Describe "mantis-cli.ps1 guardas (pre-red)" {
     BeforeAll {
         $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"

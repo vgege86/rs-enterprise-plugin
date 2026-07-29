@@ -34,6 +34,11 @@ function Get-MantisAdvancePath {
     if ($ti -eq $ci) { $result = @() } else { $result = @($Chain[($ci + 1)..$ti]) }
     # ,$result (comma unario) evita que PowerShell "desenrolle" un array de 1 elemento al
     # devolverlo por la pipeline: sin esto, la llamadora recibiría un string suelto, no un array.
+    # ⛔ CONTRATO DE CONSUMO: asignar el resultado TAL CUAL (`$path = Get-MantisAdvancePath ...`).
+    # NO envolver con @( ) — sobre una función que ya emite el array vía comma unario, @( ) NO
+    # aplana: recoge el array como UN solo objeto y lo anida (`@(...).Count` == 1 siempre, incluso
+    # para 0 o 3 pasos). En `advance` eso mandaba `status.name` como array y Mantis devolvía HTTP
+    # 500, además de saltarse los pasos intermedios. Regresión cubierta en tests/Mantis.Tests.ps1.
     return ,$result
 }
 

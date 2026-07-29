@@ -204,7 +204,9 @@ switch ($Command.ToLower()) {
     "advance" {
         $cur = (Get-Json (New-MantisRequest $cred.baseUrl "GET" "/issues/$Id")).issues[0].status.name
         $chainArr = @($Chain -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-        try { $path = @(Get-MantisAdvancePath $chainArr $cur $To) } catch { Fail (Protect-MantisToken $_.Exception.Message $cred.token) }
+        # ⛔ SIN @( ): Get-MantisAdvancePath ya devuelve array (comma unario). Envolverlo colapsa el
+        # tramo entero en UN elemento anidado → un solo PATCH con status.name como array → HTTP 500.
+        try { $path = Get-MantisAdvancePath $chainArr $cur $To } catch { Fail (Protect-MantisToken $_.Exception.Message $cred.token) }
         if ($path.Count -eq 0) {
             Emit @{ success = $true; id = $Id; from = $cur; applied = @(); to = $cur; note = "ya en el estado destino" }
         } else {
