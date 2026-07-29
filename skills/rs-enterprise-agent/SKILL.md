@@ -185,4 +185,5 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |
 | Dependencias ⚡ | `/rs-deps`, "mapa dependencias" | `rs-dependencias` |
 | Hotspots de riesgo 🔷 | `/rs-hotspots`, "puntos calientes de X", "dónde hay más riesgo en X" | `rs-hotspots` (churn VCS × complejidad → ranking de riesgo; advisory) |
-| Instalador cliente 🟣 | `/rs-instalador`, "prepara el instalador del cliente", "instalación limpia de X" | `rs-instalador` (genera `C:\AIS\<Proyecto>\Instalador`: EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL) |
+| Instalador cliente 🟣 | `/rs-instalador`, "prepara el instalador del cliente", "instalación limpia de X" | `rs-instalador` (genera `C:\AIS\<Proyecto>\Instalador`: EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL + paquete de instalación: `Instalar.ps1`/`Ejecutar-Scripts.ps1`/`rutas.json`/`readme.txt`) |
+| Actualizador de entorno 🟣 | `/rs-actualizador`, "actualizador de TEST para X", "entrega incremental a PROD", "qué llevo a DESA desde la última entrega" | `rs-actualizador` (delta de commits desde la última entrega en `RVERSIONES` → `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>`: Exes/AgendaWeb/Modulos + scripts SQL de las tareas + insert de registro; **gate de alcance** y descripción funcional confirmada) |

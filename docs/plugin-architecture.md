@@ -40,7 +40,7 @@ runner/
 references/              conocimiento de dominio, cargado bajo demanda
 docs/                    esta doc + design specs
 scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd, install, etc.)
-assets/                  widget ERD inline
+assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
 executions/
   history.json           historial de ejecuciones del pipeline (lo escribe log_execution)
 ```
@@ -172,7 +172,7 @@ SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-c
 `rs-stats`, `rs-validar-req`, `rs-instalador`, `rs-review`, `rs-perf`, `rs-deshacer` (los tres
 autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`, `rs-cobertura`, `rs-dead-code`,
 `rs-rename`, `rs-seed`, `rs-comparar-entornos`, `rs-hotspots`, `rs-dashboard`, `rs-explicar`,
-`rs-doc-drift`, `rs-test`, `rs-format`, `rs-runbook`.
+`rs-doc-drift`, `rs-test`, `rs-format`, `rs-runbook`, `rs-actualizador`.
 
 `rs-runbook` (v2.27.0, sonnet) es el único modo directo que **entrevista al usuario** como parte de
 su proceso: documenta procedimientos de operación, cuyo conocimiento (reglas de la operación,
@@ -217,6 +217,24 @@ sin tool MCP) y 2 scripts Python (`installer-ddl.py`, `installer-inserts.py`). C
 Los inserts por tabla se generan en paralelo (`ThreadPoolExecutor`), con cap configurable
 `parametricas.max_paralelo` (default 8 = conexiones BD simultáneas).
 
+`rs-actualizador` (`/rs-actualizador`, opus, v2.28.0) es su hermano **incremental**: genera la entrega
+delta de un entorno (`DESA`/`TEST`/`PROD`) en `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>`.
+Lee de la tabla **`RVERSIONES`** (BD de control) la `FECHA_CORTE` de la última entrega de cada
+solución en ese entorno, calcula el delta con la tool nueva `vcs_delta` (hook `vcs-delta.ps1`,
+autodetecta SVN/Git) y empaqueta con `actualizador-build.ps1`: batch afectados con Rebuild completo
+de su solución (mismo gate de coherencia que `installer-batch` — DLLs sin strong-name), AgendaWeb
+completa (delega en `installer-agendaweb.ps1`) y las DLL recién compiladas de los módulos afectados.
+⛔ Excluye la configuración **funcional** del cliente (`web.config`, el `<proceso>.xml` de cada batch
+—detectado por coincidencia de nombre con un `.exe` entregado—, `appsettings*.json` y los wildcards de
+`excluirEntrega`), pero **mantiene los `*.config` del binario** (`RSProcIN.exe.config`): llevan los
+binding redirects y separarlos de sus DLL reproduce el `FileLoadException`.
+
+Ambos modos comparten el **paquete de instalación en cliente** (`hooks/instalacion-paquete.ps1` +
+plantillas versionadas en `assets/instalacion/`: `Instalar.ps1` con backup ZIP previo,
+`Ejecutar-Scripts.ps1` fail-fast, `rutas.json` por entorno, `readme.txt`, DDL de `RVERSIONES`). La
+lógica de backup/instalación vive en plantillas, no la reescribe el modelo en cada entrega.
+Convenciones de entrega: `references/actualizador.md`.
+
 `rs-analisis` (análisis estático de un diff) y `rs-validacion-bd` (validación código↔BD) son las
 versiones **standalone** de lo que en el pipeline hacen el validator y el planner respectivamente —
 comparten reglas vía reference (`references/bd.md`), no duplican lógica. `rs-esquema` es consulta
@@ -252,7 +270,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**43 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**45 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -302,12 +320,13 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD |
-| `references/mcp.md` | Catálogo completo de las 43 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 45 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |
 | `references/troubleshooting.md` | Fallos comunes (p.ej. MSB4019) |
 | `references/jira.md` | Setup de la integración Jira (skill `rs-jira`): `.jira-dev-config.json`, credenciales, herramientas |
+| `references/actualizador.md` | Entregas a cliente: tabla `RVERSIONES`, cálculo del delta, qué se empaqueta en instalador vs actualizador, exclusión de configuración, `rutas.json`, orden de instalación |
 
 ---
 

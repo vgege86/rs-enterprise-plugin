@@ -1,5 +1,100 @@
 # RS Enterprise Agent — Changelog
 
+## 2.28.1 — 2026-07-29
+
+### Fix: el actualizador excluía de más — los `*.config` del binario sí son parte de la entrega
+
+La regla de 2.28.0 ("en un actualizador no viaja ningún `*.config`") era incorrecta y peligrosa por su
+cuenta: `RSProcIN.exe.config` y los `<dll>.config` llevan los **binding redirects**, y entregar la DLL
+recompilada sin su `.config` alineado es exactamente el `FileLoadException` → `StackOverflowException`
+que vigila el gate de binding redirects de `installer-batch.ps1`.
+
+La exclusión pasa a ser de **configuración funcional del entorno del cliente**, no de extensión:
+
+- `web.config` (a cualquier nivel de `AgendaWeb\`)
+- el **`<proceso>.xml`** de cada batch — se identifica por coincidencia de nombre base con un `.exe`
+  entregado (`rsprocin.exe` → `rsprocin.xml`)
+- `appsettings*.json` (host y módulos net8)
+- los wildcards que declare `excluirEntrega` en `docs\<proyecto>-instalador.json` (campo nuevo)
+
+Los `.xml` de `Exes\` que **no** emparejan con ningún `.exe` se conservan y se avisa de ellos, para
+que el mantenedor decida si son configuración (y los añada a `excluirEntrega`) en vez de perderlos en
+silencio. El gate de `Instalar.ps1 -Modo Actualizacion` aplica el mismo criterio.
+
+Ficheros tocados: `hooks/actualizador-build.ps1`, `assets/instalacion/Instalar.ps1`,
+`agents/rs-actualizador.md`, `references/actualizador.md`, `references/hooks.md`, `hooks/README.md`,
+`docs/plugin-architecture.md`, `README.md`.
+
+## 2.28.0 — 2026-07-29
+
+### Nuevo modo directo `/rs-actualizador` — entregas incrementales por entorno, con tabla `RVERSIONES`
+
+`/rs-instalador` cubría la **instalación limpia**, pero no había forma de preparar una entrega
+**incremental**: qué se ha tocado desde la última vez que se entregó a TEST, qué binarios llevar y
+qué scripts SQL acompañan. Se hacía a mano, y lo que se olvida en ese proceso (una DLL compartida,
+un script de una tarea) aparece como incidencia en el cliente.
+
+**`rs-actualizador`** (opus) genera la entrega delta en
+`C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>\`:
+
+1. Lee de **`RVERSIONES`** (BD de control) la `FECHA_CORTE` de la última entrega de cada solución en
+   ese entorno. Sin fila previa → **pregunta** la fecha de partida; no la inventa.
+2. Calcula el delta con la tool nueva `vcs_delta` (hasta hoy, o hasta la fecha de `--hasta`
+   descartando desarrollos posteriores) y lo cruza con `get_scope` de cada solución para saber qué
+   está realmente afectado.
+3. ⛔ **Gate de alcance** (solución / última entrega / commits / tareas / artefacto) antes de compilar.
+4. Empaqueta: `Exes\` (solo batch afectados), `AgendaWeb\` completa, `ServiceManager\Modulos\` con
+   las DLL recién compiladas, `scripts\` con los `.sql` de las tareas Mantis/Jira citadas en los
+   commits, y los inserts de registro (uno para el cliente, otro para nuestra BD de control).
+5. Redacta la **descripción funcional** de la entrega desde los commits y **la hace confirmar** antes
+   de escribirla: es lo que acaba viendo el usuario final en `RVERSIONES`, y no puede ser técnica.
+
+**Tabla `RVERSIONES`** (DDL idempotente Oracle y SQL Server en `assets/instalacion/`): `ENTORNO`,
+`SOLUCION`, `VERSION`, `FECHA_ENTREGA`, `FECHA_CORTE`, `DESCRIPCION`, `TAREAS`, `USUARIO`. El delta
+parte de `FECHA_CORTE`, no de `FECHA_ENTREGA` — con `--hasta`, entregar desde la fecha de entrega
+perdería los commits intermedios. Ninguno de los dos inserts se ejecuta solo: el modo avisa de que
+sin ejecutar el local, el siguiente actualizador repetirá los mismos commits.
+
+**Por qué Rebuild de la solución batch entera y no solo del `.csproj` tocado**: `Comun`/`BusComun`/
+`RSModel` no tienen strong-name y el CLR enlaza por nombre simple — mezclar binarios de builds
+distintos reproduce el `StackOverflowException` documentado en `installer-batch.ps1`. El mismo gate
+de coherencia se aplica aquí.
+
+**⛔ La configuración funcional del cliente no viaja** — `web.config`, el `<proceso>.xml` de cada
+batch y `appsettings*.json` — con triple defensa: el hook los excluye y los lista,
+`Instalar.ps1 -Modo Actualizacion` aborta si los encuentra, y los parámetros nuevos se documentan en
+`readme.txt`. **Los `*.config` del binario sí viajan** (`RSProcIN.exe.config`, `<dll>.config`): llevan
+los binding redirects y separarlos de sus DLL reproduce el `FileLoadException`.
+
+### `/rs-instalador` también entrega el script de instalación
+
+El instalador completo ganó la **etapa 6** (`instalacion-paquete.ps1`) y el paso 7 de cierre: además
+de EXES/AgendaWeb/ServiceManager/Scripts, el paquete lleva ahora `Instalar.ps1`,
+`Ejecutar-Scripts.ps1`, `rutas.json`, `readme.txt`, el DDL de `RVERSIONES` y el insert de la versión
+base (sin él, el primer actualizador de ese entorno no tiene fecha de partida). El JSON de config
+por cliente admite un bloque `entornos` con rutas de instalación y backup.
+
+Las plantillas de instalación son **compartidas por los dos modos** y viven versionadas en
+`assets/instalacion/` — la lógica de backup e instalación no la reescribe el modelo en cada entrega:
+
+- `Instalar.ps1` — backup ZIP de cada carpeta destino antes de copiar; no toca la BD.
+- `Ejecutar-Scripts.ps1` — segundo script, el único que escribe en BD: ejecuta los `.sql` en orden
+  con fail-fast (sqlplus con `WHENEVER SQLERROR EXIT FAILURE`, o `sqlcmd -b`), pide confirmación y
+  password por consola (nunca en el JSON).
+- `rutas.json` — rutas de instalación por módulo y de backup, **una entrada por entorno**.
+
+**Ficheros nuevos**: `agents/rs-actualizador.md`, `commands/rs-actualizador.md`,
+`hooks/vcs-delta.ps1`, `hooks/actualizador-build.ps1`, `hooks/instalacion-paquete.ps1`,
+`references/actualizador.md`, `assets/instalacion/*` (5 ficheros).
+**Tool MCP nueva**: `vcs_delta(workspace, desde, hasta?, ruta?, limit?)` — delta de commits entre dos
+fechas autodetectando SVN/Git, con los IDs de tarea Mantis/Jira citados y los ficheros tocados.
+
+### Fix (doc): `jira_download` no estaba en el catálogo MCP
+
+`references/mcp.md` documentaba 43 de las 44 tools reales — faltaba `jira_download`, que existe en el
+server desde la integración Jira. Añadida su fila y reconciliados los contadores contra disco:
+**45 tools**, **48 subagentes**, **42 modos directos** (46 slash commands − 4 que no son modos).
+
 ## 2.27.1 — 2026-07-29
 
 ### Fix (doc): conteo de modos directos descuadrado + `/rs-sync-indexes` huérfano en SKILL.md

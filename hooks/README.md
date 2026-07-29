@@ -34,6 +34,19 @@ Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (ra
 | `service-build.ps1 <slnPath> <workspace>` | Build de servicio Windows (tipo=Servicio): código MSBuild + instalador .vdproj con devenv. No copia a AIS |
 | `copy-ais.ps1 <source> <workspace>` | Copia bin/Release completo a AIS |
 
+### Entregas a cliente (instalador / actualizador)
+Se lanzan vía `runner/runner.ps1` (`TYPE: INSTALLER`), no tienen tool MCP.
+Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
+
+| Script | Uso |
+|--------|-----|
+| `installer-batch.ps1 <workspace> <destino>` | Rebuild Release de los batch activos → `<destino>\EXES` + gate de coherencia |
+| `installer-agendaweb.ps1 <workspace> <destino>` | Publish FileSystem de la Agenda Web → `<destino>\AgendaWeb` |
+| `installer-servicemanager.ps1 <workspace> <destino>` | `dotnet publish` host net8 + DLL de módulos → `<destino>\ServiceManager[\Modulos]` |
+| `installer-scripts.ps1 <workspace> <destino>` | DDL + objetos + inserts paramétricas → `<destino>\Scripts` |
+| `actualizador-build.ps1 <workspace> <destino> <manifiesto.json>` | Delta: batch afectados + AgendaWeb completa + DLL de módulos afectados; excluye la config funcional del cliente (`web.config`, `<proceso>.xml`, `appsettings*.json`) y conserva los `*.config` del binario |
+| `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`) |
+
 ### Análisis y scope
 | Script | Uso |
 |--------|-----|
@@ -68,6 +81,7 @@ Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (ra
 | `svn-diff.ps1 <workspace>` | Estado SVN del workspace → JSON (incluye ficheros ? sin versionar) |
 | `svn-diff-revision.ps1 <workspace> <revisions>` | Diff de revisiones específicas → combined_diff filtrado |
 | `svn-log.ps1 <workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits → JSON |
+| `vcs-delta.ps1 <workspace> -Desde <fecha> [-Hasta <fecha>] [-Ruta <subruta>] [-Limit 500]` | Delta de commits entre dos fechas (SVN o Git, autodetectado) → commits + tareas Mantis/Jira + ficheros tocados |
 | `svn-add.ps1 <workspace> [-Files <lista>]` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
 
 ### Entorno y logging

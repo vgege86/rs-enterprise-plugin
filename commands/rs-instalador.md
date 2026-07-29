@@ -1,5 +1,5 @@
 ---
-description: "Genera el instalador completo de cliente (instalación limpia) en C:\\AIS\\<Proyecto>\\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos y Scripts SQL."
+description: "Genera el instalador completo de cliente (instalación limpia) en C:\\AIS\\<Proyecto>\\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1, Ejecutar-Scripts.ps1, rutas.json, readme.txt)."
 argument-hint: "[<Proyecto>|<workspace>]"
 ---
 

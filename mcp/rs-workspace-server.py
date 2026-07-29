@@ -519,6 +519,18 @@ def git_log(workspace: Workspace, solution: str = "", limit: int = 10) -> str:
     return json.dumps(_run_ps("git-log.ps1", *args), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Delta de commits entre dos fechas (SVN o Git, autodetectado) → commits (rev, autor, fecha, mensaje, tareas Mantis/Jira citadas), ficheros tocados con su acción y lista única de tareas. ruta limita el delta a una subruta del workspace (ej. Batch\\Soluciones\\RSProcIN); hasta vacío = ahora. Base de /rs-actualizador: qué ha cambiado desde la última entrega.")
+def vcs_delta(workspace: Workspace, desde: str, hasta: str = "", ruta: str = "", limit: int = 500) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    args = [workspace, "-Desde", desde]
+    if hasta:
+        args += ["-Hasta", hasta]
+    if ruta:
+        args += ["-Ruta", ruta]
+    args += ["-Limit", str(limit)]
+    return json.dumps(_run_ps("vcs-delta.ps1", *args), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Busca en docs funcionales secciones relacionadas con keyword → archivo, heading, línea, fragmento.")
 def find_doc_section(workspace: Workspace, keyword: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)

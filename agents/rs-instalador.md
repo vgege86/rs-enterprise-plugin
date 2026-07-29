@@ -1,6 +1,6 @@
 ---
 name: rs-instalador
-description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos y Scripts SQL. Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
+description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1 con backup, Ejecutar-Scripts.ps1, rutas.json, readme.txt). Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, Read, Write, Bash, Glob
 ---
@@ -17,12 +17,22 @@ C:\AIS\<Proyecto>\Instalador\
 ├── AgendaWeb\       publicación de la Agenda Web
 ├── ServiceManager\  AIS.ServicesManager publicado (net8)
 │   └── Modulos\     DLLs de los módulos activos del cliente
-└── Scripts\
-    ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas, SIN schema
-    └── Inserts\
-        ├── <TABLA>.sql                 un fichero por tabla paramétrica
-        └── _run_all.sql                master: ejecuta todos los <TABLA>.sql de golpe
+├── Scripts\
+│   ├── 00-RVERSIONES.sql               DDL de la tabla de versiones (registro de entregas)
+│   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas, SIN schema
+│   ├── 99-RVERSIONES-inicial.sql       insert de la versión base instalada
+│   └── Inserts\
+│       ├── <TABLA>.sql                 un fichero por tabla paramétrica
+│       └── _run_all.sql                master: ejecuta todos los <TABLA>.sql de golpe
+├── Instalar.ps1          backup + copia de carpetas en el servidor (NO toca BD)
+├── Ejecutar-Scripts.ps1  ejecuta los .sql de Scripts\ en orden, fail-fast
+├── rutas.json            rutas de instalación y backup, una entrada por entorno
+└── readme.txt            qué ejecutar, en qué orden, qué parámetros configurar
 ```
+
+El paquete de instalación (los 4 últimos) es **el mismo que genera `/rs-actualizador`**: plantillas
+versionadas en `assets\instalacion\`, materializadas por `hooks\instalacion-paquete.ps1`.
+Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 
 `workspace` (ruta trunk del proyecto) y `plugin_root` vienen en el prompt de invocación. Usar
 `plugin_root` literal en el comando del runner (no depender del contexto de sesión).
@@ -52,9 +62,18 @@ Estructura:
   "batch": ["RSProcIN", "RSProcOUT"],
   "agendaweb": { "sln": "AgendaWeb<Proyecto>.sln", "publishProfile": "" },
   "servicemanager": { "modulos": ["AIS.RS.<Proyecto>.API"] },
-  "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 }
+  "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 },
+  "entornos": {
+    "DESA": { "backup": "", "modulos": { "AgendaWeb": "", "Exes": "", "ServiceManager": "", "Modulos": "" },
+              "bd": { "motor": "ORACLE", "conexion": "", "usuario": "" } },
+    "TEST": { }, "PROD": { }
+  }
 }
 ```
+
+`entornos` (opcional pero recomendado) alimenta el `rutas.json` que viaja al cliente: rutas de
+instalación por módulo, ruta de backup y datos de conexión **sin password**. Si falta, el paquete
+sale con `rutas.json` de plantilla y hay que rellenarlo a mano antes de entregarlo.
 
 `parametricas.max_paralelo` (opcional, default `8`): nº de tablas cuyos inserts se generan en
 paralelo — es también el nº de conexiones BD simultáneas. Bajar si el Oracle del cliente tiene pocas
@@ -76,7 +95,7 @@ altas, actualizar el JSON (preservando lo existente) con `Write` y confirmar.
 
 ⛔ No compilar nada hasta que el usuario confirme la lista.
 
-# PASO 2..5 — Ejecutar las 4 etapas (vía runner)
+# PASO 2..6 — Ejecutar las 5 etapas (vía runner)
 
 Ejecutar **en orden**, una etapa por vez. Para cada una: emitir el bloque `TYPE/COMMAND`, ejecutarlo
 inline con el runner usando `plugin_root`, y **verificar evidencia** antes de pasar a la siguiente.
@@ -87,6 +106,7 @@ inline con el runner usando `plugin_root`, y **verificar evidencia** antes de pa
 | 3 | AgendaWeb | `.\hooks\installer-agendaweb.ps1 "<workspace>" "<destino>"` |
 | 4 | ServiceManager + Modulos | `.\hooks\installer-servicemanager.ps1 "<workspace>" "<destino>"` |
 | 5 | Scripts (DDL + inserts) | `.\hooks\installer-scripts.ps1 "<workspace>" "<destino>"` |
+| 6 | Paquete de instalación | `.\hooks\instalacion-paquete.ps1 "<workspace>" "<destino>" Instalacion` |
 
 Patrón de ejecución (Bash → PowerShell), usando el `plugin_root` recibido:
 
@@ -115,9 +135,30 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
 - **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts` (+ `_run_all.sql`, master que los ejecuta todos de golpe: `@@` en Oracle, `:r`+GO en SQL Server, fail-fast).
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD → reportarlo como AVISO,
     no como éxito silencioso.
+- **Paquete:** `OK — paquete de instalacion preparado en <destino>` + existen `Instalar.ps1`,
+  `Ejecutar-Scripts.ps1`, `rutas.json` y `Scripts\00-RVERSIONES.sql`.
+  - `AVISO: no habia bloque 'entornos'...` = `rutas.json` va como **plantilla** → decírselo al
+    usuario: hay que rellenar rutas de instalación, backup y conexión antes de entregar.
+  - `AVISO: motor no resuelto` = se copiaron los DDL de los dos motores → borrar el que no aplique.
 
 Si una etapa falla (exit ≠ 0 sin ser el exit 2 de scripts) → detener, reportar las últimas líneas de
 error, y NO continuar con las siguientes etapas.
+
+# PASO 7 — Cerrar el paquete (readme + versión base)
+
+Tras la etapa 6, con `Write`:
+
+1. **`readme.txt`** con contenido real, en orden de ejecución: (1) scripts SQL —
+   `Ejecutar-Scripts.ps1 -Entorno <E>`, empezando por `00-RVERSIONES.sql` y `CreacionTablas`;
+   (2) instalación de ficheros — `Instalar.ps1 -Entorno <E>`; (3) parámetros de configuración a
+   revisar en `web.config` / `*.exe.config` (en instalación limpia **sí** viajan, pero llevan valores
+   de desarrollo: listar los que el cliente debe ajustar — cadenas de conexión, rutas, credenciales);
+   (4) registro de versión.
+2. **`Scripts\99-RVERSIONES-inicial.sql`**: un INSERT por solución instalada con `VERSION` =
+   `INSTALACION_<AAAAMMDD>`, `FECHA_CORTE` = fecha de la instalación y una `DESCRIPCION` funcional
+   ("instalación inicial del producto"). Sin esta fila, el primer `/rs-actualizador` de ese entorno
+   no tiene fecha de partida y habrá que dársela a mano. Motor Oracle: `SEQ_RVERSIONES.NEXTVAL`;
+   SQL Server: sin `ID_VERSION` (identity).
 
 # Límites
 
@@ -134,6 +175,7 @@ Destino: C:\AIS\<Proyecto>\Instalador
 - AgendaWeb:     <N ficheros>        [OK|FAIL|OMITIDO]
 - ServiceManager:<host + N módulos>  [OK|FAIL]
 - Scripts:       DDL + <N> inserts   [OK|AVISO|FAIL]
+- Paquete:       Instalar.ps1 + Ejecutar-Scripts.ps1 + rutas.json + readme.txt  [OK|PLANTILLA|FAIL]
 
 STATUS: OK | PARCIAL | FAIL
 SUMMARY: <1 línea con evidencia concreta por etapa>

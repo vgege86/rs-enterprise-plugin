@@ -23,6 +23,8 @@ config por cliente de `docs\<Proyecto>-instalador.json`.
 | `hooks/installer-agendaweb.ps1` | `<workspace> <destino>` | Publish FileSystem (msbuild `DeployTarget=WebPublish` + `PublishProfile` del JSON) de la Agenda Web → `<destino>\AgendaWeb` |
 | `hooks/installer-servicemanager.ps1` | `<workspace> <destino>` | `dotnet publish` host net8 → `<destino>\ServiceManager`; DLL de módulos activos → `\Modulos` |
 | `hooks/installer-scripts.ps1` | `<workspace> <destino>` | Llama a `scripts/installer-ddl.py` + `scripts/installer-inserts.py` → `<destino>\Scripts` |
+| `hooks/instalacion-paquete.ps1` | `<workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor]` | Copia el paquete de instalación en cliente desde `assets\instalacion\` (`Instalar.ps1`, `Ejecutar-Scripts.ps1`), materializa `rutas.json` desde el bloque `entornos` del JSON del proyecto (o plantilla + aviso) y, en modo `Instalacion`, el DDL de `RVERSIONES`. Compartido por `/rs-instalador` y `/rs-actualizador` |
+| `hooks/actualizador-build.ps1` | `<workspace> <destino> <manifiesto.json>` | Actualizador: Rebuild de las **soluciones batch afectadas** → `<destino>\Exes` (mismo gate de coherencia que `installer-batch`), AgendaWeb **completa** (delega en `installer-agendaweb.ps1`), DLL recién compiladas de los módulos afectados → `<destino>\ServiceManager\Modulos`, y **exclusión de la configuración funcional del cliente** (`web.config`, `<proceso>.xml` de cada batch, `appsettings*.json`, wildcards de `excluirEntrega`); los `*.config` del binario sí viajan |
 
 Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `model.json`) y
 `scripts/installer-inserts.py` (inserts por tabla paramétrica desde `subviews["Parametricas"]`).
@@ -96,6 +98,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/svn-add.ps1` | `<workspace> [-Files <lista>]` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
 | `hooks/git-status.ps1` | `<workspace>` | Estado Git → `modificados, staged, sin trackear (?), conflicto` |
 | `hooks/git-log.ps1` | `<workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits Git → JSON, `revision` = hash corto (requiere git CLI) |
+| `hooks/vcs-delta.ps1` | `<workspace> -Desde <yyyy-MM-dd> [-Hasta <fecha>] [-Ruta <subruta>] [-Limit 500]` | Delta de commits entre dos fechas, **autodetectando SVN/Git** (reutiliza `detect-vcs.ps1`) → commits con IDs de tarea Mantis/Jira, ficheros tocados con acción y lista única de tareas. Fallback 1:1 de `vcs_delta` |
 | `hooks/git-diff-revision.ps1` | `<workspace> <revisions> [-MaxDiffChars 15000]` | Diff de commits Git (hashes coma-separados) → `files_changed, combined_diff` (requiere git CLI) |
 | `hooks/git-add.ps1` | `<workspace> [-Files <lista>]` | Añade ficheros ??: CLI → TortoiseGitProc → instrucciones manuales |
 | `hooks/vcs-revert.ps1` | `<workspace> -Files <lista ;-sep> [-DryRun]` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `-DryRun` devuelve el plan sin ejecutar. Fallback 1:1 de `vcs_revert` |

@@ -33,6 +33,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `generate_migration(workspace)` | Scripts SQL migración desde drift modelo→BD |
 | `svn_log(workspace, solution?, limit?)` | Historial SVN → revisión, autor, fecha, mensaje |
 | `git_log(workspace, solution?, limit?)` | Historial Git → hash corto, autor, fecha, mensaje. Equivalente Git de `svn_log` |
+| `vcs_delta(workspace, desde, hasta?, ruta?, limit?)` | Delta de commits entre dos fechas (SVN o Git, **autodetectado**) → `commits[]` (rev, autor, fecha, mensaje, `tareas[]` Mantis/Jira citadas), `ficheros[]` con acción y `tareas[]` únicas. `ruta` limita a una subruta (ej. `Batch\Soluciones\RSProcIN`); `hasta` vacío = ahora; `truncado: true` si se alcanzó `limit`. Base de `/rs-actualizador` |
 | `find_doc_section(workspace, keyword)` | Localiza sección en docs funcionales y técnicas (para UpdateDocs y la propuesta al manual técnico) |
 | `svn_diff_revision(workspace, revisions, max_diff_chars?)` | Diff revisiones SVN filtrado (para rs-validar-req) |
 | `git_diff_revision(workspace, revisions, max_diff_chars?, summary_only?)` | Diff de commits Git (hashes) filtrado. Equivalente Git de `svn_diff_revision` |
@@ -52,3 +53,4 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `generate_sql(workspace, motor?)` | Genera DDL SQL a fichero — devuelve ruta, SQL no entra en contexto |
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |
 | `jira_attach(issue_key, files)` | Adjunta ficheros (`.sql`) a una issue de Jira Cloud. files = rutas coma-separadas. Credenciales en `~/.claude/rs-jira-credentials.json`. Usado por la skill `rs-jira` (ver `references/jira.md`) |
+| `jira_download(issue_key, file_id, out)` | Descarga un adjunto de una issue de Jira Cloud a `out`. `file_id` = id del adjunto (de `getJiraIssue`). Mismas credenciales que `jira_attach`. Usado por `rs-jira` y por `/rs-actualizador` para recoger los `.sql` de las tareas del rango |

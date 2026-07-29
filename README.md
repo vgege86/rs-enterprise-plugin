@@ -3,11 +3,11 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **41 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
+2. **42 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente o un actualizador de entorno, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **2.27.1** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **2.28.1** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -28,7 +28,7 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
   - [8. Documentación e idiomas](#8-documentación-e-idiomas)
   - [9. Comprensión y onboarding](#9-comprensión-y-onboarding)
   - [10. Entorno, estadísticas y dashboard](#10-entorno-estadísticas-y-dashboard)
-  - [11. Instalador de cliente](#11-instalador-de-cliente)
+  - [11. Entregas a cliente: instalador y actualizador](#11-entregas-a-cliente-instalador-y-actualizador)
   - [12. Jira](#12-jira)
   - [13. Mantis](#13-mantis)
 - [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
@@ -151,7 +151,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-41 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+42 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
 ### 1. Pipeline principal
 
@@ -272,11 +272,22 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 ---
 
-### 11. Instalador de cliente
+### 11. Entregas a cliente: instalador y actualizador
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, y `Scripts\` (DDL + inserts de tablas paramétricas + `_run_all.sql` que los ejecuta todos de golpe). La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
+| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, `Scripts\` (DDL + inserts de tablas paramétricas + `_run_all.sql` que los ejecuta todos de golpe) y el **paquete de instalación**: `Instalar.ps1` (backup + copia), `Ejecutar-Scripts.ps1`, `rutas.json` y `readme.txt`. La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
+| `/rs-actualizador <DESA\|TEST\|PROD> [<Sln>...] [--hasta AAAA-MM-DD]` 🟣 | Genera el **actualizador incremental** de un entorno en `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>\`. Mira en la tabla **`RVERSIONES`** cuándo se entregó por última vez cada solución en ese entorno, calcula el delta de commits (SVN/Git) hasta hoy —o hasta la fecha de `--hasta`, descartando desarrollos posteriores— y empaqueta solo lo afectado: `Exes\`, `AgendaWeb\` (completa), `ServiceManager\Modulos\`, más `scripts\` con los SQL de las tareas Mantis/Jira del rango y el insert de registro. ⛔ La configuración del cliente no viaja (`web.config`, el `<proceso>.xml` de cada batch, `appsettings*.json`): los parámetros nuevos se listan en `readme.txt`. Los `*.config` del binario (`RSProcIN.exe.config`) **sí** van — llevan los binding redirects. |
+
+**Tabla `RVERSIONES`** (una fila por entorno + solución entregada): guarda `FECHA_CORTE` —el punto
+de partida del siguiente delta— y una `DESCRIPCION` **funcional, no técnica**, pensada para que el
+usuario final pueda llegar a leerla. El actualizador genera el insert para la BD del cliente y otro
+para nuestra BD de control; ninguno se ejecuta solo. Detalle: `references/actualizador.md`.
+
+Instalación en el servidor del cliente (ambos paquetes):
+1. `Ejecutar-Scripts.ps1 -Entorno <E>` — SQL en orden, fail-fast, pide confirmación y password.
+2. `Instalar.ps1 -Entorno <E>` — backup ZIP de cada carpeta destino y copia (rutas en `rutas.json`).
+3. Parámetros de configuración a mano, según `readme.txt`.
 
 ---
 
@@ -308,7 +319,7 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **43 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **45 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
@@ -385,10 +396,10 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
-agents/           47 subagentes: pipeline y modos directos
+agents/           48 subagentes: pipeline y modos directos
 commands/         43 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 43 tools
+mcp/              servidor MCP con 45 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)
