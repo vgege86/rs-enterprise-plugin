@@ -172,7 +172,16 @@ SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-c
 `rs-stats`, `rs-validar-req`, `rs-instalador`, `rs-review`, `rs-perf`, `rs-deshacer` (los tres
 autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`, `rs-cobertura`, `rs-dead-code`,
 `rs-rename`, `rs-seed`, `rs-comparar-entornos`, `rs-hotspots`, `rs-dashboard`, `rs-explicar`,
-`rs-doc-drift`, `rs-test`, `rs-format`.
+`rs-doc-drift`, `rs-test`, `rs-format`, `rs-runbook`.
+
+`rs-runbook` (v2.27.0, sonnet) es el único modo directo que **entrevista al usuario** como parte de
+su proceso: documenta procedimientos de operación, cuyo conocimiento (reglas de la operación,
+incidencias vividas en entorno de cliente) no es derivable del código. Marca cada bloque del
+documento como `✅ verificado en código` o `👤 aportado por operación`, y no rellena huecos —
+un paso inventado en un runbook se ejecuta contra datos reales. Persiste en
+`docs\agentic_manual\funcional\OPERACION\` (dentro de `funcional\`, que `find_doc_section` escanea
+en recursivo) y deriva los errores de **entorno** a `tecnica\` como `TECNICA_PROPUESTA`, nunca por
+escritura directa.
 
 Tercera tanda (v2.21.0): `rs-dashboard` (haiku) genera un dashboard HTML de `history.json` (patrón
 `render_erd`: script + plantilla + hook + tool `render_dashboard`); `rs-explicar` (sonnet) explica un

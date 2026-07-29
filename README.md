@@ -3,11 +3,11 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **41 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
+2. **42 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **2.25.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **2.27.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -151,7 +151,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-41 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+42 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
 ### 1. Pipeline principal
 
@@ -243,6 +243,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 |---------|----------|
 | `/rs-doc <Solution>.sln` 🔷 | Genera y **persiste** el resumen por-solución (propósito, estructura, tablas, flujo, config) en `docs/agentic_manual/soluciones/`. |
 | `/rs-doc-drift <Solution>.sln [--rev <r>]` 🔷 | Cruza los cambios recientes contra la doc funcional y marca secciones obsoletas / incompletas / sin doc. Advisory, no reescribe. |
+| `/rs-runbook <Solution>.sln <proceso>` 🔷 | Runbook operativo de un proceso (carga inicial, cierre, reproceso): precondiciones, procedimiento, reglas críticas de esa operación, verificación y errores conocidos. **Te entrevista** — lo que no está en el código lo aportas tú. Persiste en `docs/agentic_manual/funcional/OPERACION/`. Ej: `/rs-runbook RSProcIN.sln carga inicial de históricos` |
 | `/rs-idiomas <Solution>.sln` 🟣 | Escanea `.aspx`, busca controles AIS y genera INSERTs para `RIDIOMA`/`RCONTROLES`. **Solo Online.** Salida a `C:\AIS\<proyecto>\scripts\`. |
 
 > **Documentación en el pipeline.** El manual técnico de convenciones (`docs/agentic_manual/tecnica/`) es **input**: el planner clasifica la tarea y core lee los docs que aplican antes de emitir código. La doc **funcional** y el **resumen por-solución** se actualizan automáticamente tras un cambio; el manual técnico solo se toca por **propuesta que un humano confirma**.

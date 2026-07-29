@@ -1,5 +1,43 @@
 # RS Enterprise Agent — Changelog
 
+## 2.27.0 — 2026-07-29
+
+### Nuevo modo directo `/rs-runbook` — runbooks operativos con entrevista
+
+Hueco detectado en uso real: había que documentar **cómo se ejecuta** un proceso (una carga inicial
+de históricos) más los **errores encontrados** en entorno de cliente, y ningún modo cubría eso.
+`/rs-doc` documenta *la solución* derivándola del código; un runbook es un procedimiento de
+operación cuyo valor está justo en lo que **no** está en el código: precondiciones, reglas que solo
+aplican a esa operación, e incidencias vividas.
+
+**`rs-runbook`** (sonnet) es el primer modo directo que **entrevista al usuario** como parte de su
+proceso. Trabaja con dos fuentes que nunca se mezclan:
+
+- **Código/BD** (las extrae él: flujo, tablas, parámetros, motor) → bloques marcados `✅ verificado
+  en código` con `archivo:línea`.
+- **Usuario** (se las pregunta: precondiciones, reglas de negocio de la operación, verificación
+  post-carga, errores literales, rollback) → bloques marcados `👤 aportado por operación`.
+
+⛔ Regla dura: sin una de las dos marcas, el bloque **no se escribe**. Los huecos quedan como
+`⚠️ PENDIENTE DE CONFIRMAR`, nunca como suposición redactada como hecho — un paso inventado en un
+runbook se ejecuta contra datos reales de cliente.
+
+**Ruta canónica**: `docs/agentic_manual/funcional/OPERACION/<Proceso>.md`, hermana de `BATCH/` y
+`ONLINE/`. Elegida dentro de `funcional\` porque `hooks/find-doc-section.ps1` la escanea en
+**recursivo** → los runbooks quedan localizables por `find_doc_section` sin tocar el hook (una
+carpeta `operacion/` colgando de la raíz de `agentic_manual` no se escanearía). ⛔ Explícitamente
+**no** en `soluciones/<Sln>.md`: `/rs-doc` regenera ese fichero y lo sobrescribiría.
+
+**Errores de entorno del cliente** (`NLS_LANG`, juego de caracteres, driver, permisos) le pasan a
+todas las soluciones contra ese cliente: el agente los deja en el runbook **y además** emite
+`TECNICA_PROPUESTA` hacia `tecnica/05_CONVENCIONES_BD.md` para confirmación humana — mismo patrón
+que el objetivo 3 de `rs-documentar`, nunca escritura directa en `tecnica/`.
+
+**Ficheros**: `agents/rs-runbook.md` (nuevo) · `commands/rs-runbook.md` (nuevo) ·
+`skills/rs-enterprise-agent/SKILL.md` (fila en `# Modos directos` + tipo de doc nuevo en el mapa de
+documentación) · `README.md` (tabla de comandos) · `docs/plugin-architecture.md` §4.
+Sin cambios en MCP ni hooks.
+
 ## 2.26.5 — 2026-07-29
 
 ### Fix: `mantis-cli.ps1 advance` mandaba `status.name` como array anidado (HTTP 500)

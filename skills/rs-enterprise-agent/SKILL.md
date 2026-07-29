@@ -59,6 +59,7 @@ Tres tipos, con tratamiento distinto:
 - **Manual técnico de convenciones** (`docs\agentic_manual\tecnica\`) — CÓMO escribir código (clases, queries, controles online), transversal a todas las soluciones. Su `00_INDICE_MAESTRO.md` tiene una **tabla tarea→docs**: el Planner la usa para decidir `READ_DOCS` (qué docs lee core). `CHECKLIST_CONVENCIONES_UI_BD.md` = compuerta obligatoria antes de emitir `.aspx`/`.cs`. ⛔ Referencia compartida — el pipeline solo la **propone** (patrón nuevo), nunca la escribe sin confirmación humana.
 - **Doc funcional** (`funcional\BATCH\00_INDICE_FUNCIONAL_BATCH.md`, `funcional\ONLINE\INDEX.md`) — QUÉ hace cada proceso/pantalla. La etapa `documentar` la actualiza **auto**.
 - **Resumen por-solución** (`docs\agentic_manual\soluciones\<Sln>.md`) — propósito/estructura/tablas/flujo de una solución. `/rs-doc` lo genera y persiste; la etapa `documentar` lo refresca **auto**.
+- **Runbooks operativos** (`funcional\OPERACION\<Proceso>.md`) — CÓMO se ejecuta un proceso (carga inicial, cierre, reproceso): precondiciones, pasos, reglas críticas de esa operación, verificación y errores conocidos. `/rs-runbook` los genera **entrevistando al usuario** (el conocimiento operativo no está en el código). Cuelgan de `funcional\` para que `find_doc_section` los alcance.
 - **ServiceManager / módulos `AIS.*`**: `docs\agentic_manual\AIS-ARQ-DT-Gestor de servicios.md`.
 
 ⛔ La doc del Gestor pesa ~335K tokens (imágenes base64) — leer/editar SIEMPRE por sección (`find_doc_section` u offset/limit), nunca el fichero entero. Los docs técnicos de `READ_DOCS` los lee `rs-editor-core` en su contexto aislado (por sección), no el orquestador.
@@ -165,6 +166,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Idiomas standalone 🟣 | `/rs-idiomas`, "genera scripts idiomas X.sln" | `rs-idiomas-standalone` |
 | Documentar 🔷 | `/rs-doc`, "documenta X.sln" | `rs-documentar` (GenerarDoc; UpdateDocs = etapa `documentar` del pipeline) |
 | Doc drift 🔷 | `/rs-doc-drift`, "la doc está al día en X", "doc obsoleta de X" | `detect_vcs` → `rs-doc-drift` (doc funcional vs código; advisory, no reescribe) |
+| Runbook operativo 🔷 | `/rs-runbook`, "documenta cómo se hace la carga de X", "runbook de <proceso>", "procedimiento de operación", "documenta los errores de <proceso>" | `rs-runbook` (procedimiento + reglas críticas + errores conocidos; **entrevista al usuario**, persiste a `funcional\OPERACION\`) |
 | Validar entorno ⚡ | `/rs-env`, "check entorno" | `rs-validar-entorno` |
 | Inicializar workspace 🔷 | `/rs-init`, "prepara este workspace", "inicializa el proyecto" | `rs-init` (crea .rs-databases.json + andamiaje docs + primer modelo BD; ⛔ no sobrescribe) |
 | Estructura ⚡ | `/rs-estructura`, "qué proyectos tiene X" | `rs-estructura` |
