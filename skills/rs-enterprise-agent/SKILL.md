@@ -176,6 +176,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Cobertura de tests 🔷 | `/rs-cobertura`, "qué falta por testear en X", "cobertura de X" | `rs-cobertura` (mapa de clases/métodos públicos sin test; advisory) |
 | Ejecutar tests ⚡ | `/rs-test`, "corre los tests de X", "ejecuta los tests" | `rs-test` (dotnet test + reporte; no lanza el pipeline) |
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
+| Sincronizar índices 🟣 | `/rs-sync-indexes`, "sincroniza índices", "trae los índices de Oracle al modelo" | `rs-editor-db-modeler` (`sync_indexes`: ALL_INDEXES → modelo JSON; reemplaza `source="db"`, preserva `source="manual"`; **solo Oracle**) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
 | Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde history.json y lo abre; versión visual de /rs-stats) |
 | Guía de usuario ⚡ | `/rs-help`, "guía del plugin", "manual de usuario", "cómo se usa el plugin" | `rs-help` (renderiza el README a un HTML navegable con formato y lo abre; no carga el HTML en contexto) |

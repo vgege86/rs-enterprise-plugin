@@ -1,5 +1,27 @@
 # RS Enterprise Agent — Changelog
 
+## 2.27.1 — 2026-07-29
+
+### Fix (doc): conteo de modos directos descuadrado + `/rs-sync-indexes` huérfano en SKILL.md
+
+README y `skills/rs-enterprise-agent/SKILL.md` no cuadraban, y cada uno fallaba hacia un lado.
+Conteo reconciliado contra `commands/*.md`, que es la fuente real:
+
+**45 slash commands − 4 que no son modos directos = 41 modos directos.** Los 4 excluidos:
+`/rs-enterprise-agent` (pipeline principal), `/rs-tarea` (skill `rs-jira`), `/rs-mantis`
+(skill `rs-mantis`) y `/rs-plugin-dev` (meta-desarrollo del plugin, no toca soluciones cliente).
+
+- **README** decía 42 (+1) en dos sitios → **41**. Su catálogo de comandos sí estaba completo:
+  lista los 45 sin faltar ninguno.
+- **Tabla `# Modos directos` de SKILL.md** tenía 40 filas (−1): faltaba **`/rs-sync-indexes`**, que
+  además **no aparecía ni una vez** en todo el SKILL.md. Efecto real: el comando solo se disparaba
+  escribiendo el slash exacto — por lenguaje natural ("sincroniza los índices") el orquestador no
+  tenía trigger que lo enrutara. Añadida su fila (→ `rs-editor-db-modeler`, igual que `/rs-erd`).
+- **README** declaraba `agents/ 46 subagentes` → **47** (el conteo no se actualizó al añadir
+  `rs-runbook` en 2.27.0).
+
+Los tres números quedan verificados contra el disco, no estimados.
+
 ## 2.27.0 — 2026-07-29
 
 ### Nuevo modo directo `/rs-runbook` — runbooks operativos con entrevista

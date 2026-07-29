@@ -3,11 +3,11 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **42 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
+2. **41 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **2.27.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **2.27.1** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -151,7 +151,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-42 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+41 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
 ### 1. Pipeline principal
 
@@ -385,7 +385,7 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
-agents/           46 subagentes: pipeline y modos directos
+agents/           47 subagentes: pipeline y modos directos
 commands/         43 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
 mcp/              servidor MCP con 43 tools
