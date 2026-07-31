@@ -1,5 +1,28 @@
 # RS Enterprise Agent — Changelog
 
+## 2.28.2 — 2026-07-30
+
+### Fix: `vcs_delta` estaba roto en SVN — `{{fecha}}` no es escape en PowerShell
+
+La rama SVN de `hooks/vcs-delta.ps1` construía el rango de revisiones con llaves dobles:
+
+```powershell
+$rango = "{{$($dDesde.ToString('yyyy-MM-dd HH:mm:ss'))}}:{{...}}"
+```
+
+`{{` escapa una llave en `String.Format` de C#, **no** en una cadena interpolada de PowerShell: ahí
+sale literal. SVN recibía `-r {{2026-06-01 00:00:00}}:{{...}}` y abortaba con
+`E205000: Syntax error in revision argument`, así que **toda** llamada a `vcs_delta` sobre un
+workspace SVN fallaba — es decir, el cálculo del delta de `/rs-actualizador` no funcionaba en SVN
+desde que se introdujo la tool en 2.28.0. La rama Git no estaba afectada (usa `--since/--until`,
+sin llaves).
+
+Ahora se emiten llaves simples y separador ISO `T` (`{2026-06-01T00:00:00}:{2026-06-30T00:00:00}`),
+que es la sintaxis que documenta SVN para rangos por fecha. Verificado contra un working copy SVN
+real: rango abierto y rango con `-Hasta` devuelven commits, ficheros con acción y tareas.
+
+Ficheros tocados: `hooks/vcs-delta.ps1`.
+
 ## 2.28.1 — 2026-07-29
 
 ### Fix: el actualizador excluía de más — los `*.config` del binario sí son parte de la entrega

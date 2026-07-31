@@ -81,7 +81,12 @@ if ($vcs -eq "svn") {
         if ($LASTEXITCODE -ne 0) { @{ error = "SVN no disponible"; vcs = "svn" } | ConvertTo-Json; exit 1 }
     } catch { @{ error = "SVN no encontrado en PATH"; vcs = "svn" } | ConvertTo-Json; exit 1 }
 
-    $rango = "{{$($dDesde.ToString('yyyy-MM-dd HH:mm:ss'))}}:{{$($dHasta.ToString('yyyy-MM-dd HH:mm:ss'))}}"
+    # SVN espera llaves SIMPLES: -r {2026-05-01T00:00:00}:{2026-07-15T23:59:59}
+    # Con {{ }} devuelve "E205000: Syntax error in revision argument" ({{ no escapa en PowerShell,
+    # eso es String.Format de C#; aqui sale literal).
+    $fDesde = $dDesde.ToString("yyyy-MM-dd\THH:mm:ss")
+    $fHasta = $dHasta.ToString("yyyy-MM-dd\THH:mm:ss")
+    $rango  = "{$fDesde}:{$fHasta}"
     $xml = & svn log $target --xml -v -r $rango --limit $Limit 2>&1
     if ($LASTEXITCODE -ne 0) {
         @{ error = "svn log fallo: $($xml -join ' ')"; vcs = "svn" } | ConvertTo-Json; exit 1
