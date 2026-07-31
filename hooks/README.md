@@ -45,7 +45,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `installer-servicemanager.ps1 <workspace> <destino>` | `dotnet publish` host net8 + DLL de módulos → `<destino>\ServiceManager[\Modulos]` |
 | `installer-scripts.ps1 <workspace> <destino>` | DDL + objetos + inserts paramétricas → `<destino>\Scripts` |
 | `actualizador-build.ps1 <workspace> <destino> <manifiesto.json>` | Delta: batch afectados + AgendaWeb completa + DLL de módulos afectados; excluye la config funcional del cliente (`web.config`, `<proceso>.xml`, `appsettings*.json`) y conserva los `*.config` del binario |
-| `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`) |
+| `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor] [-Soluciones <;-sep>]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`); en `Instalacion`, además el DDL de `RVERSIONES` y `Scripts\PorEntorno\99-RVERSIONES-<E>.sql` por entorno |
 
 ### Análisis y scope
 | Script | Uso |

@@ -1,10 +1,18 @@
 ﻿<#
 .SYNOPSIS
-    Ejecuta, en orden alfabetico y con parada al primer error, los scripts SQL que acompanan
-    a este paquete (carpeta Scripts\ en instalacion limpia, scripts\ en un actualizador).
+    Ejecuta, con parada al primer error, los scripts SQL que acompanan a este paquete
+    (carpeta Scripts\ en instalacion limpia, scripts\ en un actualizador).
 
     Es el segundo paso de la instalacion: Instalar.ps1 copia ficheros y NO toca la BD;
     este script es el unico que escribe en la base de datos.
+
+    Orden de ejecucion (tres tandas, alfabetico dentro de cada una):
+      1. <carpeta>\*.sql              DDL: RVERSIONES, creacion de tablas, scripts de tareas
+      2. <carpeta>\Inserts\*.sql      tablas parametricas (instalacion limpia)
+      3. <carpeta>\PorEntorno\99-RVERSIONES-<Entorno>.sql   fila base, solo la del -Entorno dado
+
+    Las tandas 2 y 3 se saltan si su carpeta no existe (un actualizador solo trae la 1).
+    Los ficheros que empiezan por "_" se ignoran.
 
 .DESCRIPTION
     Datos de conexion: rutas.json -> entornos.<ENTORNO>.bd (motor, conexion, usuario).
@@ -56,14 +64,43 @@ if (-not $Carpeta) {
     }
 }
 if (-not $Carpeta -or !(Test-Path $Carpeta)) { Write-Host "ERROR: no se encuentra la carpeta de scripts."; exit 1 }
+$Carpeta = (Resolve-Path $Carpeta).Path   # absoluta: las rutas relativas del listado se calculan sobre ella
 
-$scripts = @(Get-ChildItem $Carpeta -Filter *.sql -File | Sort-Object Name)
+function Get-Sql([string]$dir) {
+    if (!(Test-Path $dir)) { return @() }
+    return @(Get-ChildItem $dir -Filter *.sql -File |
+             Where-Object { -not $_.Name.StartsWith('_') } | Sort-Object Name)
+}
+
+# 1. DDL y scripts sueltos de la carpeta raiz
+$scripts = @(Get-Sql $Carpeta)
+
+# 2. Inserts de tablas parametricas (subcarpeta): sin esto la instalacion limpia deja las
+#    parametricas vacias, porque nadie mas las carga.
+$scripts += @(Get-Sql (Join-Path $Carpeta "Inserts"))
+
+# 3. Fila base de RVERSIONES: SOLO la del entorno pedido (las demas viajan pero no se tocan)
+$porEntDir = Join-Path $Carpeta "PorEntorno"
+if (Test-Path $porEntDir) {
+    $fEnt = Join-Path $porEntDir "99-RVERSIONES-$Entorno.sql"
+    if (Test-Path $fEnt) { $scripts += @(Get-Item $fEnt) }
+    else {
+        Write-Host "AVISO: no hay 99-RVERSIONES-$Entorno.sql en $porEntDir — la instalacion quedara"
+        Write-Host "       sin fila base en RVERSIONES y el primer actualizador de $Entorno no tendra"
+        Write-Host "       fecha de partida para el delta."
+    }
+}
+
 if ($scripts.Count -eq 0) { Write-Host "AVISO: no hay ficheros .sql en $Carpeta — nada que ejecutar."; exit 0 }
 
 Write-Host "== Scripts SQL — entorno $Entorno =="
 Write-Host "Carpeta: $Carpeta"
 $i = 0
-$scripts | ForEach-Object { $i++; Write-Host ("  {0,2}. {1}" -f $i, $_.Name) }
+$scripts | ForEach-Object {
+    $i++
+    $rel = $_.FullName.Substring($Carpeta.Length).TrimStart('\','/')
+    Write-Host ("  {0,2}. {1}" -f $i, $rel)
+}
 
 if ($Simular) { Write-Host "`n(-Simular: no se conecta a la BD)"; exit 0 }
 
@@ -92,8 +129,9 @@ if ($resp -notmatch '^[SsYy]') { Write-Host "Cancelado por el usuario."; exit 0 
 
 $ok = 0
 foreach ($s in $scripts) {
-    Write-Host "`n--- $($s.Name) ---"
-    "`n--- $($s.Name) ---" | Out-File $log -Append -Encoding UTF8
+    $rel = $s.FullName.Substring($Carpeta.Length).TrimStart('\','/')
+    Write-Host "`n--- $rel ---"
+    "`n--- $rel ---" | Out-File $log -Append -Encoding UTF8
 
     if ($motor -eq 'ORACLE') {
         # Wrapper: sin WHENEVER SQLERROR, sqlplus devuelve 0 aunque el script falle.
@@ -121,13 +159,13 @@ foreach ($s in $scripts) {
     $out | Out-File $log -Append -Encoding UTF8
 
     if ($code -ne 0) {
-        Write-Host "`nERROR: $($s.Name) fallo (exit $code). Se detiene la ejecucion."
+        Write-Host "`nERROR: $rel fallo (exit $code). Se detiene la ejecucion."
         Write-Host "Scripts ejecutados correctamente antes del fallo: $ok de $($scripts.Count)."
         Write-Host "Log: $log"
         exit $code
     }
     $ok++
-    Write-Host "OK — $($s.Name)"
+    Write-Host "OK — $rel"
 }
 
 Write-Host "`n== $ok/$($scripts.Count) scripts ejecutados correctamente =="

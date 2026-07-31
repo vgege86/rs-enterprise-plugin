@@ -276,7 +276,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, `Scripts\` (DDL + inserts de tablas paramétricas + `_run_all.sql` que los ejecuta todos de golpe) y el **paquete de instalación**: `Instalar.ps1` (backup + copia), `Ejecutar-Scripts.ps1`, `rutas.json` y `readme.txt`. La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
+| `/rs-instalador [<Proyecto>\|<workspace>]` 🟣 | Genera el **instalador completo de cliente** (instalación limpia) en `C:\AIS\<Proyecto>\Instalador\`: `EXES\` (batch en Release), `AgendaWeb\`, `ServiceManager\` + `Modulos\`, `Scripts\` (DDL de tablas + DDL de `RVERSIONES` + `Inserts\` de tablas paramétricas + `PorEntorno\99-RVERSIONES-<ENTORNO>.sql`, la fila base de la instalación) y el **paquete de instalación**: `Instalar.ps1` (backup + copia), `Ejecutar-Scripts.ps1`, `rutas.json` y `readme.txt`. La config por cliente vive en `docs\<Proyecto>-instalador.json`. |
 | `/rs-actualizador <DESA\|TEST\|PROD> [<Sln>...] [--hasta AAAA-MM-DD]` 🟣 | Genera el **actualizador incremental** de un entorno en `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>\`. Mira en la tabla **`RVERSIONES`** cuándo se entregó por última vez cada solución en ese entorno, calcula el delta de commits (SVN/Git) hasta hoy —o hasta la fecha de `--hasta`, descartando desarrollos posteriores— y empaqueta solo lo afectado: `Exes\`, `AgendaWeb\` (completa), `ServiceManager\Modulos\`, más `scripts\` con los SQL de las tareas Mantis/Jira del rango y el insert de registro. ⛔ La configuración del cliente no viaja (`web.config`, el `<proceso>.xml` de cada batch, `appsettings*.json`): los parámetros nuevos se listan en `readme.txt`. Los `*.config` del binario (`RSProcIN.exe.config`) **sí** van — llevan los binding redirects. |
 
 **Tabla `RVERSIONES`** (una fila por entorno + solución entregada): guarda `FECHA_CORTE` —el punto
@@ -286,6 +286,8 @@ para nuestra BD de control; ninguno se ejecuta solo. Detalle: `references/actual
 
 Instalación en el servidor del cliente (ambos paquetes):
 1. `Ejecutar-Scripts.ps1 -Entorno <E>` — SQL en orden, fail-fast, pide confirmación y password.
+   Tres tandas: los `.sql` de la carpeta, luego `Inserts\` (paramétricas) y por último la fila base
+   `PorEntorno\99-RVERSIONES-<E>.sql`, **solo la del entorno indicado**.
 2. `Instalar.ps1 -Entorno <E>` — backup ZIP de cada carpeta destino y copia (rutas en `rutas.json`).
 3. Parámetros de configuración a mano, según `readme.txt`.
 

@@ -20,10 +20,10 @@ C:\AIS\<Proyecto>\Instalador\
 ├── Scripts\
 │   ├── 00-RVERSIONES.sql               DDL de la tabla de versiones (registro de entregas)
 │   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas, SIN schema
-│   ├── 99-RVERSIONES-inicial.sql       insert de la versión base instalada
-│   └── Inserts\
-│       ├── <TABLA>.sql                 un fichero por tabla paramétrica
-│       └── _run_all.sql                master: ejecuta todos los <TABLA>.sql de golpe
+│   ├── Inserts\
+│   │   └── <TABLA>.sql                 un fichero por tabla paramétrica
+│   └── PorEntorno\
+│       └── 99-RVERSIONES-<ENTORNO>.sql fila base de la instalación, una por entorno
 ├── Instalar.ps1          backup + copia de carpetas en el servidor (NO toca BD)
 ├── Ejecutar-Scripts.ps1  ejecuta los .sql de Scripts\ en orden, fail-fast
 ├── rutas.json            rutas de instalación y backup, una entrada por entorno
@@ -106,7 +106,11 @@ inline con el runner usando `plugin_root`, y **verificar evidencia** antes de pa
 | 3 | AgendaWeb | `.\hooks\installer-agendaweb.ps1 "<workspace>" "<destino>"` |
 | 4 | ServiceManager + Modulos | `.\hooks\installer-servicemanager.ps1 "<workspace>" "<destino>"` |
 | 5 | Scripts (DDL + inserts) | `.\hooks\installer-scripts.ps1 "<workspace>" "<destino>"` |
-| 6 | Paquete de instalación | `.\hooks\instalacion-paquete.ps1 "<workspace>" "<destino>" Instalacion` |
+| 6 | Paquete de instalación | `.\hooks\instalacion-paquete.ps1 "<workspace>" "<destino>" Instalacion -Soluciones "<Sol1;Sol2;...>"` |
+
+`-Soluciones` = las soluciones confirmadas en el PASO 1 (batch + AgendaWeb + módulos), separadas por
+`;`. Son las que se registran en `RVERSIONES`. Si se omite, el hook las deduce del JSON de config;
+pasarlas explícitamente evita registrar algo que al final no se entregó.
 
 Patrón de ejecución (Bash → PowerShell), usando el `plugin_root` recibido:
 
@@ -132,33 +136,39 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
   - Un `Resumen ... OK` sin las dos líneas de gate no es evidencia suficiente.
 - **AgendaWeb:** `OK — AgendaWeb publicada: N ficheros` (msbuild sin errores).
 - **ServiceManager:** `host OK` + `<destino>\ServiceManager\Modulos` con las DLL de los módulos.
-- **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts` (+ `_run_all.sql`, master que los ejecuta todos de golpe: `@@` en Oracle, `:r`+GO en SQL Server, fail-fast).
+- **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts`
+  (los ejecuta `Ejecutar-Scripts.ps1` como segunda tanda; sin eso las paramétricas quedarían vacías).
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD → reportarlo como AVISO,
     no como éxito silencioso.
 - **Paquete:** `OK — paquete de instalacion preparado en <destino>` + existen `Instalar.ps1`,
-  `Ejecutar-Scripts.ps1`, `rutas.json` y `Scripts\00-RVERSIONES.sql`.
+  `Ejecutar-Scripts.ps1`, `rutas.json`, `Scripts\00-RVERSIONES.sql` y un
+  `Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql` por entorno declarado.
   - `AVISO: no habia bloque 'entornos'...` = `rutas.json` va como **plantilla** → decírselo al
-    usuario: hay que rellenar rutas de instalación, backup y conexión antes de entregar.
+    usuario: hay que rellenar rutas de instalación, backup y conexión antes de entregar. En ese caso
+    la fila base se genera para `DESA`/`TEST`/`PROD` por defecto.
   - `AVISO: motor no resuelto` = se copiaron los DDL de los dos motores → borrar el que no aplique.
+  - `AVISO: no se pudo determinar la lista de soluciones` = **no hay fila base de `RVERSIONES`** →
+    repetir la etapa 6 con `-Soluciones`, o el primer `/rs-actualizador` de ese entorno se quedará
+    sin fecha de partida.
 
 Si una etapa falla (exit ≠ 0 sin ser el exit 2 de scripts) → detener, reportar las últimas líneas de
 error, y NO continuar con las siguientes etapas.
 
-# PASO 7 — Cerrar el paquete (readme + versión base)
+# PASO 7 — Cerrar el paquete (readme)
 
 Tras la etapa 6, con `Write`:
 
-1. **`readme.txt`** con contenido real, en orden de ejecución: (1) scripts SQL —
-   `Ejecutar-Scripts.ps1 -Entorno <E>`, empezando por `00-RVERSIONES.sql` y `CreacionTablas`;
-   (2) instalación de ficheros — `Instalar.ps1 -Entorno <E>`; (3) parámetros de configuración a
-   revisar en `web.config` / `*.exe.config` (en instalación limpia **sí** viajan, pero llevan valores
-   de desarrollo: listar los que el cliente debe ajustar — cadenas de conexión, rutas, credenciales);
-   (4) registro de versión.
-2. **`Scripts\99-RVERSIONES-inicial.sql`**: un INSERT por solución instalada con `VERSION` =
-   `INSTALACION_<AAAAMMDD>`, `FECHA_CORTE` = fecha de la instalación y una `DESCRIPCION` funcional
-   ("instalación inicial del producto"). Sin esta fila, el primer `/rs-actualizador` de ese entorno
-   no tiene fecha de partida y habrá que dársela a mano. Motor Oracle: `SEQ_RVERSIONES.NEXTVAL`;
-   SQL Server: sin `ID_VERSION` (identity).
+**`readme.txt`** con contenido real, en orden de ejecución: (1) scripts SQL —
+`Ejecutar-Scripts.ps1 -Entorno <E>`, que lanza en una sola pasada el DDL, los inserts paramétricos y
+la fila base de `RVERSIONES` del entorno elegido; (2) instalación de ficheros —
+`Instalar.ps1 -Entorno <E>`; (3) parámetros de configuración a revisar en `web.config` /
+`*.exe.config` (en instalación limpia **sí** viajan, pero llevan valores de desarrollo: listar los
+que el cliente debe ajustar — cadenas de conexión, rutas, credenciales).
+
+⛔ El insert inicial de `RVERSIONES` **no se escribe a mano**: lo genera la etapa 6 en
+`Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql`, uno por entorno, idempotente y con el motor de cada
+uno. Aquí solo se **verifica que existe** y se refleja en el readme. Sin esa fila, el primer
+`/rs-actualizador` de ese entorno no tiene `FECHA_CORTE` de partida.
 
 # Límites
 
@@ -176,6 +186,7 @@ Destino: C:\AIS\<Proyecto>\Instalador
 - ServiceManager:<host + N módulos>  [OK|FAIL]
 - Scripts:       DDL + <N> inserts   [OK|AVISO|FAIL]
 - Paquete:       Instalar.ps1 + Ejecutar-Scripts.ps1 + rutas.json + readme.txt  [OK|PLANTILLA|FAIL]
+- RVERSIONES:    DDL + fila base de <N> soluciones en <entornos>  [OK|AVISO|FAIL]
 
 STATUS: OK | PARCIAL | FAIL
 SUMMARY: <1 línea con evidencia concreta por etapa>

@@ -1,5 +1,44 @@
 # RS Enterprise Agent — Changelog
 
+## 2.29.0 — 2026-07-31
+
+### `/rs-instalador`: la fila base de `RVERSIONES` la genera el hook, y las paramétricas por fin se ejecutan
+
+Tres cosas del paquete de instalación limpia ya existían (`Instalar.ps1` parametrizado por el bloque
+`entornos` del JSON de config, `Ejecutar-Scripts.ps1` y el DDL de `RVERSIONES`), pero el **primer
+registro** de `RVERSIONES` lo redactaba el modelo a mano en el PASO 7 del agente. Si ese paso se
+saltaba, la entrega salía sin fila base y el primer `/rs-actualizador` de ese entorno se quedaba sin
+`FECHA_CORTE` de partida. Ahora es determinista.
+
+**`hooks/instalacion-paquete.ps1`** gana el parámetro `-Soluciones` (lista `;`-separada; si se omite
+se deduce de `batch` + `agendaweb` + `servicemanager.modulos` del JSON) y, en modo `Instalacion`,
+genera `Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql` — **uno por entorno declarado**, con el motor
+de cada entorno (`entornos.<E>.bd.motor`, con el del proyecto como fallback):
+
+- Oracle: bloque PL/SQL con `SEQ_RVERSIONES.NEXTVAL` y guarda `COUNT(*)` previo. No se usa
+  `INSERT ... SELECT ... WHERE NOT EXISTS` porque `NEXTVAL` junto a una subconsulta da `ORA-02287`.
+- SQL Server: `IF NOT EXISTS` + `INSERT` sin `ID_VERSION` (identity), separados por `GO`.
+- Idempotente en ambos motores, y escrito en **UTF-8 sin BOM** (sqlplus interpreta el BOM como parte
+  de la primera sentencia).
+
+Un fichero por entorno en vez de un placeholder sustituido en ejecución: el DBA del cliente lee
+exactamente el SQL que va a correr, y `Ejecutar-Scripts.ps1` lanza solo el del entorno pedido.
+
+**`assets/instalacion/Ejecutar-Scripts.ps1`** pasa de una pasada alfabética a **tres tandas**:
+(1) `.sql` de la carpeta, (2) `Inserts\*.sql`, (3) `PorEntorno\99-RVERSIONES-<Entorno>.sql`. La
+tanda 2 arregla un agujero real: los inserts de tablas paramétricas viven en una subcarpeta y
+`Get-ChildItem` iba **sin `-Recurse`**, así que **nadie los ejecutaba** — una instalación limpia
+dejaba todas las paramétricas vacías. Las tandas 2 y 3 se saltan si su carpeta no existe (un
+actualizador solo trae la 1), y los ficheros que empiezan por `_` se ignoran.
+
+También se elimina una referencia colgante: `rs-instalador.md` documentaba y exigía como evidencia un
+`Inserts\_run_all.sql` que **ningún hook generaba**. Lo sustituye la tanda 2, que funciona igual en
+los dos motores sin depender de `@@` / `:r`.
+
+Ficheros tocados: `hooks/instalacion-paquete.ps1`, `assets/instalacion/Ejecutar-Scripts.ps1`,
+`agents/rs-instalador.md`, `references/actualizador.md`, `references/hooks.md`, `hooks/README.md`,
+`docs/plugin-architecture.md`.
+
 ## 2.28.2 — 2026-07-30
 
 ### Fix: `vcs_delta` estaba roto en SVN — `{{fecha}}` no es escape en PowerShell

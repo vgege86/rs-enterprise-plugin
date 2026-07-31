@@ -9,6 +9,8 @@ Convenciones comunes a los dos modos de entrega:
 
 Ambos incluyen el mismo **paquete de instalación en cliente** (`hooks\instalacion-paquete.ps1`,
 plantillas en `assets\instalacion\`): `Instalar.ps1`, `Ejecutar-Scripts.ps1`, `rutas.json`, `readme.txt`.
+En modo instalación se añaden además el DDL de `RVERSIONES` y su **fila base**, generada por el hook
+(no la redacta el modelo): `Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql`, una por entorno declarado.
 
 ---
 
@@ -118,7 +120,18 @@ rellenar rompe la instalación en cliente**.
 1. `Ejecutar-Scripts.ps1 -Entorno <E>` — scripts SQL (pide confirmación y password; fail-fast).
 2. `Instalar.ps1 -Entorno <E>` — backup ZIP de cada carpeta destino y copia.
 3. Parámetros de configuración a mano (readme punto 3).
-4. `99-RVERSIONES-<ENTORNO>.sql` — registro de la entrega en la BD del cliente.
+
+`Ejecutar-Scripts.ps1` ejecuta **tres tandas**, alfabético dentro de cada una y parando al primer
+error:
+
+| # | Origen | Contenido |
+|---|--------|-----------|
+| 1 | `<carpeta>\*.sql` | DDL de `RVERSIONES`, creación de tablas, scripts SQL de las tareas |
+| 2 | `<carpeta>\Inserts\*.sql` | tablas paramétricas (solo instalación limpia) |
+| 3 | `<carpeta>\PorEntorno\99-RVERSIONES-<E>.sql` | fila base, **solo la del `-Entorno` recibido** |
+
+Las tandas 2 y 3 se saltan si su carpeta no existe (un actualizador solo trae la 1: su
+`99-RVERSIONES-<ENTORNO>.sql` va suelto en `scripts\`). Los ficheros que empiezan por `_` se ignoran.
 
 En local, tras la entrega: `_local\99-RVERSIONES-local.sql`. Si no se ejecuta, el siguiente
 actualizador repite los mismos commits.

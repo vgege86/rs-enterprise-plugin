@@ -232,7 +232,9 @@ binding redirects y separarlos de sus DLL reproduce el `FileLoadException`.
 Ambos modos comparten el **paquete de instalación en cliente** (`hooks/instalacion-paquete.ps1` +
 plantillas versionadas en `assets/instalacion/`: `Instalar.ps1` con backup ZIP previo,
 `Ejecutar-Scripts.ps1` fail-fast, `rutas.json` por entorno, `readme.txt`, DDL de `RVERSIONES`). La
-lógica de backup/instalación vive en plantillas, no la reescribe el modelo en cada entrega.
+lógica de backup/instalación vive en plantillas, no la reescribe el modelo en cada entrega; lo mismo
+vale para el SQL que depende del entorno: la **fila base de `RVERSIONES`** de una instalación limpia
+la genera el hook (`Scripts/PorEntorno/99-RVERSIONES-<E>.sql`, una por entorno), no el modelo.
 Convenciones de entrega: `references/actualizador.md`.
 
 `rs-analisis` (análisis estático de un diff) y `rs-validacion-bd` (validación código↔BD) son las
