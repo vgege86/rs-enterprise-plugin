@@ -725,6 +725,25 @@ def render_help(workspace: Workspace) -> str:
     return json.dumps(_run_ps("render-help.ps1", workspace), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Convierte ficheros Markdown del agentic_manual a un Word .docx aplicando una plantilla .dotx del workspace (portada, historial de cambios, índice y estilos de la plantilla). sources = ficheros y/o carpetas separados por ';' (una carpeta aporta sus *.md ordenados); el orden es el orden de los capítulos. Si no se pasa template se autodetecta el primer *.dotx de <workspace>\\docs. strip_marks retira las marcas de procedencia de los runbooks. Requiere Microsoft Word (COM) — no hay fallback pandoc/python-docx. Devuelve ruta, páginas y tablas — no carga el documento en contexto.")
+def render_word(workspace: Workspace, sources: str, template: str = "", output: str = "",
+                title: str = "", objeto: str = "", autor: str = "", version: str = "1.0",
+                strip_marks: bool = False, open_file: bool = False) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    args = [workspace, "-Sources", sources]
+    for flag, value in (("-Template", template), ("-Output", output), ("-Title", title),
+                        ("-Objeto", objeto), ("-Autor", autor)):
+        if value:
+            args += [flag, value]
+    if version and version != "1.0":
+        args += ["-Version", version]
+    if strip_marks:
+        args.append("-StripMarks")
+    if open_file:
+        args.append("-Open")
+    return json.dumps(_run_ps("render-word.ps1", *args), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Esquema completo (columnas con tipo/nullable/pk, relaciones, índices) de tablas específicas del modelo BD. Evita cargar model.json completo (~180K tokens). tables = coma-separadas.")
 def get_table_schema(workspace: Workspace, tables: str) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)

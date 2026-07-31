@@ -123,6 +123,17 @@ if (Test-Path $docsPath) {
     Add-Check "Docs agentic" "WARN" "No encontrado — agente funcionará sin contexto técnico completo"
 }
 
+# Check 6b: Microsoft Word (informativo) — lo necesita render_word / /rs-word.
+# No hay alternativa: el plugin no lleva pandoc ni python-docx, así que sin Word la conversión
+# de documentación a .docx simplemente no es posible.
+$wordProgId = $null
+try { $wordProgId = [Type]::GetTypeFromProgID("Word.Application") } catch { }
+if ($null -ne $wordProgId) {
+    Add-Check "Microsoft Word" "OK" "Disponible por COM — /rs-word puede generar documentos"
+} else {
+    Add-Check "Microsoft Word" "INFO" "No disponible por COM — /rs-word no funcionará (sin fallback: el plugin no usa pandoc ni python-docx)"
+}
+
 # Check 7: Coherencia de instalación — copias fuera del plugin que sombrean al pipeline.
 # Una instalación manual antigua en ~/.claude deja agentes/comandos/hooks que ganan al plugin
 # y hacen correr etapas obsoletas sin avisar (el planner viejo no emite PLAN/STAGES → sin Gate A).

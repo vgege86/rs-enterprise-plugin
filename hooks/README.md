@@ -92,6 +92,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `find-doc-section.ps1 <workspace> <keyword>` | Busca sección en docs funcionales para UpdateDocs |
 | `render-dashboard.ps1 <workspace>` | HTML de estadísticas del pipeline (executions/history.json) → lo abre en navegador |
 | `render-help.ps1 <workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) → lo abre en navegador |
+| `render-word.ps1 <workspace> -Sources <a.md;carpeta> [-Template <x.dotx>] [-Output <y.docx>] [-Title <t>] [-Objeto <o>] [-Autor <a>] [-StripMarks] [-Open]` | Convierte Markdown del agentic_manual a Word `.docx` sobre la plantilla `.dotx` del workspace (requiere Word por COM) |
 
 ### Jira
 | Script | Uso |

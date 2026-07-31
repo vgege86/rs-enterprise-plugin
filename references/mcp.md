@@ -49,6 +49,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `render_erd(workspace)` | Genera ERD HTML y abre navegador — sin cargar modelo en contexto |
 | `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (executions/history.json) y abre navegador — sin cargar el HTML en contexto |
 | `render_help(workspace)` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y abre navegador — sin cargar el HTML en contexto |
+| `render_word(workspace, sources, template?, output?, title?, objeto?, autor?, version?, strip_marks?, open_file?)` | Convierte `.md` del agentic_manual a Word `.docx` sobre una plantilla `.dotx` del workspace. `sources` = ficheros y/o carpetas separados por `;` (el orden es el de los capítulos). Requiere Microsoft Word (COM), sin fallback. Devuelve `{path, pages, tables, warnings}` — sin cargar el documento en contexto |
 | `check_env(workspace)` | Valida entorno: .rs-databases.json, AIS, dotnet, SVN, Git, modelo BD → checks[] |
 | `generate_sql(workspace, motor?)` | Genera DDL SQL a fichero — devuelve ruta, SQL no entra en contexto |
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |
