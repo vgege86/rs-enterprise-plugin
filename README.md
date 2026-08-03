@@ -3,7 +3,7 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **42 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, generar el instalador de cliente o un actualizador de entorno, y más.
+2. **43 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
@@ -151,7 +151,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-42 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+43 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
 ### 1. Pipeline principal
 
@@ -266,6 +266,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 |---------|----------|
 | `/rs-init` 🔷 | Bootstrap de un workspace nuevo: crea `.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje de docs y el primer `model.json`. ⛔ Nunca sobrescribe. |
 | `/rs-env [workspace]` ⚡ | Valida `.rs-databases.json`, ruta AIS, dotnet, SVN/Git, modelo BD y docs agentic. |
+| `/rs-pii [status\|bootstrap\|audit\|enforce\|off]` 🔷 | Protección de datos personales en consultas a BD: estado (`status`), inventario de columnas afectadas (`bootstrap`), y cambio de modo (`audit`/`enforce`/`off`). `enforce` registra las guardas `PreToolUse` en la configuración personal de Claude Code, previa confirmación. Ver `docs/proteccion-pii-consultas-bd.md`. |
 | `/rs-stats [solution]` ⚡ | Estadísticas de `history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días. |
 | `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
 | `/rs-help` ⚡ | Renderiza **esta guía** (README) a un HTML navegable con formato (índice, tablas, tema claro/oscuro) y lo abre en el navegador. Ideal para pasar a usuarios. |
@@ -360,7 +361,7 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 - Scripts SQL generados siempre a `C:\AIS\<proyecto>\scripts\`.
 - Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos.
 - **VCS nunca se asume** — `detect_vcs` decide SVN/Git/ninguno antes de cualquier diff/commit.
-- Los comandos que **escriben** (`/rs-rename`, `/rs-format`, `/rs-migrar`, `/rs-commit`, `/rs-deshacer`, pipeline) piden confirmación antes de aplicar.
+- Los comandos que **escriben** (`/rs-rename`, `/rs-format`, `/rs-migrar`, `/rs-commit`, `/rs-deshacer`, `/rs-pii audit|enforce|off`, pipeline) piden confirmación antes de aplicar.
 
 ---
 
