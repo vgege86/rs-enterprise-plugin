@@ -31,7 +31,7 @@ $ErrorActionPreference = "Continue"
 # falla a mitad de volcado sobre cualquier tabla de incidencias o de log cuyas filas
 # contengan la palabra "error" seleccionaba esas filas -- en claro, incluso en enforce --
 # como si fueran el mensaje de error.
-$RS_RX_DIAG = '^\s*(?:ORA-\d{3,6}\b|SP2-\d{3,6}\b|PLS-\d{3,6}\b|Sqlcmd:|Msg \d+,)'
+$RS_RX_DIAG = '^\s*(?:ORA-\d{3,6}\b|SP2-\d{3,6}\b|PLS-\d{3,6}\b|Sqlcmd:|Msg \d+\b)'
 $RS_MAX_DIAG_LINEAS = 10
 $RS_MAX_DIAG_CHARS  = 300
 

@@ -171,9 +171,42 @@ def _proyecto(workspace: Workspace) -> str:
 
 
 _PII_MASK = Path(__file__).resolve().parent.parent / "scripts" / "pii_mask.py"
-_spec_pii = importlib.util.spec_from_file_location("pii_mask", _PII_MASK)
-_pii_mask = importlib.util.module_from_spec(_spec_pii)
-_spec_pii.loader.exec_module(_pii_mask)
+try:
+    _spec_pii = importlib.util.spec_from_file_location("pii_mask", _PII_MASK)
+    _pii_mask = importlib.util.module_from_spec(_spec_pii)
+    _spec_pii.loader.exec_module(_pii_mask)
+    _pii_mask_error = None
+except Exception as _exc_pii:  # noqa: BLE001
+    # Contener el radio de la explosion. Fallar cerrado ante un motor PII roto es correcto,
+    # pero a nivel de modulo tumbaba el servidor ENTERO -- las ~50 tools, ninguna de las
+    # cuales toca datos personales -- por un fichero de scripts/ que solo usa db_query. El
+    # fallo se guarda y solo lo hace fallar a ella, que es la unica que tiene datos que
+    # proteger; el resto del servidor sigue arrancando.
+    _pii_mask = None
+    _pii_mask_error = f"{_exc_pii.__class__.__name__}: {_exc_pii}"
+
+# Lineas de diagnostico de sqlplus/sqlcmd, ANCLADAS al principio de linea (hooks/db-query.ps1
+# usa la misma forma). Sin anclar, el patron casa con el CONTENIDO de las filas.
+_RX_DIAG = re.compile(r"^\s*(?:ORA-\d{3,6}\b|SP2-\d{3,6}\b|PLS-\d{3,6}\b|Sqlcmd:|Msg \d+\b)")
+_MAX_DIAG_LINEAS = 10
+_MAX_DIAG_CHARS = 300
+
+
+def _diagnostico(stdout: str, stderr: str, exit_code: int) -> str:
+    """Mensaje de error de un cliente SQL que ha fallado. NUNCA la salida entera.
+
+    sqlplus emite las filas CSV segun las va trayendo, asi que un error a mitad de fetch
+    (ORA-01555, ORA-29275, un error de conversion por fila) deja filas de datos ya emitidas
+    en lo capturado. La rama de error NO pasa por mask_resultset, asi que volcar la salida
+    como diagnostico mete en el contexto justo las filas que el enmascarado nunca ve. Si no
+    hay ninguna linea reconocible se devuelve un mensaje fijo con el codigo de salida.
+    """
+    salida = ((stdout or "") + "\n" + (stderr or "")).splitlines()
+    diag = [l.strip()[:_MAX_DIAG_CHARS] for l in salida if _RX_DIAG.search(l)][:_MAX_DIAG_LINEAS]
+    if diag:
+        return "; ".join(diag)
+    return (f"la consulta fallo (exit {exit_code}) sin lineas de diagnostico reconocibles; "
+            "la salida capturada no se devuelve porque puede contener filas de datos")
 
 
 def _cargar_modelo(config: dict) -> tuple[dict, str | None]:
@@ -491,19 +524,41 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
         columns, rows, total = _parse_resultset(result.stdout, motor)
         error = None
     else:
-        # sqlplus escribe los ORA-/SP2- en stdout, no en stderr; sqlcmd usa stderr. Mirar ambos,
-        # y quedarse con las líneas de diagnóstico en vez de volcar la salida entera.
-        salida = ((result.stdout or "") + "\n" + (result.stderr or "")).splitlines()
-        diag = [l.strip() for l in salida if re.search(r"ORA-|SP2-|Sqlcmd|Msg \d+", l)]
+        # sqlplus escribe los ORA-/SP2- en stdout, no en stderr; sqlcmd usa stderr. Mirar ambos.
         columns, rows, total = [], [], 0
-        error = "; ".join(diag).strip() or "\n".join(l for l in salida if l.strip()).strip()
+        error = _diagnostico(result.stdout, result.stderr, result.returncode)
 
     # --- Enmascarado PII ---
     # Se aplica DESPUES de recortar a max_rows: enmascarar filas que no se devuelven
     # solo gastaria CPU. Y ANTES de json.dumps: es el ultimo punto antes del contexto.
     visibles = rows[:max_rows]
-    modelo, aviso_modelo = _cargar_modelo(config)
-    columns, visibles, pii = _pii_mask.mask_resultset(columns, visibles, sql_norm, modelo)
+    if _pii_mask is None:
+        # Motor PII no importable: fallar CERRADO, y solo en esta tool (ver el try/except
+        # del import). Devolver filas sin filtrar seria devolverlas en claro.
+        return json.dumps({
+            "success": False,
+            "error": f"politica PII no aplicable (scripts/pii_mask.py no importable): {_pii_mask_error}",
+            "columns": [], "rows": [], "row_count": 0, "rows_truncated": False,
+            "pii": {"mode": "error", "error": "motor de enmascarado no disponible - no se devuelven filas"},
+        }, ensure_ascii=False, indent=2)
+
+    # Modelo de la conexion SELECCIONADA. config["model_path"] es SIEMPRE el de conexiones[0]
+    # (get-config.ps1 publica los campos planos de la principal), pero el modelo lleva la
+    # politica PII entera: con conexion="PROD" sobre un conexiones[0] sin politica, los datos
+    # de produccion salian en claro y etiquetados pii.mode = "off". get-config.ps1 publica
+    # model_path por conexion dentro de conexiones[], asi que aqui se usa el de sel.
+    cfg_modelo = sel if sel.get("model_path") else config
+    modelo, aviso_modelo = _cargar_modelo(cfg_modelo)
+    try:
+        columns, visibles, pii = _pii_mask.mask_resultset(columns, visibles, sql_norm, modelo)
+    except Exception as exc:  # noqa: BLE001
+        # Igual que arriba: si la politica no se pudo aplicar, no se devuelven filas.
+        return json.dumps({
+            "success": False,
+            "error": f"politica PII no aplicable: {exc.__class__.__name__}",
+            "columns": [], "rows": [], "row_count": 0, "rows_truncated": False,
+            "pii": {"mode": "error", "error": "fallo al enmascarar - no se devuelven filas"},
+        }, ensure_ascii=False, indent=2)
     if aviso_modelo:
         pii["model_error"] = aviso_modelo
 

@@ -296,3 +296,102 @@ def test_db_query_error_path_no_revienta_devuelve_success_false(monkeypatch, tmp
     assert "Msg 207" in out["error"]
     assert out["rows"] == []
     assert out["pii"]["mode"] == "off"
+
+
+# --- conexion= selecciona la conexion PERO tambien su modelo (y por tanto su politica) ---
+
+def _config_dos_conexiones(model_desa, model_prod):
+    """conexiones[0] = DESA sin politica, conexiones[1] = PROD con politica.
+
+    Los campos planos (model_path incluido) son SIEMPRE los de conexiones[0]:
+    asi los publica get-config.ps1.
+    """
+    return {
+        "conexiones": [
+            {"id": "desa", "motor": "SQLSERVER", "datasource": "DS1", "schema": "dbo",
+             "user": "u", "model_path": model_desa},
+            {"id": "prod", "motor": "SQLSERVER", "datasource": "DS2", "schema": "dbo",
+             "user": "u", "model_path": model_prod},
+        ],
+        "model_path": model_desa,
+    }
+
+
+def test_db_query_conexion_usa_el_modelo_de_esa_conexion(monkeypatch, tmp_path):
+    # /rs-comparar-entornos se apoya en conexion=. Con conexiones[0] (DESA) sin politica y
+    # el modelo de PROD en enforce, db_query(..., conexion="prod") devolvia los datos de
+    # produccion EN CLARO y etiquetados pii.mode = "off".
+    sep = srv._SEP_SQLSERVER
+    stdout = f"ID{sep}NOMBRE\n1{sep}Ana\n"
+    desa = tmp_path / "desa-model.json"
+    desa.write_text('{"pii_policy": {"mode": "off"}}', encoding="utf-8")
+    prod = tmp_path / "prod-model.json"
+    prod.write_text('{"pii_policy": {"mode": "enforce"}}', encoding="utf-8")
+    _preparar_db_query(monkeypatch, tmp_path, _config_dos_conexiones(str(desa), str(prod)), stdout)
+
+    out = json.loads(srv.db_query(str(tmp_path), "SELECT ID, NOMBRE FROM RDEUDORES", conexion="prod"))
+
+    assert out["pii"]["mode"] == "enforce"
+    assert "NOMBRE" in out["pii"]["masked"]
+    assert out["rows"][0][1] != "Ana"
+
+
+def test_db_query_sin_conexion_sigue_usando_la_principal(monkeypatch, tmp_path):
+    sep = srv._SEP_SQLSERVER
+    stdout = f"ID{sep}NOMBRE\n1{sep}Ana\n"
+    desa = tmp_path / "desa-model.json"
+    desa.write_text('{"pii_policy": {"mode": "off"}}', encoding="utf-8")
+    prod = tmp_path / "prod-model.json"
+    prod.write_text('{"pii_policy": {"mode": "enforce"}}', encoding="utf-8")
+    _preparar_db_query(monkeypatch, tmp_path, _config_dos_conexiones(str(desa), str(prod)), stdout)
+
+    out = json.loads(srv.db_query(str(tmp_path), "SELECT ID, NOMBRE FROM RDEUDORES"))
+
+    assert out["pii"]["mode"] == "off"
+    assert out["rows"][0][1] == "Ana"
+
+
+# --- El diagnostico de un fallo NUNCA devuelve las filas ya volcadas ---
+# La rama de error no pasa por mask_resultset: lo que se devuelva como "error" entra en el
+# contexto sin filtrar. sqlplus emite las filas segun las trae, asi que un error a mitad de
+# fetch deja datos en lo capturado.
+
+_SALIDA_CON_FILAS = (
+    "IDINCIDENCIA,DESCRIPCION,DNI\n"
+    "1,error al cobrar,12345678Z\n"
+    "2,ERROR de conexion,87654321X\n"
+)
+
+
+def test_diagnostico_no_devuelve_filas_cuando_no_hay_lineas_reconocibles():
+    msg = srv._diagnostico(_SALIDA_CON_FILAS, "", 1)
+    assert "12345678Z" not in msg
+    assert "87654321X" not in msg
+    assert "al cobrar" not in msg
+    assert "exit 1" in msg
+
+
+def test_diagnostico_no_casa_la_palabra_error_dentro_de_los_datos():
+    # El patron va anclado al principio de linea justo por esto.
+    msg = srv._diagnostico(_SALIDA_CON_FILAS + "ORA-01555: snapshot too old\n", "", 1)
+    assert msg == "ORA-01555: snapshot too old"
+
+
+def test_diagnostico_acota_numero_y_longitud_de_lineas():
+    muchas = "\n".join("ORA-0060%d: deadlock %s" % (i, "x" * 500) for i in range(30))
+    msg = srv._diagnostico(muchas, "", 1)
+    assert msg.count("ORA-") == srv._MAX_DIAG_LINEAS
+    for parte in msg.split("; "):
+        assert len(parte) <= srv._MAX_DIAG_CHARS + 3
+
+
+def test_db_query_error_a_mitad_de_volcado_no_filtra_las_filas(monkeypatch, tmp_path):
+    _preparar_db_query(monkeypatch, tmp_path, _config_sqlserver(),
+                       stdout=_SALIDA_CON_FILAS, returncode=1, stderr="")
+
+    out = json.loads(srv.db_query(str(tmp_path), "SELECT * FROM RINCIDENCIAS"))
+
+    assert out["success"] is False
+    assert out["rows"] == []
+    assert "12345678Z" not in out["error"]
+    assert "87654321X" not in out["error"]
