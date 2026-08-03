@@ -161,3 +161,109 @@ Describe "db-query.ps1 camino sin filas" {
         $out.columns   | Should -Contain "NOMBRE"
     }
 }
+
+Describe "pii-guard-bash.ps1" {
+    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1" }
+
+    It "bloquea sqlplus" {
+        '{"tool_input":{"command":"sqlplus -S user/pass@DS @x.sql"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "bloquea sqlcmd" {
+        '{"tool_input":{"command":"sqlcmd -S srv -Q \"SELECT 1\""}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "permite comandos normales" {
+        '{"tool_input":{"command":"dotnet build MiSolucion.sln"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite los scripts del propio plugin que usan sqlplus por dentro" {
+        '{"tool_input":{"command":"python installer-inserts.py C:\\ws Proy out"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite un evento no parseable (JSON invalido)" {
+        'esto no es json' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+}
+
+Describe "pii-guard-write.ps1" {
+    <#
+        El brief original (task-7-brief.md) reutilizaba las 6 formas del detector de
+        columnas (scripts/pii_detect.py), incluyendo telefono y tarjeta. Superseded por
+        el dispatch de la Task 7: para una guarda de ESCRITURA esas dos formas son
+        puramente numericas y disparan sobre cualquier importe en centimos o id largo,
+        asi que se han retirado aqui (pii_detect.py sigue intacto, no se toca). DNI/NIE
+        ademas exigen letra de control valida -- sin eso, cualquier fecha AAAAMMDD del
+        repo (convencion Actualizador\<ENTORNO>_<AAAAMMDD>) dispara la guarda.
+    #>
+    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1" }
+
+    It "bloquea contenido con DNI de letra de control valida" {
+        # 12345678Z: 12345678 % 23 = 14 -> "TRWAGMYFPDXBNJZSQVHLCKE"[14] = "Z". Valido.
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678Z debe 300"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "NO bloquea el mismo numero de DNI con letra de control incorrecta" {
+        # 12345678A: la letra correcta es Z, no A. Misma forma, checksum invalido.
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678A debe 300"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "NO bloquea una fecha AAAAMMDD seguida de letra (falso positivo tipico del repo)" {
+        # 20260803 % 23 = ... letra correcta es "B", no "A": no cuela como DNI valido.
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Entrega 20260803A generada por el hook"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "bloquea contenido con NIE de letra de control valida" {
+        # X1234567L: X->0, 01234567 % 23 -> "L". Valido (ejemplo clasico de NIE).
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567L"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "NO bloquea un NIE con letra de control incorrecta" {
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567A"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "bloquea contenido con IBAN" {
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"ES9121000418450200051332"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "bloquea contenido con correo electronico" {
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Contacto: ana.lopez@example.com"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It "permite contenido sin datos personales" {
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"SELECT COUNT(*) FROM RDEUDORES"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite un importe largo sin forma de DNI/NIE/IBAN/correo (telefono y tarjeta fuera de esta guarda)" {
+        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Total acumulado: 1234567890123456 centimos"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite escribir en la carpeta del instalador" {
+        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Instalador\\Scripts\\Inserts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite escribir en la carpeta del actualizador" {
+        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Actualizador\\DESA_20260803\\Scripts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It "permite un evento no parseable (JSON invalido)" {
+        'esto no es json' | & $script:g | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+}
