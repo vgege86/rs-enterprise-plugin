@@ -75,6 +75,17 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `render-erd.ps1 <workspace>` | HTML ERD interactivo |
 | `export-dmd.ps1 <workspace>` | Export a Oracle Data Modeler (.dmd) |
 
+### Protección de datos personales (PII)
+Guardas `PreToolUse` — no son fallback de una tool MCP, se registran directamente en la config
+personal del usuario (`~/.claude/settings.json`) solo tras `/rs-pii enforce`. Ver
+`docs/proteccion-pii-consultas-bd.md`.
+
+| Script | Uso |
+|--------|-----|
+| `pii-guard-bash.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Bash` la invocación directa de `sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp`. **Guardarraíl, no control** — se elude con un script intermedio o invocando el binario por otra ruta |
+| `pii-guard-write.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Write`/`Edit` contenido con forma de DNI/NIE (letra de control válida), IBAN o correo. Teléfono y tarjeta quedan fuera a propósito — casarían con cualquier importe o identificador de fila largo. Excluye `Instalador\`/`Actualizador\` |
+| `lib-pii.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Test-DniNieChecksum`, `Remove-RsPii`, patrones DNI/NIE/IBAN/correo). Compartida por `pii-guard-write.ps1` y `log-execution.ps1`, mismo patrón que `lib-dbconfig.ps1` |
+
 ### SVN
 | Script | Uso |
 |--------|-----|

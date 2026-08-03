@@ -393,6 +393,12 @@ Desajustes reales detectados (documentados, no corregidos aquí salvo petición 
    #9354, #9427). Corregido en 2.12.0: contrato `plugin_root` + regla de normalización verificada
    con Glob (SKILL.md § "Raíz del plugin"), y comprobación defensiva en los tres agentes que
    ejecutan `runner\`/`hooks\` por ruta (`rs-instalador`, `rs-editor-build`, `rs-editor-db-modeler`).
+3. **`/rs-pii` no aparece en la tabla `# Modos directos` de `skills/rs-enterprise-agent/SKILL.md`
+   ni en el §4 de este documento** — la Tarea 9 (protección PII) sincronizó `README.md` y la Tarea
+   10 sincronizó `CHANGELOG.md`/`references/*.md`, pero ninguna de las dos tocó estos dos puntos
+   de sincronización que exige la tabla de §10 para "Nuevo modo directo". Detectado durante la
+   revisión de la Tarea 10; se registra en vez de corregirse porque queda fuera del alcance
+   (documentación de PII) de esa tarea.
 
 ---
 
