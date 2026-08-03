@@ -31,13 +31,18 @@ try {
 $prohibidos = '\b(sqlplus|sqlcmd|osql|bcp|sqlldr|impdp|expdp)\b'
 
 if ($comando -match $prohibidos) {
+    # Solo se reporta el NOMBRE del cliente detectado, nunca el comando completo: el
+    # comando de un cliente de BD lleva casi siempre la credencial inline (ej. "sqlplus
+    # -S usuario/contrasena@ORCL", "sqlcmd ... -P contrasena"), y ecoarlo aqui pondria
+    # esa contrasena en un mensaje visible para el usuario y potencialmente logueado --
+    # justo lo que esta guarda existe para evitar. Mismo criterio que hooks/db-query.ps1
+    # y el servidor MCP, que pasan la credencial por fichero temporal, nunca en claro.
+    $cliente = $Matches[1]
     Write-Error @"
-BLOQUEADO: cliente de BD invocado directamente.
+BLOQUEADO: cliente de BD invocado directamente ($cliente).
 
 Las consultas a BD deben pasar por la tool MCP db_query, que aplica la politica de
 proteccion de datos personales del workspace. Un cliente directo la evita por completo.
-
-Comando: $comando
 
 Si necesitas una consulta, usa db_query. Si el dato que necesitas sale enmascarado,
 declara la columna como segura en BD/<proyecto>-model.json en vez de rodear el filtro.

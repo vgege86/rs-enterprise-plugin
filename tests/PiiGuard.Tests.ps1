@@ -189,6 +189,22 @@ Describe "pii-guard-bash.ps1" {
         'esto no es json' | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
+
+    It "el mensaje de bloqueo no contiene la contrasena del comando (solo nombra el cliente)" {
+        # Pin explicito: si alguien "mejora" el diagnostico volviendo a incluir el
+        # comando completo, esta comprobacion revienta. El comando de un cliente de BD
+        # lleva casi siempre la credencial inline (sqlplus -S usuario/contrasena@ORCL),
+        # y el mensaje de bloqueo es texto visible/logueable -- no debe llevarla.
+        # Se inspecciona el ErrorRecord (2>&1) directamente, no via Out-String: el host
+        # de PowerShell añade contexto "Line |" con la linea de codigo que invoco el
+        # pipeline (aqui, la propia linea del test) al formatear para consola, que no
+        # es el mensaje del guard y ensuciaria la comprobacion con el mismo secreto.
+        $salida = '{"tool_input":{"command":"sqlplus -S usuario/contrasena@ORCL"}}' | & $script:g 2>&1
+        $LASTEXITCODE | Should -Be 2
+        $mensaje = [string]$salida
+        $mensaje | Should -Not -Match "contrasena"
+        $mensaje | Should -Match "sqlplus"
+    }
 }
 
 Describe "pii-guard-write.ps1" {
