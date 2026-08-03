@@ -242,6 +242,17 @@ versiones **standalone** de lo que en el pipeline hacen el validator y el planne
 comparten reglas vía reference (`references/bd.md`), no duplican lógica. `rs-esquema` es consulta
 pura de esquema (no genera DDL/ERD; eso es `/rs-erd`).
 
+`rs-pii` (`/rs-pii`, sonnet, v3.0.0) gestiona la protección de datos personales en las consultas a
+BD: `status` informa del modo actual y de si las guardas `PreToolUse` están registradas; `bootstrap`
+genera el inventario de columnas afectadas muestreando datos reales vía `db_query` (⛔ nunca
+reproduce un valor muestreado, ni en la respuesta ni en el fichero); `audit`/`enforce`/`off`
+escriben `pii_policy.mode` en el modelo BD. `enforce` no conmuta el modo sin antes registrar las
+dos guardas `PreToolUse` (`hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1`) en
+`~/.claude/settings.json` y confirmar el registro con `check_env` — un workspace que crea estar
+protegido sin estarlo es peor que uno que sabe que está en `off`. ⛔ Gate de confirmación explícita
+en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
+de este documento (los módulos `scripts/pii_*.py` que aplica la política).
+
 ---
 
 ## 5. Comandos
@@ -393,12 +404,6 @@ Desajustes reales detectados (documentados, no corregidos aquí salvo petición 
    #9354, #9427). Corregido en 2.12.0: contrato `plugin_root` + regla de normalización verificada
    con Glob (SKILL.md § "Raíz del plugin"), y comprobación defensiva en los tres agentes que
    ejecutan `runner\`/`hooks\` por ruta (`rs-instalador`, `rs-editor-build`, `rs-editor-db-modeler`).
-3. **`/rs-pii` no aparece en la tabla `# Modos directos` de `skills/rs-enterprise-agent/SKILL.md`
-   ni en el §4 de este documento** — la Tarea 9 (protección PII) sincronizó `README.md` y la Tarea
-   10 sincronizó `CHANGELOG.md`/`references/*.md`, pero ninguna de las dos tocó estos dos puntos
-   de sincronización que exige la tabla de §10 para "Nuevo modo directo". Detectado durante la
-   revisión de la Tarea 10; se registra en vez de corregirse porque queda fuera del alcance
-   (documentación de PII) de esa tarea.
 
 ---
 
