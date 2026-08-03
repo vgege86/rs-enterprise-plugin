@@ -1,1 +1,0 @@
-{ "proyecto": "P", "conexiones": [ { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p" } ] }
