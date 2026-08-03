@@ -55,3 +55,44 @@ def test_predicados_igualdad_y_like():
 
 def test_predicados_sin_where():
     assert sc.predicados("SELECT * FROM RDEUDORES") == []
+
+
+def test_tablas_ignora_linea_comentada_con_tabla():
+    # Un comentario de linea no debe inyectar una tabla
+    sql = "SELECT NOMBRE -- FROM TABLASEGURA\nFROM RDEUDORES WHERE DNI = '1'"
+    assert sc.tablas(sql) == ["RDEUDORES"]
+
+
+def test_tablas_ignora_bloque_comentado_con_tabla():
+    # Un bloque comentado no debe inyectar una tabla
+    sql = "SELECT * /* FROM FAKETABLE */ FROM RDEUDORES"
+    assert sc.tablas(sql) == ["RDEUDORES"]
+
+
+def test_tablas_ignora_bloque_comentado_multilinea():
+    # Un bloque comentado en multiples lineas no debe inyectar una tabla
+    sql = """SELECT *
+    /* FROM FAKETABLE
+       JOIN OTRATABLA ON ...
+    */ FROM RDEUDORES"""
+    assert sc.tablas(sql) == ["RDEUDORES"]
+
+
+def test_guion_dentro_de_string_no_es_comentario():
+    # Una secuencia -- dentro de un string literal no es comentario
+    sql = "SELECT * FROM RDEUDORES WHERE COD = 'A--B'"
+    assert sc.tablas(sql) == ["RDEUDORES"]
+    assert sc.predicados(sql) == ["COD"]
+
+
+def test_barra_asterisco_dentro_de_string_no_rompe():
+    # Una secuencia /* dentro de un string literal no es comentario
+    sql = "SELECT * FROM RDEUDORES WHERE NOTA = 'a/*b'"
+    assert sc.tablas(sql) == ["RDEUDORES"]
+    assert sc.predicados(sql) == ["NOTA"]
+
+
+def test_predicados_ignora_columna_en_comentario():
+    # Una columna mencionada solo dentro de un comentario no se reporta
+    sql = "SELECT COL FROM RDEUDORES WHERE -- OLD_COL = 'X' AND\nCOL = 'Y'"
+    assert sc.predicados(sql) == ["COL"]

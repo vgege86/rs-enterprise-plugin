@@ -6,6 +6,67 @@ no resuelta se enmascara: la imprecision degrada hacia el lado seguro, nunca al 
 """
 import re
 
+
+def _strip_comments(sql):
+    """Elimina comentarios SQL (-- y /* */) preservando strings literales.
+
+    Sustituye cada tramo de comentario con un espacio para no unir tokens.
+    Los comentarios dentro de strings literales ('...') se preservan intactos.
+    """
+    if not sql:
+        return sql
+
+    result = []
+    i = 0
+    in_string = False
+
+    while i < len(sql):
+        c = sql[i]
+
+        # Manejar strings literales
+        if c == "'":
+            # Toggle string state. Maneja '' (escaped single quote)
+            result.append(c)
+            i += 1
+            if in_string and i < len(sql) and sql[i] == "'":
+                # Escaped quote ''
+                result.append(sql[i])
+                i += 1
+            else:
+                in_string = not in_string
+            continue
+
+        # Fuera de strings, buscar comentarios
+        if not in_string:
+            if i + 1 < len(sql) and sql[i:i+2] == '--':
+                # Comentario de linea: hasta el final de linea
+                result.append(' ')
+                i += 2
+                while i < len(sql) and sql[i] not in '\n':
+                    i += 1
+                if i < len(sql):
+                    result.append(sql[i])
+                    i += 1
+                continue
+
+            if i + 1 < len(sql) and sql[i:i+2] == '/*':
+                # Bloque comentado: hasta */
+                result.append(' ')
+                i += 2
+                while i < len(sql):
+                    if i + 1 < len(sql) and sql[i:i+2] == '*/':
+                        i += 2
+                        break
+                    i += 1
+                continue
+
+        # Caracter normal (dentro de string o fuera de comentario)
+        result.append(c)
+        i += 1
+
+    return ''.join(result)
+
+
 # FROM/JOIN seguido del nombre, admitiendo "ESQUEMA . TABLA". El parentesis de una
 # subconsulta no casa (no esta en la clase de caracteres), asi que se ignora y se
 # recoge la tabla de dentro en la siguiente coincidencia.
@@ -46,6 +107,7 @@ def tablas(sql):
     """Tablas del FROM/JOIN, en mayusculas, sin esquema, sin duplicados, en orden."""
     if not sql:
         return []
+    sql = _strip_comments(sql)
     encontradas = [_normalizar(m.group(1)) for m in _RE_TABLA.finditer(sql)]
     return _unicos(t for t in encontradas if t and t not in _IGNORADAS)
 
@@ -59,6 +121,7 @@ def predicados(sql):
     """
     if not sql:
         return []
+    sql = _strip_comments(sql)
     partes = re.split(r"\bWHERE\b", sql, maxsplit=1, flags=re.I)
     if len(partes) < 2:
         return []
