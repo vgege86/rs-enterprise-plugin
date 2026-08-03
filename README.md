@@ -269,6 +269,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-stats [solution]` ⚡ | Estadísticas de `history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días. |
 | `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
 | `/rs-help` ⚡ | Renderiza **esta guía** (README) a un HTML navegable con formato (índice, tablas, tema claro/oscuro) y lo abre en el navegador. Ideal para pasar a usuarios. |
+| `/rs-cifrar` ⚡ | Cifra en reposo (DPAPI, cuenta de Windows) los secretos en texto plano: password de BD (`.rs-databases.json`) y tokens Jira/Mantis (`~/.claude`). Idempotente, no imprime secretos, retrocompatible (los valores sin cifrar siguen funcionando). |
 
 ---
 
@@ -321,7 +322,7 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **45 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **46 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
@@ -398,10 +399,10 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
-agents/           48 subagentes: pipeline y modos directos
+agents/           49 subagentes: pipeline y modos directos
 commands/         43 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 45 tools
+mcp/              servidor MCP con 46 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

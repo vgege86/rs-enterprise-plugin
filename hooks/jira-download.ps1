@@ -44,9 +44,10 @@ try {
 } catch {
     Fail "No se pudo parsear $credPath como JSON."
 }
+. (Join-Path $PSScriptRoot "lib-crypto.ps1")   # Unprotect-RsSecret: token puede venir cifrado (DPAPI)
 $baseUrl = ("$($cred.baseUrl)").TrimEnd('/')
 $email   = "$($cred.email)"
-$token   = "$($cred.token)"
+$token   = Unprotect-RsSecret "$($cred.token)"
 if (-not $baseUrl -or -not $email -or -not $token) {
     Fail "Credenciales incompletas en $credPath (se requieren baseUrl, email, token)."
 }

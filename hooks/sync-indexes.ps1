@@ -39,7 +39,7 @@ $cadena = "$($c.cadena)"
 $rawDs = Get-CsPart -Cadena $cadena -Clave "Data Source"
 if (-not $rawDs) { $rawDs = Get-CsPart -Cadena $cadena -Clave "Server" }
 $user     = Get-CsPart -Cadena $cadena -Clave "User Id"
-$password = Get-CsPart -Cadena $cadena -Clave "Password"
+$password = Unprotect-RsSecret (Get-CsPart -Cadena $cadena -Clave "Password")
 $schema   = if ($c.schema) { "$($c.schema)" } else { $user }
 
 if ($motor -ne "ORACLE") { throw "sync-indexes solo soporta Oracle (motor actual: $motor)" }

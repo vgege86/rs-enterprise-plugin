@@ -1,5 +1,43 @@
 # RS Enterprise Agent — Changelog
 
+## 2.31.0 — 2026-08-03
+
+### Security: cifrado en reposo (DPAPI) de los secretos en texto plano
+
+Hasta ahora los tres secretos del plugin vivían en **texto plano** en disco: el password de BD (en
+`docs/.rs-databases.json`, dentro de `cadena`) y los tokens de Jira y Mantis (en `~/.claude/`). Esta
+versión añade **cifrado en reposo con DPAPI** (Windows Data Protection API), ligado a la cuenta de
+Windows del usuario.
+
+- **Helper compartido** `hooks/lib-crypto.ps1` (`Protect-RsSecret`/`Unprotect-RsSecret`/`Test-RsEncrypted`,
+  DPAPI `CurrentUser`) + su espejo en Python `_unprotect_secret` (ctypes `CryptUnprotectData`, sin
+  dependencias) en `mcp/rs-workspace-server.py` y `scripts/installer-inserts.py`. Mismo blob DPAPI en
+  ambos lenguajes → un secreto cifrado en PowerShell se descifra en Python y viceversa (nota de paridad).
+- **Formato `enc:<base64>`** con **retrocompatibilidad total**: los lectores tratan cualquier valor SIN
+  el prefijo `enc:` como texto plano (legacy). Ficheros sin migrar siguen funcionando; la migración es
+  opcional y gradual.
+- **Descifrado al vuelo** en todos los lectores: password BD en `hooks/lib-dbconfig.ps1` (dot-source de
+  lib-crypto) aplicado en `db-query.ps1`, `compare-model.ps1`, `sync-from-db.ps1`, `sync-model-tables.ps1`,
+  `sync-indexes.ps1`, y en Python `_get_db_password` / `_read_password`; token Jira en `jira-attach.ps1`
+  y `jira-download.ps1`; token Mantis en `lib-mantis.ps1` (`Get-MantisCreds`).
+- **`/rs-cifrar`** (`rs-cifrar`, ⚡ Haiku) + hook `secure-credentials.ps1` + tool MCP `secure_credentials`:
+  cifra in situ los tres secretos que encuentre, **idempotente**, **sin imprimir ningún valor**.
+- **Tests**: `tests/test_mcp.py` (+3 casos de `_unprotect_secret`: passthrough de texto plano, `enc:`
+  exige Windows), `tests/Crypto.Tests.ps1` (nuevo: detección `enc:` + passthrough). **36 casos pytest
+  en verde.** ⚠️ El **roundtrip DPAPI real es Windows-only** — no se puede ejercitar en el CI (Ubuntu);
+  se verifica manualmente en Windows.
+
+**Límites de DPAPI (documentados):** el secreto cifrado solo lo descifra la **misma cuenta de Windows en
+la misma máquina** (al migrar de equipo/usuario hay que re-introducir y re-cifrar); protege frente a copia
+del fichero o a otro usuario del equipo, **no** frente a código ejecutado como el propio usuario. El
+password sigue escribiéndose en claro en el `.sql` temporal del `CONNECT` de Oracle (follow-up aparte).
+
+**MCP 45 → 46 tools** (`secure_credentials`); **hooks +`lib-crypto.ps1` +`secure-credentials.ps1`**;
+**agentes 48 → 49; comandos 46 → 47.** Ficheros: `hooks/lib-crypto.ps1`, `hooks/secure-credentials.ps1`,
+`agents/rs-cifrar.md`, `commands/rs-cifrar.md`, `mcp/rs-workspace-server.py`, `scripts/installer-inserts.py`,
+`hooks/lib-dbconfig.ps1` + 5 lectores BD, `hooks/jira-attach.ps1`, `hooks/jira-download.ps1`,
+`hooks/lib-mantis.ps1`, `skills/rs-enterprise-agent/SKILL.md`, `tests/`, `references/`, README, bump.
+
 ## 2.30.0 — 2026-07-31
 
 ### Security: inyección de comandos, password fuera de argv y guarda SQL más robusta

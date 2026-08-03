@@ -4,6 +4,10 @@
     Único sitio que conoce el formato. Dot-sourcear desde los hooks que lo necesiten.
 #>
 
+# Cripto de secretos (Unprotect-RsSecret): el password de la cadena puede venir cifrado con DPAPI
+# (enc:<base64>). Se carga aquí para que todo hook que use la config BD pueda descifrarlo.
+. (Join-Path $PSScriptRoot "lib-crypto.ps1")
+
 function Get-CsPart {
     <# Extrae el valor de una clave de una cadena de conexión. "" si no está.
        Asunción: el split por ';' no lleva control de profundidad de paréntesis, así que un ';'

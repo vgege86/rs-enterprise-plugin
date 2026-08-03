@@ -213,3 +213,6 @@ saltos válidos de un paso; para recorrer varios estados en orden sin saltársel
   respuesta HTTP de error).
 - La config del workspace (`.mantis-dev-config.json`) no contiene secretos y está separada de las
   credenciales — misma disciplina que `rs-jira`.
+- 🔐 **Cifrado en reposo (opcional):** el `token` puede guardarse cifrado con DPAPI como `enc:<base64>`;
+  `Get-MantisCreds` (en `hooks/lib-mantis.ps1`) lo descifra al vuelo (`Unprotect-RsSecret`). Un token
+  sin el prefijo `enc:` se trata como texto plano. Para cifrar el fichero existente: `/rs-cifrar`.

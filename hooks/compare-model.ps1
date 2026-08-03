@@ -37,7 +37,7 @@ $dbCfg = Read-RsDatabases (Resolve-RsWorkspace $Workspace)
 if (-not $dbCfg.ok) {
     @{ success = $false; error = $dbCfg.error } | ConvertTo-Json; exit 1
 }
-$password = Get-CsPart -Cadena "$($dbCfg.conexiones[0].cadena)" -Clave "Password"
+$password = Unprotect-RsSecret (Get-CsPart -Cadena "$($dbCfg.conexiones[0].cadena)" -Clave "Password")
 
 if (-not (Test-Path $modelPath)) {
     @{ success = $false; error = "Modelo BD no encontrado: $modelPath. Ejecutar /rs-erd primero." } | ConvertTo-Json; exit 1

@@ -49,6 +49,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `render_erd(workspace)` | Genera ERD HTML y abre navegador — sin cargar modelo en contexto |
 | `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (executions/history.json) y abre navegador — sin cargar el HTML en contexto |
 | `render_help(workspace)` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y abre navegador — sin cargar el HTML en contexto |
+| `secure_credentials(workspace?, skip_jira?, skip_mantis?)` | Cifra en reposo (DPAPI, cuenta Windows) el password de `.rs-databases.json` (si se da workspace) y los tokens Jira/Mantis de `~/.claude`. Idempotente, no imprime secretos. Para `/rs-cifrar` |
 | `check_env(workspace)` | Valida entorno: .rs-databases.json, AIS, dotnet, SVN, Git, modelo BD → checks[] |
 | `generate_sql(workspace, motor?)` | Genera DDL SQL a fichero — devuelve ruta, SQL no entra en contexto |
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |

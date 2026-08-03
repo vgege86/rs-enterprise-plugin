@@ -169,6 +169,37 @@ def _proyecto(workspace: Workspace) -> str:
     return Path(workspace).parent.name
 
 
+def _unprotect_secret(value: str) -> str:
+    """Descifra un valor 'enc:<base64>' con DPAPI (CurrentUser, Windows). Un valor SIN el prefijo
+    'enc:' se devuelve tal cual (texto plano legacy) → retrocompatibilidad. Cadena vacía → "".
+    ⛔ PARIDAD con Unprotect-RsSecret (hooks/lib-crypto.ps1) y con _unprotect_secret de
+    scripts/installer-inserts.py: mismo formato enc:<base64 del blob DPAPI> (CryptProtectData sobre
+    bytes UTF-8). ⛔ Windows-only: fuera de Windows un valor cifrado no se puede descifrar → OSError."""
+    if not value or not value.startswith("enc:"):
+        return value
+    import base64
+    import ctypes
+    from ctypes import wintypes
+    if not hasattr(ctypes, "windll"):
+        raise OSError("DPAPI (descifrado de secretos) solo está disponible en Windows")
+
+    class _DataBlob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    raw = base64.b64decode(value[len("enc:"):])
+    buf_in = ctypes.create_string_buffer(raw, len(raw))
+    blob_in = _DataBlob(len(raw), ctypes.cast(buf_in, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DataBlob()
+    ok = ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out))
+    if not ok:
+        raise OSError("CryptUnprotectData falló (¿secreto cifrado por otro usuario/máquina?)")
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData).decode("utf-8")
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
 def _get_db_password(workspace: Workspace, conexion_id: str = "") -> str:
     """Lee password directo de docs/.rs-databases.json — NUNCA pasar por _get_config()/get-config.ps1,
     cuyo dict se devuelve tal cual por la tool get_db_config (no debe filtrar el password al agente).
@@ -196,7 +227,8 @@ def _get_db_password(workspace: Workspace, conexion_id: str = "") -> str:
         for part in str(sel.get("cadena", "")).split(";"):
             part = part.strip()
             if part.lower().startswith("password="):
-                return part.split("=", 1)[1].strip()
+                # El valor puede venir cifrado (enc:<base64>) o en texto plano (legacy).
+                return _unprotect_secret(part.split("=", 1)[1].strip())
         return ""
     except Exception:
         return ""
@@ -774,6 +806,17 @@ def render_erd(workspace: Workspace) -> str:
 def render_dashboard(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("render-dashboard.ps1", workspace), ensure_ascii=False, indent=2)
+
+
+@mcp.tool(description="Cifra en reposo (DPAPI, cuenta de Windows) los secretos en texto plano: el Password de docs/.rs-databases.json (si se da workspace) y los tokens de ~/.claude/rs-jira-credentials.json y rs-mantis-credentials.json. Idempotente, no imprime secretos. Los lectores descifran al vuelo; los valores sin cifrar siguen funcionando (retrocompatible). Para /rs-cifrar.")
+def secure_credentials(workspace: Workspace = "", skip_jira: bool = False, skip_mantis: bool = False) -> str:
+    # workspace vacío → el hook no toca la config BD (solo los tokens de ~/.claude).
+    ps_args = ["-Workspace", workspace] if workspace else []
+    if skip_jira:
+        ps_args.append("-SkipJira")
+    if skip_mantis:
+        ps_args.append("-SkipMantis")
+    return json.dumps(_run_ps("secure-credentials.ps1", *ps_args), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Renderiza la guía de usuario del plugin (README.md) a un HTML autónomo (tema claro/oscuro, sin dependencias) y lo abre en el navegador. Fuente = README del plugin, no el workspace. Devuelve la ruta — no carga el HTML en contexto.")

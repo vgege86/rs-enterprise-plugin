@@ -39,7 +39,7 @@ $cadena = "$($c.cadena)"
 $dataSource = Get-CsPart -Cadena $cadena -Clave "Data Source"
 if (-not $dataSource) { $dataSource = Get-CsPart -Cadena $cadena -Clave "Server" }
 $user     = Get-CsPart -Cadena $cadena -Clave "User Id"
-$password = Get-CsPart -Cadena $cadena -Clave "Password"
+$password = Unprotect-RsSecret (Get-CsPart -Cadena $cadena -Clave "Password")
 
 if ($motor -eq "ORACLE") {
     $schema = if ($c.schema) { "$($c.schema)" } else { $user }
