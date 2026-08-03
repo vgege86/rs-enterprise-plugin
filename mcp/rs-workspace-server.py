@@ -176,21 +176,36 @@ _pii_mask = importlib.util.module_from_spec(_spec_pii)
 _spec_pii.loader.exec_module(_pii_mask)
 
 
-def _cargar_modelo(workspace) -> dict:
-    """Modelo BD del workspace (BD/<proyecto>-model.json), o {} si no existe.
+def _cargar_modelo(config: dict) -> tuple[dict, str | None]:
+    """(modelo, aviso) a partir de config["model_path"] — el mismo model_path que ya
+    resuelve _get_config()/get-config.ps1 (incluye el Resolve-RsWorkspace de subcarpeta)
+    y que usan get_table_schema/search_model/get_model_index. Reusar ese camino en vez
+    de buscar el fichero por nuestra cuenta evita que db_query vea un modelo BD distinto
+    al del resto de tools, y comparte la cache mtime de _load_model en vez de releer y
+    reparsear el JSON en cada llamada.
 
-    Devolver {} y no fallar es deliberado: un workspace sin modelo se comporta como
-    mode=off, igual que hoy. La proteccion se activa declarandola, no por accidente.
+    aviso solo es distinto de None cuando el fichero EXISTE pero no se puede usar (JSON
+    invalido o su raiz no es un objeto): ese caso hay que verlo, no tragarlo en silencio,
+    porque una politica pii_policy declarada dejaria de aplicarse sin ningun aviso en
+    pantalla. Nunca incluye el contenido del fichero, solo su nombre y el motivo — un
+    modelo corrupto puede contener datos.
+
+    Ausencia de modelo (no configurado o no encontrado) sigue siendo el caso ordinario:
+    ({}, None), igual que el mode=off de siempre. Aqui no hay nada que avisar: es la
+    situacion normal de un workspace que no ha declarado politica.
     """
-    bd = _resolve_workspace(Path(workspace)) / "BD"
-    if not bd.is_dir():
-        return {}
-    for ruta in sorted(bd.glob("*-model.json")):
-        try:
-            return json.loads(ruta.read_text(encoding="utf-8-sig"))
-        except Exception:
-            continue
-    return {}
+    model_path = config.get("model_path", "")
+    if not model_path:
+        return {}, None
+    try:
+        modelo = _load_model(Path(model_path))
+    except Exception as exc:
+        return {}, f"Modelo BD ilegible ({Path(model_path).name}): {exc.__class__.__name__}"
+    if modelo is None:
+        return {}, None
+    if not isinstance(modelo, dict):
+        return {}, f"Modelo BD invalido ({Path(model_path).name}): la raiz del JSON no es un objeto"
+    return modelo, None
 
 
 def _get_db_password(workspace: Workspace, conexion_id: str = "") -> str:
@@ -487,8 +502,10 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
     # Se aplica DESPUES de recortar a max_rows: enmascarar filas que no se devuelven
     # solo gastaria CPU. Y ANTES de json.dumps: es el ultimo punto antes del contexto.
     visibles = rows[:max_rows]
-    modelo = _cargar_modelo(workspace)
+    modelo, aviso_modelo = _cargar_modelo(config)
     columns, visibles, pii = _pii_mask.mask_resultset(columns, visibles, sql_norm, modelo)
+    if aviso_modelo:
+        pii["model_error"] = aviso_modelo
 
     return json.dumps({
         "success": ok,
