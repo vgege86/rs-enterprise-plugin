@@ -365,10 +365,29 @@ Reglas evaluadas en cada consulta, sin necesidad de anotar el modelo por adelant
 | Tabla paramétrica (idiomas, controles, versiones, módulos) | En claro |
 | Tipo numérico, fecha, clave primaria o ajena | En claro |
 | Resto de columnas de texto | Enmascarado |
-| Columna que no se puede resolver (alias, expresión calculada) | Enmascarado |
+| Columna que no se puede resolver (alias, expresión calculada) | Depende de la forma de los valores devueltos — ver debajo |
 
 Las tablas paramétricas se toman de la lista que el modelo de BD ya mantiene para el
 instalador de cliente, de modo que no hay una segunda lista que sincronizar.
+
+**Columna que no se puede resolver.** Un alias o una expresión calculada (`COUNT(*) AS TOTAL`,
+`SUBSTR(DNI,1,8) AS X`) no tiene definición en el modelo de BD, así que ninguna de las reglas
+anteriores aplica. En ese caso se decide por la **forma de los valores devueltos**, en dos pasos:
+
+1. Primero se pasa el mismo detector de forma del §4.3 (DNI, NIE, IBAN, correo, teléfono,
+   tarjeta). Si la mayoría de los valores tiene alguna de esas formas, se enmascara ahí mismo —
+   es lo que le pasa a `SUBSTR(DNI,1,8) AS X`: ocho dígitos sin letra tienen la forma de un DNI
+   sin su letra de control.
+2. Si no se detecta ninguna forma personal, se aplica una prueba numérica **estricta**: valores
+   limpios (sin signo `+`, sin notación `inf`/`nan`, sin separadores de miles, y sin ser un
+   entero de 9 o más dígitos sin parte decimal —la forma de un teléfono, una cuenta, un contrato
+   o una tarjeta— aunque en teoría pudiera ser un recuento real por encima de esa magnitud)
+   salen **en claro**; cualquier otra cosa —texto, o un entero largo sin decimales— se
+   **enmascara**. Una muestra completamente vacía también se enmascara: no hay información para
+   decidir a favor de dejarla en claro.
+
+Así `SELECT COUNT(*) AS TOTAL` sigue devolviendo un número útil sin pasar por el modelo. Este
+comportamiento es una decisión deliberada, no una tabla estática.
 
 ### 4.3 Detección de lo que las reglas no cubren
 

@@ -26,7 +26,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `svn_status(workspace)` | Estado SVN → modificados, añadidos, eliminados, ? sin versionar |
 | `git_status(workspace)` | Estado Git → modificados, staged, ?? sin trackear, conflicto (U). Equivalente Git de `svn_status` |
 | `create_test_project(sln_path, framework?, project_name?)` | Crea proyecto xUnit/mstest/nunit |
-| `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden) |
+| `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden). Aplica la política PII del workspace (`pii_policy.mode` del modelo BD) y devuelve `pii` con el detalle de lo enmascarado — ver `docs/proteccion-pii-consultas-bd.md` |
 | `compare_model(workspace)` | Diff model.json vs BD real → tablas/columnas nuevas/eliminadas |
 | `scan_aspx(sln_path)` | Extrae controles AIS de .aspx → IDs y textos para RIDIOMA/RCONTROLES |
 | `log_execution(workspace, solution, task, status?, agents?)` | Registra en executions/history.json |

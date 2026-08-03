@@ -394,6 +394,51 @@ Desajustes reales detectados (documentados, no corregidos aquí salvo petición 
    con Glob (SKILL.md § "Raíz del plugin"), y comprobación defensiva en los tres agentes que
    ejecutan `runner\`/`hooks\` por ruta (`rs-instalador`, `rs-editor-build`, `rs-editor-db-modeler`).
 
+---
+
+## 12. Módulos `scripts/pii_*.py`
+
+Cuatro módulos Python sin dependencias externas (solo `re`, `json`, `fnmatch`, `hmac`, `hashlib` de
+la librería estándar) que implementan la política de protección de datos personales de `db_query`.
+Se cargan por `importlib.util.spec_from_file_location` — mismo patrón que usa
+`mcp/rs-workspace-server.py` para el resto de módulos internos (`_load_model`, etc.) — nunca por
+`import` de paquete: no hay `__init__.py` ni intención de instalarlos como paquete. Un quinto
+módulo, `scripts/pii_patterns.json`, no es código sino la lista base de patrones de nombre.
+
+| Módulo | Responsabilidad |
+|---|---|
+| `scripts/pii_detect.py` | Reconoce formas de dato personal (DNI, NIE, IBAN, correo, teléfono, tarjeta) en un VALOR suelto o en una columna completa. Puro, sin estado, no registra lo que inspecciona. Formas fuertes (DNI/NIE/IBAN/correo) bastan con un acierto; formas débiles y puramente numéricas (teléfono, tarjeta, DNI sin letra) exigen mayoría del 50% sobre los valores no vacíos, para no disparar por un importe suelto. |
+| `scripts/pii_sqlscope.py` | Extrae tablas (`FROM`/`JOIN`) y columnas de predicado (`WHERE`) de un SQL de texto. No es un parser SQL: reconoce las formas habituales de las consultas que generan los agentes. Elimina antes los comentarios (`--`, `/* */`) con un escáner que respeta los literales de cadena; un literal sin cerrar (SQL malformado) hace que no se resuelva ninguna tabla — el alcance indeterminable degrada hacia el lado seguro (todo sin resolver, todo enmascarado), nunca al revés. |
+| `scripts/pii_policy.py` | Clasifica cada columna del resultset como en claro, enmascarada o no resuelta, con la precedencia documentada en `docs/proteccion-pii-consultas-bd.md` §4.2: marca explícita del modelo → patrón de nombre → tabla paramétrica → tipo → resto de texto → no resuelta. Para las no resueltas, decide por la forma de los valores con una prueba numérica estricta (rechaza signo `+`, `inf`/`nan`, separadores de miles, y cualquier entero de 9+ dígitos sin parte decimal — forma de identificador, no de cantidad). Si `pii_patterns.json` no se puede leer, la lista de patrones falla **cerrada** a `["*"]` en vez de abrirse en silencio. |
+| `scripts/pii_mask.py` | Punto único de transformación (`mask_resultset`): combina `pii_policy` + `pii_detect` sobre un resultset y sustituye los valores marcados por un seudónimo HMAC-SHA256 (clave de 32 bytes en el perfil local del usuario, `%LOCALAPPDATA%\rs-enterprise-agent\pii.key`, nunca en el repositorio) o por `[PII]` si `transform=suppress`. Es el módulo que importa directamente la tool MCP `db_query` (`mcp/rs-workspace-server.py`, vía `importlib`). |
+| `scripts/pii_cli.py` | Envoltorio CLI de `pii_mask` (stdin JSON `{columns,rows,sql}` → stdout JSON `{columns,rows,pii}`) para que `hooks/db-query.ps1` pueda invocarlo como proceso — PowerShell no puede importar un módulo Python. Nunca escribe un valor de dato personal en stderr, solo el nombre del problema (fichero, tipo de error). |
+
+**Por qué Python y no una segunda implementación en PowerShell.** El resto del plugin sigue la
+convención "tool MCP ↔ hook fallback 1:1" con dos implementaciones independientes — una en Python
+dentro de `rs-workspace-server.py`, otra en PowerShell en `hooks/*.ps1` (§7). La política PII rompe
+esa convención a propósito para la parte de **clasificación**: la guarda de solo lectura (SELECT/CTE,
+sin multi-statement) sí sigue duplicada entre la tool y el hook, como el resto, pero decidir si una
+columna es dato personal es la lógica con más superficie de desacuerdo de todo el plugin, y una
+divergencia ahí no sería un bug visible — sería una fuga silenciosa: la misma consulta enmascarada
+por un camino y en claro por el otro. Por eso solo existe una implementación, en Python, y el hook la
+invoca como subproceso (`pii_cli.py`) en vez de reescribirla; el coste es un `python.exe` adicional
+por consulta cuando se usa el hook, pagado solo por quien cae al fallback (convención
+Preferente/Fallback: la tool MCP se prefiere siempre).
+
+`hooks/lib-pii.ps1` (§7) es la excepción deliberada a "una sola implementación": los guardas
+`PreToolUse` (`pii-guard-bash.ps1`, `pii-guard-write.ps1`) y el saneado de `log-execution.ps1` no
+procesan resultsets de BD — inspeccionan texto de comandos y de ficheros en el camino crítico de
+cada `Write`/`Edit`/`Bash`, antes de que `db_query` entre en juego siquiera — así que invocar Python
+ahí tendría un coste distinto (latencia por evento, no por consulta) y un subconjunto de formas
+distinto es correcto a propósito (sin teléfono ni tarjeta, con validación de letra de control
+DNI/NIE — ver `references/hooks.md` y el header de `hooks/pii-guard-write.ps1`). Que sea una única
+librería (`lib-pii.ps1`) compartida entre esos dos consumidores PowerShell evita que esa segunda
+regla de detección diverja en dos sitios.
+
+---
+
+## 13. Inconsistencias conocidas — histórico
+
 **Resueltas** (histórico):
 - **`subagents/` vs `agents/`** (2.15.2) — las referencias en ficheros versionados (`references/`,
   `commands/`, `scripts/install-hooks.ps1`) se actualizaron a `agents/` (carpeta real desde v2.0.0).
