@@ -285,16 +285,75 @@ Describe "pii-guard-write.ps1" {
 }
 
 Describe "log-execution.ps1 saneado de PII" {
+    <#
+        Se conduce a traves del propio hook (no llamando a Remove-RsPii aislada) para
+        cubrir el camino real: parseo de parametros, lectura/escritura de
+        executions/history.json y la funcion compartida en conjunto. Cada It usa su
+        propia subcarpeta de $TestDrive para que el history.json de una prueba no
+        arrastre entradas de otra (ConvertTo-Json colapsa un array de 1 elemento a un
+        objeto plano, asi que leer "el ultimo task" en un fichero compartido seria
+        fragil).
+    #>
+    BeforeAll { $script:hookLog = Join-Path $PSScriptRoot ".." "hooks" "log-execution.ps1" }
+
     It "no persiste un DNI en el campo task" {
         $ws = Join-Path $TestDrive "wslog"
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
-        $hook = Join-Path $PSScriptRoot ".." "hooks" "log-execution.ps1"
 
-        & $hook $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success | Out-Null
 
         $historia = Get-Content (Join-Path $ws "executions" "history.json") -Raw
         $historia | Should -Not -Match "12345678Z"
         $historia | Should -Match "\[PII\]"
+    }
+
+    It "no altera una carpeta de entrega PROD_20260803A (falso positivo tipico del repo)" {
+        # Motivo original de retirar el patron de telefono y exigir checksum: esta
+        # convencion Actualizador\<ENTORNO>_<AAAAMMDD> no debe acabar enmascarada.
+        $ws = Join-Path $TestDrive "wslog-entrega-prefijo"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $texto = "genera el paquete en PROD_20260803A y avisa"
+
+        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+
+        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada.task | Should -Be $texto
+    }
+
+    It "no altera un 20260803A suelto sin prefijo (limite de palabra distinto)" {
+        $ws = Join-Path $TestDrive "wslog-entrega-suelto"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $texto = "carpeta 20260803A generada"
+
+        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+
+        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada.task | Should -Be $texto
+    }
+
+    It "no altera un numero de 8 digitos con letra de control incorrecta (el checksum descarta, no la forma)" {
+        # 12345678A: la letra correcta es Z, no A (mismo caso que el guard de escritura).
+        $ws = Join-Path $TestDrive "wslog-checksum-invalido"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $texto = "referencia 12345678A revisada, no coincide con ningun deudor"
+
+        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+
+        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada.task | Should -Be $texto
+    }
+
+    It "no altera un numero de 9 digitos con forma de telefono/importe (patron retirado, no debe reaparecer)" {
+        # 987654321 casaria con el patron de telefono retirado ('\b(?:+34)?[6789]\d{8}\b'):
+        # empieza por 9 y tiene 8 digitos mas. Pin de que ese patron sigue fuera.
+        $ws = Join-Path $TestDrive "wslog-importe"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $texto = "importe acumulado 987654321 centimos"
+
+        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+
+        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada.task | Should -Be $texto
     }
 }
 
