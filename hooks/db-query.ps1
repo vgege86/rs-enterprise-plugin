@@ -141,13 +141,51 @@ EXIT;
         $todas = @($lines | ConvertFrom-Csv)
         $rows  = @($todas | Select-Object -First $MaxRows)
 
+        # --- Enmascarado PII ---
+        # Se delega en scripts/pii_cli.py y NO se reimplementa aqui: la guarda read-only ya
+        # esta duplicada entre este hook y la tool MCP, y una divergencia en la politica PII
+        # seria una fuga silenciosa en vez de un error visible.
+        # Fallo ABIERTO a proposito: si el enmascarado revienta se devuelven los datos sin
+        # tocar. Este hook es el camino fallback; la proteccion efectiva es la tool MCP, y
+        # dejar sin servicio la consulta ante un fallo del filtro empujaria al usuario a
+        # sqlplus directo, que es peor. El aviso pii.error lo deja constar.
+        # Cabeceras desde los objetos de ConvertFrom-Csv, NO partiendo $lines[0] por comas:
+        # los valores con coma van entrecomillados (SET MARKUP CSV ... QUOTE ON) y un split
+        # a mano los partiria en silencio, que es el bug que ConvertFrom-Csv evita.
+        $cabeceras = @($todas[0].PSObject.Properties.Name)
+        $matriz    = @()
+        foreach ($fila in $rows) {
+            $matriz += , @($cabeceras | ForEach-Object { "$($fila.$_)" })
+        }
+
+        $piiMeta = @{ mode = "error" }
+        # Join-Path de DOS argumentos: con tres es PS 6+ y este hook corre en 5.1.
+        $cli     = Join-Path $PSScriptRoot "..\scripts\pii_cli.py"
+        try {
+            $entrada = @{ columns = $cabeceras; rows = $matriz; sql = $sqlNorm } |
+                       ConvertTo-Json -Depth 6 -Compress
+            $res = $entrada | python $cli $Workspace 2>$null
+            if ($LASTEXITCODE -eq 0 -and $res) {
+                $obj       = $res | ConvertFrom-Json
+                $cabeceras = @($obj.columns)
+                $matriz    = @($obj.rows)
+                $piiMeta   = $obj.pii
+            } else {
+                $piiMeta = @{ mode = "error"; error = "pii_cli fallo (exit $LASTEXITCODE) - datos SIN enmascarar" }
+            }
+        } catch {
+            $piiMeta = @{ mode = "error"; error = "pii_cli no ejecutable - datos SIN enmascarar" }
+        }
+
         @{
             success   = $true
-            row_count = $rows.Count
+            row_count = $matriz.Count
             truncated = $todas.Count -gt $MaxRows
-            sql       = $Sql
-            rows      = @($rows)
-        } | ConvertTo-Json -Depth 4
+            sql       = ($Sql -replace "'[^']*'", "'?'")   # literales fuera del eco
+            columns   = @($cabeceras)
+            rows      = @($matriz)
+            pii       = $piiMeta
+        } | ConvertTo-Json -Depth 6
     } else {
         @{ success = $false; error = "Motor '$motor' no soportado por este hook. Usar sqlcmd manualmente." } | ConvertTo-Json
     }
