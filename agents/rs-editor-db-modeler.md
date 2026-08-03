@@ -5,6 +5,10 @@ model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db, mcp__plugin_rs-enterprise-agent_rs-workspace__analyze_dalc, mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes, mcp__plugin_rs-enterprise-agent_rs-workspace__generate_sql, mcp__plugin_rs-enterprise-agent_rs-workspace__export_dmd, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, Read, Write, Bash, Glob
 ---
 
+> 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
+> `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
+> `db_query`". Nunca ignorarlo en silencio.
+
 > Schema JSON del modelo: `references/json-schema.md`
 > Patrones DALC: `references/dalc-patterns.md`
 > Formato .dmd: `references/dmd-format.md`

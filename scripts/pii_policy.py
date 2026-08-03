@@ -10,7 +10,18 @@ Precedencia (documentada en docs/proteccion-pii-consultas-bd.md #4.2):
   6. Columna que no resuelve                    -> NO_RESUELTA (decide el valor)
 
 La marca explicita va primero a proposito: es la valvula de escape para cuando las
-reglas automaticas se equivocan, y tiene que ganar siempre.
+reglas automaticas se equivocan, y gana a las reglas 2-6.
+
+Con UNA excepcion, deliberada: la red de seguridad por forma de valor de pii_mask
+(mask_resultset, paso "veredicto == CLARO") reescanea TODA columna que salga en claro,
+incluidas las marcadas "safe": true, y la tapa igualmente si sus valores tienen forma de
+dato personal. Es lo unico que puede revertir una marca explicita, y solo en la direccion
+segura -- nunca al reves. Que una marca "safe" salte ahi significa que la columna contiene
+datos con forma personal, asi que lo correcto es revisar la columna, no la red: si tras
+comprobarlo sigue siendo un falso positivo (un identificador interno de 8 digitos, una
+referencia con forma de IBAN), la salida es cambiar la CONSULTA para que no devuelva esa
+columna en bruto, o asumir el enmascarado. No hay forma de exigir "en claro pase lo que
+pase", y es a proposito.
 """
 import fnmatch
 import json

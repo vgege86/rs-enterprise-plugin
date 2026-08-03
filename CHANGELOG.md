@@ -15,8 +15,16 @@ seudónimo, de modo que se conserva la capacidad de detectar duplicados y correl
 filas sin exponer el dato.
 
 **Arranca apagado.** `pii_policy.mode` vale `off` mientras no se declare otra cosa, así
-que un workspace que actualice no cambia de comportamiento. `/rs-pii` gestiona la
-transición `off` → `audit` → `enforce` con `status`, `bootstrap`, `audit`, `enforce` y `off`.
+que un workspace que actualice sigue viendo los resultados de `db_query` igual que antes.
+`/rs-pii` gestiona la transición `off` → `audit` → `enforce` con `status`, `bootstrap`,
+`audit`, `enforce` y `off`.
+
+Dos cosas **sí** cambian aunque el modo sea `off`, a propósito, porque no dependen de la
+política del workspace: `hooks/log-execution.ps1` sanea siempre el texto que persiste en
+`executions/history.json` (una descripción de tarea con un DNI/NIE válido, un IBAN o un
+correo se guarda con `[PII]` en su lugar), y las guardas `PreToolUse`, si están
+registradas, bloquean siempre `sqlplus`/`sqlcmd` directos y la escritura de datos
+personales en ficheros. Ninguna de las dos afecta a lo que devuelve una consulta.
 
 Qué se considera dato personal, por orden de precedencia: la marca `"pii"` / `"safe"` de
 la columna en el modelo; el patrón del nombre (`TELEFON*`, `DNI*`, `*IBAN*`…); si la

@@ -360,7 +360,7 @@ Reglas evaluadas en cada consulta, sin necesidad de anotar el modelo por adelant
 
 | Regla | Resultado |
 |---|---|
-| Marca explícita en la columna del modelo de BD | Manda sobre todo lo demás |
+| Marca explícita en la columna del modelo de BD | Manda sobre el resto de reglas de esta tabla |
 | Nombre de columna con patrón sensible (`TELEFON*`, `DNI*`, `*IBAN*`, `EMAIL*`…) | Enmascarado |
 | Tabla paramétrica (idiomas, controles, versiones, módulos) | En claro |
 | Tipo numérico, fecha, clave primaria o ajena | En claro |
@@ -369,6 +369,16 @@ Reglas evaluadas en cada consulta, sin necesidad de anotar el modelo por adelant
 
 Las tablas paramétricas se toman de la lista que el modelo de BD ya mantiene para el
 instalador de cliente, de modo que no hay una segunda lista que sincronizar.
+
+**Lo único que puede revertir una marca explícita** es el detector de forma de valor del
+§4.3: una columna declarada segura cuyos valores tengan forma de dato personal se
+enmascara igualmente. Es la única excepción y va siempre en la dirección segura —nunca al
+revés—, porque el modelo de BD lo mantienen personas y una marca equivocada no debe poder
+abrir un agujero permanente. Si salta sobre una columna que se sabe segura (un
+identificador interno de ocho dígitos, una referencia con forma de IBAN), lo procedente es
+comprobar el contenido real de la columna; si efectivamente es un falso positivo, la
+salida es no devolver esa columna en bruto en la consulta o asumir el enmascarado. No
+existe una marca de "en claro pase lo que pase", y es deliberado.
 
 **Columna que no se puede resolver.** Un alias o una expresión calculada (`COUNT(*) AS TOTAL`,
 `SUBSTR(DNI,1,8) AS X`) no tiene definición en el modelo de BD, así que ninguna de las reglas
@@ -392,13 +402,20 @@ comportamiento es una decisión deliberada, no una tabla estática.
 ### 4.3 Detección de lo que las reglas no cubren
 
 Sobre los valores que salen **en claro** se pasa un detector de patrones (DNI/NIE,
-IBAN, correo, teléfono, tarjeta). Si un valor de una columna considerada segura
-coincide, se avisa y —en modo estricto— se enmascara:
+IBAN, correo, teléfono, tarjeta). Si los valores de una columna considerada segura
+coinciden, la columna se **reclasifica como sensible** —se enmascara igualmente en modo
+estricto— y se añade a la lista `suspect` que acompaña a cada resultado:
 
 ```
-RDEUDORES.NUM1 -> 12 de 200 valores con forma de teléfono móvil
-   => columna reclasificada como sensible; revisar
+pii.suspect = ["NUM1"]
+   => columna en claro con valores con forma de dato personal; enmascarada y pendiente de revisar
 ```
+
+La lista es de **nombres de columna**: ni el aviso ni ningún otro punto del sistema
+reproduce un valor detectado. La herramienta tiene instrucción explícita de trasladar
+esa lista al usuario en la respuesta de la consulta, no de tratarla como información
+interna. Para el detalle por columna (categoría detectada y cuántos valores de la
+muestra coinciden) está el inventario del §6, que se genera muestreando a propósito.
 
 Este detector es también el que produce el **inventario de columnas con datos
 personales** que Sistemas necesita para el paso 3.2. El trabajo no se duplica.
@@ -410,7 +427,7 @@ golpe los diez agentes que consultan datos:
 
 | Modo | Comportamiento |
 |---|---|
-| `off` | Comportamiento actual. Aviso visible en cada consulta. |
+| `off` | Comportamiento actual: los datos salen en claro. Cada consulta lo indica en su respuesta (`pii.mode = "off"`), pero **no** hay ninguna advertencia adicional. |
 | `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege.** |
 | `enforce` | Enmascarado activo. |
 
@@ -424,7 +441,16 @@ equivalente al control en BD sería incorrecto y no resistiría una revisión.
 ### 5.1 Lo que sí protege
 
 - Consultas realizadas a través de la herramienta de consulta del plugin.
-- Los ficheros que la herramienta genera y el registro interno de ejecuciones.
+- El contenido que la herramienta escribe **directamente** en un fichero: se inspecciona
+  antes de escribirlo y se bloquea si contiene una forma de DNI/NIE, IBAN o correo.
+- El registro interno de ejecuciones, que se sanea siempre.
+
+Conviene ser preciso con el segundo punto: la inspección cubre las escrituras de fichero
+que hace la herramienta *como tal*. **No** cubre los ficheros que generan los procesos
+auxiliares del plugin —generación de DDL, paquetes de instalación y de actualización,
+exportación del modelo, informes HTML y la propia escritura de la configuración de esta
+medida—, que escriben en disco por otra vía. Esos artefactos se entregan al cliente por
+diseño y pueden contener datos reales; su control es organizativo, no automático.
 
 ### 5.2 Lo que no protege
 
@@ -450,6 +476,12 @@ El recuento es numérico y sale en claro por diseño. Repitiendo la consulta se
 reconstruye el valor sin haber visto nunca un dato enmascarado. Con vistas redactadas
 esto no ocurre, porque la columna original no está expuesta a la sesión.
 
+Lo único que hace la medida provisional aquí es **avisar**: cuando una consulta filtra
+por una columna con datos personales, el resultado incluye esa columna en
+`predicate_warning` y la herramienta tiene instrucción de trasladarlo al usuario. No se
+bloquea —bloquear rompería el filtrado legítimo, que es la mitad del trabajo diario—, así
+que el aviso deja constancia pero no impide la reconstrucción descrita arriba.
+
 **d) El pseudónimo sigue siendo dato personal.** Conforme al art. 4(5) del RGPD, la
 seudonimización **reduce** el riesgo pero no excluye el dato del ámbito de la norma.
 `pii:3f9a2c1b` continúa siendo dato personal y continúa transfiriéndose al proveedor
@@ -467,6 +499,16 @@ dependencia de puesto de trabajo.
 direcciones no tienen patrón reconocible. Si alguien los declara seguros, ninguna
 comprobación automática lo advierte. Solo lo detecta la revisión del cambio en el
 control de versiones.
+
+**g) La vía alternativa de consulta puede devolver datos sin filtrar.** Además de la
+herramienta principal existe una vía de respaldo, que se usa cuando aquella no está
+disponible. Si en ese camino el filtro **no se puede ni ejecutar** (falta el intérprete
+o el fichero del filtro en el puesto), la consulta devuelve los datos **sin enmascarar**,
+señalándolo en la respuesta. Es una decisión deliberada: dejar sin servicio la consulta
+empujaría al desarrollador a usar el cliente de base de datos directamente, que no pasa
+por ningún filtro y es peor. Es el único punto de la medida donde un componente capaz de
+enmascarar decide no hacerlo. Si el filtro **sí se ejecuta** y falla —modelo corrupto,
+política ilegible, error interno— la consulta **no devuelve ninguna fila**.
 
 ### 5.3 Fuera del alcance técnico
 
