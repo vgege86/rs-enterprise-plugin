@@ -14,6 +14,10 @@ Describe "pii_cli.py" {
         $script:ws    = Join-Path $TestDrive "trunk"
         $bd           = Join-Path $script:ws "BD"
         New-Item -ItemType Directory -Path $bd -Force | Out-Null
+        # El CLI ya NO busca el modelo con un glob de BD/*-model.json: la ruta se la pasa el
+        # llamante (hooks/lib-dbconfig.ps1 Get-RsModelPath), que es la misma que resuelve
+        # get-config.ps1 -> config["model_path"] para la tool MCP.
+        $script:modelo = Join-Path $bd "Proyecto-model.json"
         @'
 {
   "pii_policy": { "mode": "enforce" },
@@ -25,7 +29,7 @@ Describe "pii_cli.py" {
     }}
   }
 }
-'@ | Set-Content (Join-Path $bd "Proyecto-model.json") -Encoding UTF8
+'@ | Set-Content $script:modelo -Encoding UTF8
     }
 
     It "existe el CLI" {
@@ -39,13 +43,13 @@ Describe "pii_cli.py" {
             sql     = "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES"
         } | ConvertTo-Json -Depth 5 -Compress
 
-        $salida = $entrada | python $script:cli $script:ws | ConvertFrom-Json
+        $salida = $entrada | python $script:cli $script:ws $script:modelo | ConvertFrom-Json
         $salida.rows[0][0] | Should -Be "1024"
         $salida.rows[0][1] | Should -Match "^pii:[0-9a-f]{12}$"
         $salida.pii.masked | Should -Contain "NOMBRE"
     }
 
-    It "no toca nada si el modelo no declara politica" {
+    It "no toca nada si el workspace no tiene modelo configurado" {
         $wsSinModelo = Join-Path $TestDrive "otro"
         New-Item -ItemType Directory -Path $wsSinModelo -Force | Out-Null
         $entrada = @{
@@ -59,10 +63,42 @@ Describe "pii_cli.py" {
         $salida.pii.mode   | Should -Be "off"
     }
 
-    It "devuelve la entrada intacta si el enmascarado falla" {
-        # Contrato de fallo ABIERTO en el hook: mejor devolver el dato que romper la
-        # consulta. La proteccion real la da la tool MCP; este es el camino fallback.
-        $salida = "no es json" | python $script:cli $script:ws
+    It "aplica la politica de un modelo cuyo nombre no casaria un glob *-model.json" {
+        # La resolucion por glob de BD/*-model.json ignoraba el campo "model" de la conexion:
+        # con "model": "BD/uCollect-v2.json" el glob no encontraba nada y el CLI devolvia
+        # mode=off -- indistinguible de un workspace sin politica -- mientras la tool MCP,
+        # que si usa model_path, enmascaraba.
+        $bd2 = Join-Path $script:ws "BD"
+        $raro = Join-Path $bd2 "uCollect-v2.json"
+        Copy-Item $script:modelo $raro -Force
+
+        $entrada = @{
+            columns = @("NOMBRE")
+            rows    = @(, @("Ana Lopez"))
+            sql     = "SELECT NOMBRE FROM RDEUDORES"
+        } | ConvertTo-Json -Depth 5 -Compress
+
+        $salida = $entrada | python $script:cli $script:ws $raro | ConvertFrom-Json
+        $salida.pii.mode   | Should -Be "enforce"
+        $salida.rows[0][0] | Should -Match "^pii:[0-9a-f]{12}$"
+    }
+
+    It "sale con codigo de fallo interno si la entrada no es JSON (no emite datos)" {
+        $salida = "no es json" | python $script:cli $script:ws $script:modelo 2>$null
+        $LASTEXITCODE | Should -Not -Be 0
+        $salida        | Should -BeNullOrEmpty
+    }
+
+    It "sale con error si el modelo configurado no existe (no lo trata como ausencia de modelo)" {
+        # Una politica declarada que no se puede cargar NO puede reportarse como "no hay
+        # politica": seria mode=off silencioso sobre un workspace que cree estar protegido.
+        $entrada = @{
+            columns = @("NOMBRE")
+            rows    = @(, @("Ana Lopez"))
+            sql     = "SELECT NOMBRE FROM RDEUDORES"
+        } | ConvertTo-Json -Depth 5 -Compress
+
+        $null = $entrada | python $script:cli $script:ws (Join-Path $script:ws "BD\no-existe.json") 2>$null
         $LASTEXITCODE | Should -Not -Be 0
     }
 
@@ -81,7 +117,7 @@ Describe "pii_cli.py" {
             sql     = "SELECT NOMBRE FROM RDEUDORES"
         } | ConvertTo-Json -Depth 5 -Compress
 
-        $null = $entrada | python $script:cli $wsModeloRoto 2>$null
+        $null = $entrada | python $script:cli $wsModeloRoto (Join-Path $bdRoto "Roto-model.json") 2>$null
         $LASTEXITCODE | Should -Not -Be 0
     }
 
@@ -100,8 +136,40 @@ Describe "pii_cli.py" {
             sql     = "SELECT NOMBRE FROM RDEUDORES"
         } | ConvertTo-Json -Depth 5 -Compress
 
-        $null = $entrada | python $script:cli $wsModeloLista 2>$null
+        $null = $entrada | python $script:cli $wsModeloLista (Join-Path $bdLista "Lista-model.json") 2>$null
         $LASTEXITCODE | Should -Not -Be 0
+    }
+
+    It "un modelo con tables en forma de LISTA se enmascara igual que en forma de dict" {
+        # Las dos formas son reales en este codebase (rs-workspace-server.py las normaliza
+        # en seis sitios). Antes reventaba con AttributeError: la tool MCP se caia y el hook
+        # devolvia todas las filas en claro por su rama de fallo abierto.
+        $wsLista = Join-Path $TestDrive "modelo-forma-lista"
+        $bdL = Join-Path $wsLista "BD"
+        New-Item -ItemType Directory -Path $bdL -Force | Out-Null
+        $mL = Join-Path $bdL "Lista-model.json"
+        @'
+{
+  "pii_policy": { "mode": "enforce" },
+  "tables": [
+    { "name": "RDEUDORES", "columns": [
+      { "name": "IDDEUDOR", "type": "NUMBER(10)", "pk": true },
+      { "name": "NOMBRE",   "type": "VARCHAR2(60)" }
+    ]}
+  ]
+}
+'@ | Set-Content $mL -Encoding UTF8
+
+        $entrada = @{
+            columns = @("IDDEUDOR", "NOMBRE")
+            rows    = @(, @("1024", "Ana Lopez"))
+            sql     = "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES"
+        } | ConvertTo-Json -Depth 5 -Compress
+
+        $salida = $entrada | python $script:cli $wsLista $mL | ConvertFrom-Json
+        $LASTEXITCODE      | Should -Be 0
+        $salida.rows[0][0] | Should -Be "1024"
+        $salida.rows[0][1] | Should -Match "^pii:[0-9a-f]{12}$"
     }
 }
 
@@ -145,20 +213,153 @@ Describe "db-query.ps1 camino sin filas" {
         $out.sql                               | Should -Not -Match "12345678Z"
     }
 
-    It "sin filas pero con cabecera: extrae los nombres de columna sin partir la linea por comas" {
-        # Caso defensivo (Count -le 1 con Count -eq 1): sqlplus llega a emitir la cabecera
-        # pero ninguna fila de datos.
+    It "sin filas: el bloque pii tiene las mismas claves que el camino con filas" {
+        # Emitia solo {mode, reason} con mode="off" fijo, asi que un workspace en enforce
+        # reportaba "off" en cuanto una consulta no devolvia filas. Ahora el modo sale de
+        # la misma politica que el camino con filas (pii_cli con resultset vacio).
+        Mock -CommandName sqlplus -MockWith { $global:LASTEXITCODE = 0 }
+
+        $out = & $script:hook -Workspace $script:ws2 -Sql "SELECT NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+        $claves = @($out.pii.PSObject.Properties.Name)
+        foreach ($k in @("mode", "masked", "unresolved", "suspect", "predicate_warning", "tables")) {
+            $claves | Should -Contain $k
+        }
+    }
+}
+
+Describe "db-query.ps1 camino CON filas (integracion PII)" {
+    <#
+        sqlplus mockeado emitiendo CSV real: cabecera + filas. Cubre lo que hasta ahora no
+        tenia ninguna cobertura Pester -- extraccion de cabeceras, construccion de la matriz,
+        invocacion de pii_cli con el model_path de la conexion SELECCIONADA, y las dos ramas
+        de fallo (abierto vs cerrado).
+    #>
+    BeforeAll {
+        $script:hook3 = Join-Path $PSScriptRoot ".." "hooks" "db-query.ps1"
+
+        # Workspace con politica enforce y un modelo cuyo NOMBRE no casaria "*-model.json":
+        # fija de paso que la resolucion va por el campo "model" de la conexion, no por glob.
+        $script:ws3 = Join-Path $TestDrive "trunk-confilas"
+        $docs3      = Join-Path $script:ws3 "docs"
+        $bd3        = Join-Path $script:ws3 "BD"
+        New-Item -ItemType Directory -Path $docs3 -Force | Out-Null
+        New-Item -ItemType Directory -Path $bd3 -Force | Out-Null
+        @'
+{
+  "proyecto": "Proyecto",
+  "conexiones": [
+    { "id": "desa", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p" },
+    { "id": "prod", "motor": "ORACLE", "cadena": "Data Source=XP;User Id=u;Password=p", "model": "BD/uCollect-v2.json" }
+  ]
+}
+'@ | Set-Content (Join-Path $docs3 ".rs-databases.json") -Encoding UTF8
+        @'
+{
+  "pii_policy": { "mode": "enforce" },
+  "tables": {
+    "RDEUDORES": { "columns": {
+      "IDDEUDOR": { "type": "NUMBER(10)", "pk": true },
+      "NOMBRE":   { "type": "VARCHAR2(60)" }
+    }}
+  }
+}
+'@ | Set-Content (Join-Path $bd3 "uCollect-v2.json") -Encoding UTF8
+
+        # Workspace cuyo modelo declarado esta CORRUPTO: pii_cli corre y falla.
+        $script:ws4 = Join-Path $TestDrive "trunk-modelo-roto"
+        $docs4      = Join-Path $script:ws4 "docs"
+        $bd4        = Join-Path $script:ws4 "BD"
+        New-Item -ItemType Directory -Path $docs4 -Force | Out-Null
+        New-Item -ItemType Directory -Path $bd4 -Force | Out-Null
+        @'
+{
+  "proyecto": "Roto",
+  "conexiones": [
+    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Roto.json" }
+  ]
+}
+'@ | Set-Content (Join-Path $docs4 ".rs-databases.json") -Encoding UTF8
+        "{ esto no es json" | Set-Content (Join-Path $bd4 "Roto.json") -Encoding UTF8
+    }
+
+    It "enmascara las filas usando el modelo de la conexion seleccionada" {
         Mock -CommandName sqlplus -MockWith {
             $global:LASTEXITCODE = 0
             "IDDEUDOR,NOMBRE"
+            "1024,`"Ana Lopez`""
+            "1025,`"Luis Gomez`""
         }
 
-        $out = & $script:hook -Workspace $script:ws2 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES WHERE 1=0" |
+        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "prod" `
+                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+
+        $out.success       | Should -Be $true
+        $out.row_count     | Should -Be 2
+        $out.columns       | Should -Contain "NOMBRE"
+        $out.pii.mode      | Should -Be "enforce"
+        $out.pii.masked    | Should -Contain "NOMBRE"
+        $out.rows[0][0]    | Should -Be "1024"
+        $out.rows[0][1]    | Should -Match "^pii:[0-9a-f]{12}$"
+        $out.rows[1][1]    | Should -Match "^pii:[0-9a-f]{12}$"
+        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
+    }
+
+    It "si pii_cli corre y falla NO devuelve filas (fallo cerrado)" {
+        # Antes cualquier salida != 0 de pii_cli caia en la rama de fallo abierto y devolvia
+        # las filas EN CLARO con pii.mode = "error". El fallo abierto solo es legitimo cuando
+        # el filtro no se puede ni ejecutar; si corrio y fallo, tenia los datos en la mano.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 0
+            "IDDEUDOR,NOMBRE"
+            "1024,`"Ana Lopez`""
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws4 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
                ConvertFrom-Json
 
+        $out.success   | Should -Be $false
         $out.row_count | Should -Be 0
-        $out.columns   | Should -Contain "IDDEUDOR"
-        $out.columns   | Should -Contain "NOMBRE"
+        @($out.rows).Count | Should -Be 0
+        $out.pii.error | Should -Not -BeNullOrEmpty
+        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
+    }
+
+    It "un error de sqlplus a mitad de volcado no devuelve las filas ya emitidas como error" {
+        # sqlplus emite las filas segun las trae; un ORA- a mitad de fetch deja datos en lo
+        # capturado. La rama de error NO pasa por el enmascarado, asi que volcar la salida
+        # entera metia esas filas en el contexto en claro. Ademas el filtro anterior
+        # ('ORA-|SP2-|ERROR', sin anclar) casaba con la palabra "error" DENTRO de los datos.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 1
+            "IDINCIDENCIA,DESCRIPCION,DNI"
+            "1,`"error al cobrar`",12345678Z"
+            "2,`"ERROR de conexion`",87654321X"
+            "ORA-01555: snapshot too old"
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws3 `
+                    -Sql "SELECT IDINCIDENCIA, DESCRIPCION, DNI FROM RINCIDENCIAS" | ConvertFrom-Json
+
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "ORA-01555"
+        $out.error   | Should -Not -Match "12345678Z"
+        $out.error   | Should -Not -Match "87654321X"
+        $out.error   | Should -Not -Match "al cobrar"
+    }
+
+    It "un error sin lineas de diagnostico devuelve un mensaje fijo, no la salida capturada" {
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 1
+            "IDDEUDOR,DNI"
+            "1024,12345678Z"
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws3 -Sql "SELECT IDDEUDOR, DNI FROM RDEUDORES" |
+               ConvertFrom-Json
+
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "sin lineas de diagnostico"
+        $out.error   | Should -Not -Match "12345678Z"
     }
 }
 

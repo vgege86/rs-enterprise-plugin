@@ -43,11 +43,10 @@ foreach ($c in $cfg.conexiones) {
         $schema = if ($c.dataBase) { "$($c.dataBase)" } else { Get-CsPart -Cadena $cadena -Clave "Database" }
     }
 
-    if ($c.model) {
-        $modelPath = if ([System.IO.Path]::IsPathRooted("$($c.model)")) { "$($c.model)" } else { Join-Path $Workspace "$($c.model)" }
-    } else {
-        $modelPath = Join-Path $Workspace "BD\$proyecto-model.json"
-    }
+    # Resolucion en lib-dbconfig.ps1, compartida con db-query.ps1: ese hook necesita la
+    # MISMA ruta para pasarsela a scripts/pii_cli.py (el modelo lleva la politica PII
+    # entera, no solo el esquema).
+    $modelPath   = Get-RsModelPath -Workspace $Workspace -Conexion $c -Proyecto $proyecto
     $modelExists = Test-Path $modelPath
 
     # Si el schema cayó al fallback (= usuario de conexión) y ya existe model.json, su campo
