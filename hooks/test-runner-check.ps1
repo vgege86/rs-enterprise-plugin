@@ -53,9 +53,12 @@ if ($testProjects.Count -eq 0) {
     exit 0
 }
 
-$noBuildFlag = if ($NoBuild) { "--no-build" } else { "" }
-$cmd = "dotnet test `"$SlnPath`" $noBuildFlag --nologo -v normal 2>&1"
-$raw = Invoke-Expression $cmd
+# Operador de llamada con array de argumentos (no Invoke-Expression sobre una cadena): $SlnPath va
+# como UN argumento literal, evitando inyección de comandos vía una ruta con comillas/`;`.
+# Ver PSScriptAnalyzer PSAvoidUsingInvokeExpression (gate en CI).
+$dotnetArgs = @("test", $SlnPath, "--nologo", "-v", "normal")
+if ($NoBuild) { $dotnetArgs += "--no-build" }
+$raw = & dotnet @dotnetArgs 2>&1
 $exitCode = $LASTEXITCODE
 
 # Parsear resumen

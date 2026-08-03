@@ -33,9 +33,12 @@ if (-not (Get-Command "dotnet" -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$restoreFlag = if ($NoRestore) { "--no-restore" } else { "" }
-$cmd = "dotnet build `"$SlnPath`" $restoreFlag -v quiet --nologo 2>&1"
-$raw = Invoke-Expression $cmd
+# Operador de llamada con array de argumentos (no Invoke-Expression sobre una cadena): así $SlnPath
+# se pasa como UN argumento literal y una ruta con comillas/`;` no puede romper el quoting e inyectar
+# comandos. Ver PSScriptAnalyzer PSAvoidUsingInvokeExpression (gate en CI).
+$dotnetArgs = @("build", $SlnPath, "-v", "quiet", "--nologo")
+if ($NoRestore) { $dotnetArgs += "--no-restore" }
+$raw = & dotnet @dotnetArgs 2>&1
 $exitCode = $LASTEXITCODE
 
 # Parsear líneas de error/warning del compilador

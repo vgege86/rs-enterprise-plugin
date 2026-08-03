@@ -350,26 +350,83 @@ def _parse_resultset(stdout: str, motor: str) -> tuple[list, list, int]:
     return columns, rows, len(rows)
 
 
-@mcp.tool(description="SELECT directo a una BD de .rs-databases.json (SQL Server u Oracle). SOLO lectura: SELECT o CTE (WITH ... SELECT). conexion = id de conexión; si se omite, la principal. Devuelve columns[] (nombres, una vez) y rows[] (listas de valores en ese mismo orden). max_rows limita filas devueltas en contexto (default 200).")
-def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str = "") -> str:
-    sql_clean = sql.strip().upper()
-    if not (sql_clean.startswith("SELECT") or sql_clean.startswith("WITH")):
-        return json.dumps({"success": False, "error": "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)"}, ensure_ascii=False)
+def _strip_sql_comments(sql: str) -> str:
+    """Quita comentarios SQL (-- de línea y /* */ de bloque) que estén FUERA de literales de string.
+    Un -- o /* dentro de '...' es dato, no comentario. Se usa antes de validar la guarda read-only:
+    evita que un ; o un verbo de escritura escondido en un comentario engañe a la validación, y evita
+    el falso positivo de bloquear una query legítima por un ; comentado."""
+    out = []
+    i, n = 0, len(sql)
+    in_str = False
+    while i < n:
+        ch = sql[i]
+        if in_str:
+            out.append(ch)
+            if ch == "'":
+                if i + 1 < n and sql[i + 1] == "'":   # '' escapada dentro del literal
+                    out.append(sql[i + 1])
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch == "'":
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "-" and i + 1 < n and sql[i + 1] == "-":
+            j = sql.find("\n", i)
+            out.append(" ")
+            if j == -1:
+                break
+            i = j
+            continue
+        if ch == "/" and i + 1 < n and sql[i + 1] == "*":
+            j = sql.find("*/", i + 2)
+            out.append(" ")
+            if j == -1:
+                break
+            i = j + 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _is_readonly_sql(sql: str) -> tuple[bool, str]:
+    """Valida que sql es de SOLO lectura (SELECT o CTE WITH...SELECT), sin multi-statement ni verbo de
+    escritura. Devuelve (True, "") si es seguro; (False, motivo) si no. Fuente única de la guarda
+    read-only del MCP — el hook db-query.ps1 replica esta misma lógica (mantener en PARIDAD)."""
+    stripped = _strip_sql_comments(sql).strip()
+    upper = stripped.upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        return False, "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)"
     # Un CTE puede colgar un verbo de escritura tras el bloque: "WITH x AS (...) DELETE FROM ...".
-    # startswith("WITH") no lo pilla; bloquear si aparece cualquier verbo de escritura.
-    if sql_clean.startswith("WITH") and re.search(r'\b(INSERT|UPDATE|DELETE|MERGE)\b', sql_clean):
-        return json.dumps({"success": False, "error": "CTE con verbo de escritura no permitido"}, ensure_ascii=False)
-    # Bloquea multi-statement: "SELECT 1; DROP TABLE x"
-    # Elimina ; trailing (habitual en SQL) y cuenta ; fuera de literales de string
-    sql_norm = sql.strip().rstrip(";")
-    in_str, semi_count = False, 0
-    for ch in sql_norm:
+    if upper.startswith("WITH") and re.search(r'\b(INSERT|UPDATE|DELETE|MERGE)\b', upper):
+        return False, "CTE con verbo de escritura no permitido"
+    # Multi-statement ("SELECT 1; DROP TABLE x"): quita el ; final y cuenta ; fuera de literales.
+    norm = stripped.rstrip(";")
+    in_str, semi = False, 0
+    for ch in norm:
         if ch == "'":
             in_str = not in_str
         elif ch == ";" and not in_str:
-            semi_count += 1
-    if semi_count > 0:
-        return json.dumps({"success": False, "error": "Multi-statement SQL no permitido"}, ensure_ascii=False)
+            semi += 1
+    if semi > 0:
+        return False, "Multi-statement SQL no permitido"
+    return True, ""
+
+
+@mcp.tool(description="SELECT directo a una BD de .rs-databases.json (SQL Server u Oracle). SOLO lectura: SELECT o CTE (WITH ... SELECT). conexion = id de conexión; si se omite, la principal. Devuelve columns[] (nombres, una vez) y rows[] (listas de valores en ese mismo orden). max_rows limita filas devueltas en contexto (default 200).")
+def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str = "") -> str:
+    # Guarda de solo-lectura (fuente única: _is_readonly_sql, replicada en hooks/db-query.ps1).
+    ok, motivo = _is_readonly_sql(sql)
+    if not ok:
+        return json.dumps({"success": False, "error": motivo}, ensure_ascii=False)
+    # SQL para ejecución: se conserva el original (los comentarios son inocuos para el cliente BD),
+    # solo se quita el ; final habitual. La validación read-only ya la hizo _is_readonly_sql.
+    sql_norm = sql.strip().rstrip(";")
 
     config = _get_config(workspace)
     if "error" in config:

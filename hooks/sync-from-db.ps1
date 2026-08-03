@@ -218,7 +218,14 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 "@
 
     $query | Set-Content $tempSql -Encoding ASCII
-    sqlcmd -S $dataSource -d $database -U $user -P $password -i $tempSql -s "|" -W -h -1 > $tempOut 2>&1
+    # Password por variable de entorno SQLCMDPASSWORD, no en argv: -P queda visible en la lista de
+    # procesos durante toda la ejecución. Mismo patrón que la tool MCP db_query (rs-workspace-server.py).
+    $env:SQLCMDPASSWORD = $password
+    try {
+        sqlcmd -S $dataSource -d $database -U $user -i $tempSql -s "|" -W -h -1 > $tempOut 2>&1
+    } finally {
+        Remove-Item Env:SQLCMDPASSWORD -ErrorAction SilentlyContinue
+    }
     $rows = Get-Content $tempOut | Where-Object { $_ -match '\|' }
 
     foreach ($row in $rows) {

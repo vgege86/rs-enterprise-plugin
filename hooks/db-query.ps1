@@ -28,24 +28,61 @@ $ErrorActionPreference = "Continue"
 # --- Guarda solo-lectura (misma validación que la tool MCP db_query, rs-workspace-server.py) ---
 # Este hook es el fallback 1:1 de esa tool; sin esta guarda ejecutaría cualquier sentencia
 # (DROP/DELETE/bloque PL/SQL) interpolada directamente en el script sqlplus.
-$sqlTrim  = $Sql.Trim()
-$sqlUpper = $sqlTrim.ToUpper()
-if (-not ($sqlUpper.StartsWith("SELECT") -or $sqlUpper.StartsWith("WITH"))) {
+# ⛔ PARIDAD: la lógica equivalente vive en _is_readonly_sql/_strip_sql_comments (rs-workspace-server.py).
+# Si cambias una, cambia la otra.
+
+# Quita comentarios -- de línea y /* */ de bloque que estén FUERA de literales de string, para que un
+# ; o un verbo de escritura escondido en un comentario no engañe a la guarda (y para no dar falso
+# positivo con un ; comentado). Espejo de _strip_sql_comments del MCP.
+function Remove-SqlComments {
+    param([string]$s)
+    $out = New-Object System.Text.StringBuilder
+    $i = 0; $n = $s.Length; $inStr = $false
+    while ($i -lt $n) {
+        $ch = $s[$i]
+        if ($inStr) {
+            [void]$out.Append($ch)
+            if ($ch -eq "'") {
+                if ($i + 1 -lt $n -and $s[$i + 1] -eq "'") { [void]$out.Append($s[$i + 1]); $i += 2; continue }
+                $inStr = $false
+            }
+            $i++; continue
+        }
+        if ($ch -eq "'") { $inStr = $true; [void]$out.Append($ch); $i++; continue }
+        if ($ch -eq '-' -and $i + 1 -lt $n -and $s[$i + 1] -eq '-') {
+            $j = $s.IndexOf("`n", $i); [void]$out.Append(' ')
+            if ($j -lt 0) { break }
+            $i = $j; continue
+        }
+        if ($ch -eq '/' -and $i + 1 -lt $n -and $s[$i + 1] -eq '*') {
+            $j = $s.IndexOf('*/', $i + 2); [void]$out.Append(' ')
+            if ($j -lt 0) { break }
+            $i = $j + 2; continue
+        }
+        [void]$out.Append($ch); $i++
+    }
+    return $out.ToString()
+}
+
+$sqlTrim   = $Sql.Trim()
+$sqlGuard  = (Remove-SqlComments $Sql).Trim()   # solo para VALIDAR
+$guardUpper = $sqlGuard.ToUpper()
+if (-not ($guardUpper.StartsWith("SELECT") -or $guardUpper.StartsWith("WITH"))) {
     @{ success = $false; error = "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)" } | ConvertTo-Json
     exit 1
 }
 # Un CTE puede colgar un verbo de escritura tras el bloque ("WITH x AS (...) DELETE FROM ...");
 # StartsWith("WITH") no lo pilla. Bloquear si aparece cualquier verbo de escritura.
-if ($sqlUpper.StartsWith("WITH") -and $sqlUpper -match '\b(INSERT|UPDATE|DELETE|MERGE)\b') {
+if ($guardUpper.StartsWith("WITH") -and $guardUpper -match '\b(INSERT|UPDATE|DELETE|MERGE)\b') {
     @{ success = $false; error = "CTE con verbo de escritura no permitido" } | ConvertTo-Json
     exit 1
 }
-# Bloquea multi-statement ("SELECT 1; DROP TABLE x"): quita el ; final habitual y cuenta los ;
-# que queden fuera de literales de string.
-$sqlNorm = $sqlTrim.TrimEnd(';')
+# Bloquea multi-statement ("SELECT 1; DROP TABLE x"): sobre el SQL sin comentarios, quita el ; final
+# habitual y cuenta los ; que queden fuera de literales de string.
+$guardNorm = $sqlGuard.TrimEnd(';')
 $inStr = $false
 $semiCount = 0
-foreach ($ch in $sqlNorm.ToCharArray()) {
+foreach ($ch in $guardNorm.ToCharArray()) {
     if ($ch -eq "'") { $inStr = -not $inStr }
     elseif ($ch -eq ';' -and -not $inStr) { $semiCount++ }
 }
@@ -53,6 +90,8 @@ if ($semiCount -gt 0) {
     @{ success = $false; error = "Multi-statement SQL no permitido" } | ConvertTo-Json
     exit 1
 }
+# Para la EJECUCIÓN se usa el SQL original (comentarios inocuos para el cliente BD), solo sin ; final.
+$sqlNorm = $sqlTrim.TrimEnd(';')
 
 $Workspace = Resolve-RsWorkspace $Workspace
 
