@@ -82,18 +82,44 @@ def cargar_politica(modelo):
     }
 
 
+def indice_tablas(modelo):
+    """{NOMBRE_TABLA: tdef} admitiendo las DOS formas de modelo del codebase.
+
+    tables puede ser un dict {"RDEUDORES": {...}} o una lista [{"name": "RDEUDORES", ...}].
+    Ambas son formas reales aqui: mcp/rs-workspace-server.py las normaliza en seis sitios
+    (get_table_schema, get_model_index, search_model...). Si esta normalizacion faltase, un
+    modelo en forma de lista reventaria con AttributeError y los dos consumidores del
+    enmascarado reaccionarian en direcciones OPUESTAS -- la tool MCP se caeria (sin datos)
+    y el hook caeria por su rama de fallo abierto (todos los datos en claro). Se normaliza
+    aqui, en el contrato de entrada, y no en cada consumidor.
+    """
+    bruto = (modelo or {}).get("tables") or {}
+    if isinstance(bruto, dict):
+        return {str(k).upper(): v for k, v in bruto.items() if isinstance(v, dict)}
+    return {str(t.get("name") or t.get("tableName", "?")).upper(): t
+            for t in bruto if isinstance(t, dict)}
+
+
+def indice_columnas(tdef):
+    """{NOMBRE_COLUMNA: coldef} admitiendo dict o lista, igual que indice_tablas."""
+    cols = (tdef or {}).get("columns") or {}
+    if isinstance(cols, dict):
+        return {str(k).upper(): v for k, v in cols.items() if isinstance(v, dict)}
+    return {str(c.get("name") or c.get("columnName", "?")).upper(): c
+            for c in cols if isinstance(c, dict)}
+
+
 def _definiciones(columna, tablas, modelo):
     """[(tabla, coldef)] de la columna en las tablas del ambito."""
     salida = []
-    tablas_modelo = (modelo or {}).get("tables") or {}
+    tablas_modelo = indice_tablas(modelo)
     for t in tablas:
-        tdef = tablas_modelo.get(t) or tablas_modelo.get(t.upper())
+        tdef = tablas_modelo.get(str(t).upper())
         if not tdef:
             continue
-        cols = tdef.get("columns") or {}
-        cdef = cols.get(columna) or cols.get(columna.upper())
+        cdef = indice_columnas(tdef).get(str(columna).upper())
         if cdef is not None:
-            salida.append((t.upper(), cdef))
+            salida.append((str(t).upper(), cdef))
     return salida
 
 

@@ -181,3 +181,52 @@ def test_celdas_none_y_en_blanco_no_generan_seudonimo():
     assert filas[1][0] is None
     assert filas[2][0] == ""
     assert filas[3][0] == "   "
+
+
+# --- Modelo en forma de LISTA -------------------------------------------------
+# mcp/rs-workspace-server.py admite las dos formas de modelo (tables como dict y como
+# lista de objetos con "name") en seis sitios. El enmascarado asumia solo la de dict y
+# reventaba con AttributeError ante la otra: la tool MCP se caia (sin datos) y el hook
+# caia por su rama de fallo abierto (todos los datos en claro). Una misma forma de
+# modelo producia resultados OPUESTOS en los dos caminos.
+
+MODELO_LISTA = {
+    "pii_policy": {"mode": "enforce"},
+    "subviews": {"Parametricas": ["RIDIOMA"]},
+    "tables": [
+        {"name": "RDEUDORES", "columns": [
+            {"name": "IDDEUDOR", "type": "NUMBER(10)", "pk": True},
+            {"name": "NOMBRE",   "type": "VARCHAR2(60)"},
+            {"name": "SALDO",    "type": "NUMBER(12,2)"},
+        ]},
+        {"name": "RIDIOMA", "columns": [
+            {"name": "IDTEXTO", "type": "VARCHAR2(20)"},
+            {"name": "TEXTO",   "type": "VARCHAR2(200)"},
+        ]},
+    ],
+}
+
+
+def test_modelo_en_lista_enmascara_igual_que_en_dict():
+    cols, filas, meta = mk.mask_resultset(
+        COLS, [["1024", "Ana Lopez", "1250.00"]], SQL, MODELO_LISTA, clave=CLAVE)
+    assert cols == COLS
+    assert filas[0][0] == "1024"
+    assert filas[0][1].startswith("pii:")
+    assert filas[0][2] == "1250.00"
+    assert meta["masked"] == ["NOMBRE"]
+    assert meta["unresolved"] == []
+
+
+def test_modelo_en_lista_respeta_las_parametricas():
+    sql = "SELECT IDTEXTO, TEXTO FROM RIDIOMA"
+    _, filas, meta = mk.mask_resultset(
+        ["IDTEXTO", "TEXTO"], [["SALUDO", "Hola"]], sql, MODELO_LISTA, clave=CLAVE)
+    assert filas[0] == ["SALUDO", "Hola"]
+    assert meta["masked"] == []
+
+
+def test_modelo_en_lista_y_en_dict_dan_el_mismo_resultado():
+    a = mk.mask_resultset(COLS, [["1024", "Ana Lopez", "1250.00"]], SQL, MODELO, clave=CLAVE)
+    b = mk.mask_resultset(COLS, [["1024", "Ana Lopez", "1250.00"]], SQL, MODELO_LISTA, clave=CLAVE)
+    assert a == b
