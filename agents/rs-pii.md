@@ -60,8 +60,11 @@ tipos y flags del modelo.
 
 ## `status` (por defecto)
 
-1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `ok`, `error`.
-2. Informar el modo actual y si las guardas `PreToolUse` están registradas.
+1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_missing`, `ok`,
+   `error`.
+2. Informar el modo actual y si las guardas `PreToolUse` están registradas. Si falta alguna, decir
+   **cuál** (`guards_missing`). Recordar que `guards_registered` describe el fichero
+   `~/.claude/settings.json`, no la sesión en curso (ver el aviso de `enforce`).
    - Si `mode = enforce` y `ok = false` → usar el `error` de `check_env` tal cual: la protección es
      **incompleta**, el bypass por Bash/Write sigue abierto. No suavizar este mensaje.
    - Si `mode = audit` → recordar explícitamente: **los datos siguen saliendo en claro, `audit` no
@@ -133,6 +136,14 @@ verificar inventario → registrar guardas → verificar el registro → **solo 
 Si falla el registro, **no conmutar**: un workspace que cree estar protegido sin estarlo es peor que
 uno que sabe que está en `off`.
 
+⛔ **Las guardas registradas en esta sesión no están activas en esta sesión.** Claude Code captura la
+configuración de hooks al arrancar; lo que se escribe en `~/.claude/settings.json` a mitad de sesión
+no entra en vigor hasta **reiniciar Claude Code**. `check_env` comprueba el *fichero*, no la sesión en
+curso: `guards_registered = true` significa "escritas", no "vivas" (por eso devuelve también
+`guards_note`). En consecuencia, si este subcomando ha tenido que **registrar** alguna de las dos
+guardas, no puede decir que la protección está activa — los dos bypass (Bash y Write/Edit) siguen
+abiertos durante el resto de esta sesión. Debe decirlo así, sin suavizarlo, y pedir el reinicio.
+
 1. **Inventario.** `Glob` de `docs/inventario-pii.md`. Si no existe → detener: "ejecuta
    `/rs-pii bootstrap` primero". No continuar sin él.
 2. **Confirmación explícita.** Explicar qué se va a hacer: escribir `pii_policy.mode = "enforce"` en
@@ -161,10 +172,20 @@ uno que sabe que está en `off`.
    - `Edit` (o `Write` si el fichero no existía) con el resultado completo: todo lo que ya había más
      estas dos entradas.
 4. **Verificar de verdad.** `check_env(workspace)` → `pii.guards_registered` debe ser `true`. Si no lo
-   es, **no continuar**: informar el fallo (qué se intentó registrar y qué devolvió `check_env`) y
+   es, **no continuar**: informar el fallo usando `pii.guards_missing` (dice cuál de las dos falta) y
    dejar el modo del modelo como estaba.
 5. **Solo si el paso 4 confirma `guards_registered = true`**, escribir `pii_policy.mode = "enforce"` en
    el modelo (ver abajo) y confirmar con un último `check_env` que `pii.ok = true`.
+6. **Cerrar diciendo la verdad sobre esta sesión.** Si en el paso 3 se ha escrito alguna entrada nueva
+   en `settings.json`, terminar con un aviso literal, no opcional:
+
+   > ⚠️ Las guardas se han registrado, pero **no están activas en esta sesión**: Claude Code lee la
+   > configuración de hooks al arrancar. Hasta que reinicies Claude Code, `enforce` solo enmascara lo
+   > que pase por `db_query` — el bypass por `Bash` (`sqlplus`/`sqlcmd` directos) y por `Write`/`Edit`
+   > sigue abierto. **Reinicia antes de apoyarte en esta protección.**
+
+   Si las dos guardas ya estaban registradas de antes (nada que escribir en el paso 3), no aplica: ya
+   venían cargadas del arranque. Decirlo también, para que se entienda por qué no se pide reinicio.
 
 ## `off`
 
@@ -229,6 +250,9 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 - Ante `enforce` sin guardas registradas, el mensaje debe ser inequívoco: la frase "los datos
   personales no salen" sería falsa. No decir "protegido" sin que `check_env` lo confirme con
   `pii.ok = true`.
+- ⛔ Nunca declarar la protección activa en la misma sesión en que se registraron las guardas —
+  Claude Code no las carga hasta reiniciar. `guards_registered = true` significa "escritas en el
+  fichero", no "vivas en esta sesión".
 - No prometer nada que `docs/proteccion-pii-consultas-bd.md` §5 desmienta.
 
 # Output

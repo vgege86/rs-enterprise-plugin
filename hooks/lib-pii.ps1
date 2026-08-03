@@ -64,3 +64,51 @@ function Remove-RsPii {
     $Texto = $Texto -creplace $script:RsPiiPatronCorreo, '[PII]'
     return $Texto
 }
+
+function Test-RsPiiGuards {
+    <# Comprueba ESTRUCTURALMENTE que las dos guardas PII estan registradas como entradas
+       de hooks.PreToolUse en el settings.json indicado.
+
+       Devuelve @{ bash; write; ok; missing } (missing = lista de descripciones).
+
+       Antes era un -match sobre el TEXTO del fichero: "pii-guard-bash" mencionado en un
+       comentario, en una clave desactivada, o registrado bajo PostToolUse con un matcher
+       que no dispara, contaba como guarda activa. /rs-pii enforce apoya el cambio de modo
+       en este resultado, asi que un falso positivo aqui deja el workspace declarandose
+       protegido con los dos bypass abiertos.
+
+       ⚠️ Comprueba el FICHERO, no la sesion. Claude Code captura la configuracion de hooks
+       al arrancar: unas entradas escritas a mitad de sesion no estan vivas hasta reiniciar.
+       Esto no se puede verificar desde aqui -- por eso /rs-pii enforce debe pedir el
+       reinicio y no declarar la proteccion activa en la misma sesion que las registro. #>
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$SettingsPath)
+
+    $bash  = $false
+    $write = $false
+    if ($SettingsPath -and (Test-Path $SettingsPath)) {
+        try {
+            # Sin -AsHashtable: no existe en PowerShell 5.1, donde corren los hooks.
+            $cfg = Get-Content $SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($entrada in @($cfg.hooks.PreToolUse)) {
+                if (-not $entrada) { continue }
+                $matcher = "$($entrada.matcher)"
+                # Matcher plausible: el que realmente dispararia para esa herramienta. Un
+                # matcher vacio o "*" aplica a todas, asi que tambien vale.
+                $matchBash  = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Bash")
+                $matchWrite = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Write|Edit")
+                foreach ($h in @($entrada.hooks)) {
+                    $cmd = "$($h.command)"
+                    if (-not $cmd) { continue }
+                    if ($matchBash  -and $cmd -match "pii-guard-bash")  { $bash  = $true }
+                    if ($matchWrite -and $cmd -match "pii-guard-write") { $write = $true }
+                }
+            }
+        } catch { }
+    }
+
+    $missing = @()
+    if (-not $bash)  { $missing += "pii-guard-bash (PreToolUse, matcher Bash)" }
+    if (-not $write) { $missing += "pii-guard-write (PreToolUse, matcher Write|Edit)" }
+
+    return @{ bash = $bash; write = $write; ok = ($missing.Count -eq 0); missing = @($missing) }
+}

@@ -565,5 +565,99 @@ Describe "check-env.ps1 verificacion de guardas" {
         $out = & (Join-Path $PSScriptRoot ".." "hooks" "check-env.ps1") $ws "ProyectoPrueba" | ConvertFrom-Json
         $out.pii | Should -Not -BeNullOrEmpty
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_registered"
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_missing"
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_note"
+    }
+}
+
+Describe "Test-RsPiiGuards (comprobacion estructural)" {
+    <#
+        La comprobacion anterior era un -match sobre el TEXTO de settings.json: no miraba
+        si las entradas estaban bajo hooks.PreToolUse ni con que matcher. /rs-pii enforce
+        se apoya en el resultado para conmutar el modo, asi que un falso positivo deja el
+        workspace declarandose protegido con los dos bypass abiertos.
+    #>
+    BeforeAll {
+        . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+        function New-Settings($nombre, $json) {
+            $p = Join-Path $TestDrive $nombre
+            $json | Set-Content $p -Encoding UTF8
+            return $p
+        }
+    }
+
+    It "reconoce las dos guardas bien registradas" {
+        $p = New-Settings "ok.json" @'
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-bash.ps1\"" } ] },
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-write.ps1\"" } ] }
+] } }
+'@
+        $r = Test-RsPiiGuards -SettingsPath $p
+        $r.ok    | Should -Be $true
+        @($r.missing).Count | Should -Be 0
+    }
+
+    It "no acepta las guardas mencionadas fuera de hooks.PreToolUse" {
+        # Aqui van bajo PostToolUse: el texto del fichero contiene las dos cadenas, pero
+        # ninguna guarda se ejecuta ANTES de la herramienta, que es lo unico que protege.
+        $p = New-Settings "post.json" @'
+{ "hooks": { "PostToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
+] } }
+'@
+        (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
+    }
+
+    It "no acepta una guarda con un matcher que no dispara para su herramienta" {
+        $p = New-Settings "matcher.json" @'
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Read", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
+] } }
+'@
+        $r = Test-RsPiiGuards -SettingsPath $p
+        $r.ok    | Should -Be $false
+        $r.bash  | Should -Be $false
+        $r.write | Should -Be $true
+    }
+
+    It "dice CUAL de las dos falta cuando solo hay una" {
+        $p = New-Settings "una.json" @'
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] }
+] } }
+'@
+        $r = Test-RsPiiGuards -SettingsPath $p
+        $r.ok      | Should -Be $false
+        $r.bash    | Should -Be $true
+        ($r.missing -join " ") | Should -Match "pii-guard-write"
+        ($r.missing -join " ") | Should -Not -Match "pii-guard-bash"
+    }
+
+    It "acepta el matcher comodin" {
+        $p = New-Settings "comodin.json" @'
+{ "hooks": { "PreToolUse": [
+  { "matcher": "*", "hooks": [
+      { "type": "command", "command": "powershell -File pii-guard-bash.ps1" },
+      { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
+] } }
+'@
+        (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $true
+    }
+
+    It "un settings.json que no existe o no parsea no cuenta como registrado" {
+        (Test-RsPiiGuards -SettingsPath (Join-Path $TestDrive "no-existe.json")).ok | Should -Be $false
+        $roto = New-Settings "roto.json" "{ esto no es json"
+        (Test-RsPiiGuards -SettingsPath $roto).ok | Should -Be $false
+    }
+
+    It "no acepta las guardas mencionadas solo en un comentario o clave ajena" {
+        $p = New-Settings "comentario.json" @'
+{ "notas": "recordar registrar pii-guard-bash.ps1 y pii-guard-write.ps1",
+  "hooks": { "PreToolUse": [] } }
+'@
+        (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
     }
 }

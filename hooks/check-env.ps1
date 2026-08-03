@@ -178,23 +178,30 @@ if ($model -and $model.pii_policy -and $model.pii_policy.mode) {
     $piiModo = "$($model.pii_policy.mode)"
 }
 
+# Comprobacion ESTRUCTURAL (lib-pii.ps1), no un -match sobre el texto del fichero: hay que
+# verificar que las dos guardas son entradas reales de hooks.PreToolUse con un matcher que
+# dispare, no que la cadena aparezca en cualquier sitio del JSON.
+. (Join-Path $PSScriptRoot "lib-pii.ps1")
 $settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
-$guardasOk = $false
-if (Test-Path $settingsUsuario) {
-    try {
-        $textoSettings = Get-Content $settingsUsuario -Raw -Encoding UTF8
-        $guardasOk = ($textoSettings -match "pii-guard-bash") -and ($textoSettings -match "pii-guard-write")
-    } catch { $guardasOk = $false }
-}
+$guardas   = Test-RsPiiGuards -SettingsPath $settingsUsuario
+$guardasOk = $guardas.ok
 
 $piiEstado = @{
     mode              = $piiModo
     guards_registered = $guardasOk
+    guards_missing    = @($guardas.missing)
     ok                = ($piiModo -ne "enforce") -or $guardasOk
 }
 if (-not $piiEstado.ok) {
-    $piiEstado.error = "mode=enforce pero las guardas PreToolUse no estan registradas en $settingsUsuario. La proteccion es incompleta: el bypass por Bash/Write esta abierto. Ejecutar /rs-pii enforce para registrarlas."
+    $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse en ${settingsUsuario}: " +
+                       (($guardas.missing) -join ", ") +
+                       ". La proteccion es incompleta: ese bypass esta abierto. Ejecutar /rs-pii enforce para registrarlas."
 }
+# Se comprueba el FICHERO, no la sesion en curso: Claude Code captura la configuracion de
+# hooks al arrancar, asi que unas guardas registradas a mitad de sesion NO estan activas
+# hasta reiniciar. Este aviso viaja siempre para que ningun consumidor lea
+# guards_registered = true como "protegido ahora mismo".
+$piiEstado.guards_note = "guards_registered describe el contenido de settings.json, no la sesion en curso: unas guardas registradas durante esta sesion no estan activas hasta reiniciar Claude Code."
 
 # Output JSON estructurado para consumo del agente
 $output = @{
