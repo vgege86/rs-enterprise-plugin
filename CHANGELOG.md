@@ -77,10 +77,14 @@ silencio.
 `hooks/db-query.ps1` cambia la forma de su respuesta: ahora emite `columns` más `rows`
 como arrays de valores, igual que la tool MCP, tanto en el camino con filas como en el de
 "sin filas". El eco del SQL sustituye sus literales de cadena en todas las salidas.
-Delega el enmascarado en `scripts/pii_cli.py` y falla **abierto** a propósito: si el
-enmascarado falla, el dato vuelve sin tocar con `pii.error` puesto — es el camino de
-fallback, y un filtro que bloquea cada consulta empuja a la gente a `sqlplus` directo, que
-es peor.
+Delega el enmascarado en `scripts/pii_cli.py`, al que le pasa el `model_path` de la
+conexión seleccionada (`Get-RsModelPath` de `hooks/lib-dbconfig.ps1`, la misma resolución
+que alimenta a la tool MCP). Falla **abierto** a propósito solo cuando el filtro no se
+puede ni ejecutar —falta `python` o falta el fichero—: ahí el dato vuelve sin tocar con
+`pii.error` puesto, porque es el camino de fallback y un filtro que bloquea cada consulta
+empuja a la gente a `sqlplus` directo, que es peor. Si el filtro **sí corre** y falla, se
+falla **cerrado**: `success: false`, `pii.error` y cero filas — tenía los datos en la mano
+y no pudo aplicarles la política.
 
 Se añaden dos guardas `PreToolUse` — `hooks/pii-guard-bash.ps1` impide invocar
 `sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp` saltándose `db_query`,
@@ -91,7 +95,16 @@ Se añaden dos guardas `PreToolUse` — `hooks/pii-guard-bash.ps1` impide invoca
 a ejecutar bajo `enforce` (las muestras ya llegarían enmascaradas y el inventario saldría
 vacío o falso) y nunca imprime un valor muestreado. `enforce` no cambia el modo sin antes
 registrar las guardas y confirmar vía `check_env` que quedaron registradas — un workspace
-que cree estar protegido sin estarlo es peor que uno que sabe que está en `off`.
+que cree estar protegido sin estarlo es peor que uno que sabe que está en `off`. Esa
+confirmación es **estructural** (`Test-RsPiiGuards` parsea `settings.json` y exige entradas
+reales bajo `hooks.PreToolUse` con un matcher que dispare; `check_env` devuelve
+`guards_missing` diciendo cuál falta), y comprueba el **fichero, no la sesión**: Claude Code
+captura la configuración de hooks al arrancar, así que unas guardas registradas a mitad de
+sesión no están vivas hasta reiniciar. Por eso `enforce` cierra pidiendo el reinicio en vez
+de declarar la protección activa. La clasificación de columnas que hace `bootstrap` sale de
+`scripts/pii_cli.py --clasificar`, el mismo motor que aplica `db_query`, y no de las reglas
+reescritas en el prompt: el inventario que produce tiene que coincidir con lo que el plugin
+enmascara de verdad.
 
 `check_env` gana un bloque `pii`: `mode`, `guards_registered`, `ok` y `error` cuando no
 está `ok`. `ok` es falso únicamente cuando el modo es `enforce` y faltan las guardas.
