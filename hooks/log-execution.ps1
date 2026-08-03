@@ -38,6 +38,8 @@ trap {
     exit 1
 }
 
+. (Join-Path $PSScriptRoot "lib-pii.ps1")
+
 $historyDir  = Join-Path $Workspace "executions"
 $historyFile = Join-Path $historyDir "history.json"
 
@@ -52,6 +54,12 @@ if (Test-Path $historyFile) {
         $history = @($loaded)
     } catch { $history = @() }
 }
+
+# --- Saneado PII ---
+# El texto de la tarea lo escribe el usuario y puede llevar datos personales
+# ("revisar el deudor 12345678Z"). history.json se versiona y se lee en /rs-stats
+# y /rs-dashboard, asi que un dato aqui se propaga a tres sitios mas.
+$Task = Remove-RsPii $Task
 
 # Nueva entrada
 $entry = @{

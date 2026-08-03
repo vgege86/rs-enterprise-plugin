@@ -165,6 +165,37 @@ if ($sombras.Count -gt 0) {
     Add-Check "Coherencia instalación" "OK" ("Sin copias fuera del plugin. " + $mcpDetalle).Trim()
 }
 
+# --- Estado de la proteccion PII ---
+# Las guardas PreToolUse viven en ~/.claude/settings.json, que NO viaja con el repo.
+# Un workspace clonado sin registrarlas queda desprotegido en silencio: por eso se
+# comprueba aqui, y con mode=enforce se considera FALLO, no aviso (un workspace en
+# modo off es el valor por defecto habitual y no supone ningun problema).
+# Reutiliza $model del Check 5: si no hay modelo, el JSON es invalido, o la raiz es
+# una lista en vez de un objeto, $model queda $null o sin la propiedad pii_policy y el
+# acceso no lanza excepcion -- se degrada a "off" sin romper el hook.
+$piiModo = "off"
+if ($model -and $model.pii_policy -and $model.pii_policy.mode) {
+    $piiModo = "$($model.pii_policy.mode)"
+}
+
+$settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
+$guardasOk = $false
+if (Test-Path $settingsUsuario) {
+    try {
+        $textoSettings = Get-Content $settingsUsuario -Raw -Encoding UTF8
+        $guardasOk = ($textoSettings -match "pii-guard-bash") -and ($textoSettings -match "pii-guard-write")
+    } catch { $guardasOk = $false }
+}
+
+$piiEstado = @{
+    mode              = $piiModo
+    guards_registered = $guardasOk
+    ok                = ($piiModo -ne "enforce") -or $guardasOk
+}
+if (-not $piiEstado.ok) {
+    $piiEstado.error = "mode=enforce pero las guardas PreToolUse no estan registradas en $settingsUsuario. La proteccion es incompleta: el bypass por Bash/Write esta abierto. Ejecutar /rs-pii enforce para registrarlas."
+}
+
 # Output JSON estructurado para consumo del agente
 $output = @{
     workspace   = $workspace
@@ -172,6 +203,7 @@ $output = @{
     timestamp   = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
     overall     = $overallStatus
     checks      = $results
+    pii         = $piiEstado
 }
 
 $output | ConvertTo-Json -Depth 4

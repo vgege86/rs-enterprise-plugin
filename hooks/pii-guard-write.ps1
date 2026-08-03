@@ -7,12 +7,13 @@
     contenido que se va a escribir. No detecta nombres ni direcciones -- no tienen
     patron reconocible (ver docs/proteccion-pii-consultas-bd.md #5.2f).
 
-    DNI y NIE no se bloquean por forma sola: se valida la letra de control
-    ("TRWAGMYFPDXBNJZSQVHLCKE"[numero % 23]) porque este repositorio esta lleno de
-    cadenas AAAAMMDD (convencion Actualizador\<ENTORNO>_<AAAAMMDD>) que casan la forma
-    "8 digitos + letra" por pura casualidad. Sin la validacion, la guarda se dispara
-    a diario y se acaba desactivando -- entonces no protege nada. Telefono y tarjeta
-    se han excluido a proposito de esta guarda (no de scripts/pii_detect.py, que sigue
+    DNI y NIE no se bloquean por forma sola: se valida la letra de control. Sin la
+    validacion, este repositorio esta lleno de cadenas AAAAMMDD (convencion
+    Actualizador\<ENTORNO>_<AAAAMMDD>) que casan la forma "8 digitos + letra" por pura
+    casualidad, la guarda se dispara a diario y se acaba desactivando -- entonces no
+    protege nada. Los patrones y el checksum viven en hooks/lib-pii.ps1 (compartido con
+    el saneado de hooks/log-execution.ps1, mismo motivo alli). Telefono y tarjeta se
+    han excluido a proposito de esta guarda (no de scripts/pii_detect.py, que sigue
     intacto): son puramente numericos y casarian con cualquier importe en centimos o
     identificador de fila largo.
 
@@ -23,6 +24,7 @@
     Salida 2 = bloquear, 0 = permitir.
 #>
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+. (Join-Path $PSScriptRoot "lib-pii.ps1")
 
 try {
     # Misma dualidad que pii-guard-bash.ps1: stdin real ([Console]::In) cuando Claude Code
@@ -40,27 +42,7 @@ try {
 # Entrega al cliente: el volcado de datos reales es intencionado.
 if ($ruta -match '\\(Instalador|Actualizador)\\') { exit 0 }
 
-# Valida la letra de control de un DNI (8 digitos + letra) o un NIE (X/Y/Z + 7 digitos
-# + letra). $Valor debe venir ya recortado a la forma exacta (sin \b alrededor).
-function Test-DniNieChecksum {
-    param([Parameter(Mandatory=$true)][string]$Valor)
-
-    $letras = "TRWAGMYFPDXBNJZSQVHLCKE"
-    $v = $Valor.ToUpper()
-
-    if ($v -match '^(\d{8})([A-Z])$') {
-        $numero = [int]$Matches[1]
-        $letra  = $Matches[2]
-        return ($letras[$numero % 23] -eq $letra)
-    }
-    if ($v -match '^([XYZ])(\d{7})([A-Z])$') {
-        $prefijos = @{ "X" = "0"; "Y" = "1"; "Z" = "2" }
-        $numero   = [int]("$($prefijos[$Matches[1]])$($Matches[2])")
-        $letra    = $Matches[3]
-        return ($letras[$numero % 23] -eq $letra)
-    }
-    return $false
-}
+# Test-DniNieChecksum viene de lib-pii.ps1 (dot-sourced arriba).
 
 function Block-Pii {
     param([string]$Forma, [string]$Ruta)
@@ -78,15 +60,15 @@ entregarse al cliente, escribelo bajo Instalador\ o Actualizador\.
 }
 
 # DNI / NIE: la forma sola no basta (ver cabecera), se exige letra de control valida.
-foreach ($m in [regex]::Matches($contenido, '\b\d{8}[A-HJ-NP-TV-Z]\b')) {
+foreach ($m in [regex]::Matches($contenido, $script:RsPiiPatronDni)) {
     if (Test-DniNieChecksum $m.Value) { Block-Pii "DNI" $ruta }
 }
-foreach ($m in [regex]::Matches($contenido, '\b[XYZ]\d{7}[A-HJ-NP-TV-Z]\b')) {
+foreach ($m in [regex]::Matches($contenido, $script:RsPiiPatronNie)) {
     if (Test-DniNieChecksum $m.Value) { Block-Pii "NIE" $ruta }
 }
 
 # IBAN / correo: la forma ya es lo bastante distintiva, sin checksum.
-if ($contenido -cmatch '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b') { Block-Pii "IBAN" $ruta }
-if ($contenido -cmatch '\b[^@\s]+@[^@\s]+\.[A-Za-z]{2,}\b') { Block-Pii "correo electronico" $ruta }
+if ($contenido -cmatch $script:RsPiiPatronIban) { Block-Pii "IBAN" $ruta }
+if ($contenido -cmatch $script:RsPiiPatronCorreo) { Block-Pii "correo electronico" $ruta }
 
 exit 0

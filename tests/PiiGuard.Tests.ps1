@@ -283,3 +283,27 @@ Describe "pii-guard-write.ps1" {
         $LASTEXITCODE | Should -Be 0
     }
 }
+
+Describe "log-execution.ps1 saneado de PII" {
+    It "no persiste un DNI en el campo task" {
+        $ws = Join-Path $TestDrive "wslog"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $hook = Join-Path $PSScriptRoot ".." "hooks" "log-execution.ps1"
+
+        & $hook $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success | Out-Null
+
+        $historia = Get-Content (Join-Path $ws "executions" "history.json") -Raw
+        $historia | Should -Not -Match "12345678Z"
+        $historia | Should -Match "\[PII\]"
+    }
+}
+
+Describe "check-env.ps1 verificacion de guardas" {
+    It "informa del estado de las guardas PII" {
+        $ws  = Join-Path $TestDrive "wsenv"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $out = & (Join-Path $PSScriptRoot ".." "hooks" "check-env.ps1") $ws "ProyectoPrueba" | ConvertFrom-Json
+        $out.pii | Should -Not -BeNullOrEmpty
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_registered"
+    }
+}
