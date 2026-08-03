@@ -29,6 +29,35 @@ casos, en cualquier dirección (también al volver a `off`).
 
 # Subcomandos
 
+## Clasificación estática de columnas (sin muestreo)
+
+Usada por `status` (paso 3) y por `bootstrap` (paso 2). Es la parte **barata** — sin consultar la BD,
+solo el modelo — de decidir qué columnas saldrían en claro.
+
+1. `get_model_index(workspace)` → tablas y columnas conocidas. Ligero (~15K tokens); ⛔ **nunca** leer
+   `BD/<proyecto>-model.json` completo con `Read` (SKILL.md "Reglas de consumo de tokens": puede pesar
+   ~180K tokens; en workspaces reales de este plugin, entre 288 KB y 664 KB en disco).
+2. Para cada tabla, `get_table_schema(workspace, tables="...")` en lotes (varias tablas por llamada) →
+   columnas con `type`, `pk`, `fk` y marca explícita `pii`/`safe` si existe.
+3. Clasificar cada columna con las reglas de §4.2 del documento, en este orden:
+   1. Marca explícita (`pii: true` o `safe: false` → enmascarada; `safe: true` → en claro) — gana
+      siempre.
+   2. Nombre de columna que casa un patrón sensible → enmascarada. Patrones base en
+      `scripts/pii_patterns.json` (léelo directo, es pequeño) + `pii_policy.patterns_add` /
+      `patterns_remove` del modelo si el usuario los mencionó (no hay tool que los exponga sin cargar
+      el modelo completo — si no se conocen, usar solo los patrones base).
+   3. Tipo numérico/fecha/PK/FK → en claro.
+   4. Resto de columnas de texto → enmascarada.
+
+   ⚠️ La lista de tablas paramétricas (`subviews.Parametricas` del modelo) no tiene tool dedicada y
+   leerla exige cargar el modelo completo — no lo hagas. Trata todas las tablas como no paramétricas:
+   el peor caso es que una tabla paramétrica salga en la lista para descartar a mano (ruido, no fuga);
+   nunca al revés.
+
+El resultado es, por tabla, la lista de columnas que saldrían **en claro** y no casan ningún patrón —
+la superficie expuesta. Esta clasificación **no** toca la BD ni ve un solo valor real: solo nombres,
+tipos y flags del modelo.
+
 ## `status` (por defecto)
 
 1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `ok`, `error`.
@@ -38,12 +67,17 @@ casos, en cualquier dirección (también al volver a `off`).
    - Si `mode = audit` → recordar explícitamente: **los datos siguen saliendo en claro, `audit` no
      protege, solo mide** lo que se enmascararía.
    - Si `mode = off` → estado por defecto, sin protección.
-3. `Glob` de `docs/inventario-pii.md` en el workspace: si existe, mencionar que ya hay un inventario
-   generado (no leerlo entero aquí, solo informar de su existencia); si no existe, sugerir
-   `/rs-pii bootstrap`.
-
-⛔ No listar aquí columna a columna el detalle del inventario — esa es la salida de `bootstrap`, que
-además muestrea valores reales; repetirlo en `status` sin muestrear daría una lista incompleta.
+3. Aplicar la "Clasificación estática de columnas" de arriba y listar, agrupadas por tabla, las
+   columnas en claro y sin patrón — la lista corta que alguien necesita revisar. Cap: máximo **40**
+   filas en la respuesta; si hay más, mostrar las 40 primeras (orden estable: tabla, luego columna) y
+   decir cuántas se omiten (p.ej. "+37 columnas más — ejecuta `/rs-pii bootstrap` para el listado
+   completo con muestreo real"). No hay valores que imprimir aquí — esta clasificación no consulta la
+   BD — pero la regla de no reproducir un valor real sigue aplicando igual si en el futuro se toca esto.
+4. `Glob` de `docs/inventario-pii.md` en el workspace: si existe, mencionar que ya hay un inventario
+   generado con muestreo real (no leerlo entero aquí, solo informar de su existencia); si no existe,
+   sugerir `/rs-pii bootstrap`. Esto es un complemento a la lista del paso 3, no un sustituto: el paso
+   3 es la clasificación por nombre/tipo del modelo; `bootstrap` además muestrea valores reales y
+   detecta lo que el nombre no delata.
 
 ## `bootstrap`
 
@@ -57,36 +91,19 @@ inventario saldría vacío o falso. Si el modo es `enforce`, detener y explicar 
 a `off`/`audit` primero (subcomando correspondiente, tras confirmación) y repetir `bootstrap` después.
 
 1. `get_db_config(workspace)` → `motor` (para elegir la sintaxis de muestreo) y `model_path`.
-2. `get_model_index(workspace)` → tablas y columnas conocidas. Ligero (~15K tokens); ⛔ **nunca** leer
-   `BD/<proyecto>-model.json` completo con `Read` (SKILL.md "Reglas de consumo de tokens": puede pesar
-   ~180K tokens).
-3. Para cada tabla, `get_table_schema(workspace, tables="...")` en lotes (varias tablas por llamada) →
-   columnas con `type`, `pk`, `fk` y marca explícita `pii`/`safe` si existe.
-4. Clasificar cada columna con las reglas de §4.2 del documento, en este orden:
-   1. Marca explícita (`pii: true` o `safe: false` → enmascarada; `safe: true` → en claro) — gana
-      siempre.
-   2. Nombre de columna que casa un patrón sensible → enmascarada. Patrones base en
-      `scripts/pii_patterns.json` (léelo directo, es pequeño) + `pii_policy.patterns_add` /
-      `patterns_remove` del modelo si el usuario los mencionó (no hay tool que los exponga sin cargar
-      el modelo completo — si no se conocen, usar solo los patrones base).
-   3. Tipo numérico/fecha/PK/FK → en claro.
-   4. Resto de columnas de texto → enmascarada.
-
-   ⚠️ La lista de tablas paramétricas (`subviews.Parametricas` del modelo) no tiene tool dedicada y
-   leerla exige cargar el modelo completo — no lo hagas. Trata todas las tablas como no paramétricas:
-   el peor caso es que una tabla paramétrica salga en el inventario para descartar a mano (ruido, no
-   fuga); nunca al revés.
-5. Para las columnas que salen **en claro** (regla 3 anterior), muestrear con `db_query` agrupando las
-   columnas candidatas de una misma tabla en una sola consulta:
+2. Aplicar la "Clasificación estática de columnas" de arriba → columnas candidatas (las que saldrían
+   en claro).
+3. Para las columnas candidatas, muestrear con `db_query` agrupando las columnas de una misma tabla en
+   una sola consulta:
    - Oracle: `SELECT <col1>, <col2>, ... FROM <tabla> WHERE ROWNUM <= 50`
    - SQL Server: `SELECT TOP 50 <col1>, <col2>, ... FROM <tabla>`
-6. Sobre los valores devueltos, buscar forma de DNI/NIE, IBAN, correo, teléfono o tarjeta (§4.3 del
+4. Sobre los valores devueltos, buscar forma de DNI/NIE, IBAN, correo, teléfono o tarjeta (§4.3 del
    documento). Si alguna columna "en claro" tiene valores con esa forma, márcala como sospechosa en el
    inventario.
    ⛔ **Nunca reproducir un valor muestreado**, ni en la respuesta al usuario ni en el fichero de
    inventario — ni siquiera como ejemplo. Solo columna, forma detectada y conteo (p.ej. "12 de 50
    valores con forma de DNI"). Esta regla no es negociable: es la razón de ser de este subcomando.
-7. Escribir (`Write`) `docs/inventario-pii.md` — si ya existe, sobrescribirlo (es un informe
+5. Escribir (`Write`) `docs/inventario-pii.md` — si ya existe, sobrescribirlo (es un informe
    regenerable, no configuración manual del usuario) — con la tabla:
 
    | Solución | Tabla | Columna | Tipo | Categoría | Tratamiento propuesto |
@@ -95,7 +112,7 @@ a `off`/`audit` primero (subcomando correspondiente, tras confirmación) y repet
    `Solución` = proyecto (`get_db_config`). `Categoría`: Identificativo / Contacto / Financiero, a
    criterio según nombre/forma. `Tratamiento propuesto`: Pseudónimo por defecto, Supresión si el
    usuario lo pide.
-8. Informar el resumen (nº tablas analizadas, nº columnas en claro, nº sospechosas) y la ruta del
+6. Informar el resumen (nº tablas analizadas, nº columnas en claro, nº sospechosas) y la ruta del
    fichero.
 
 ## `audit`
@@ -164,20 +181,30 @@ de usuario, potencialmente compartida con otros workspaces, y no tienen coste re
 # Cómo escribir `pii_policy.mode`
 
 `BD/<proyecto>-model.json` puede pesar ~180K tokens (SKILL.md "Reglas de consumo de tokens": ⛔ nunca
-cargarlo entero con `Read`/`Edit`). `pii_policy.mode` es un único campo — para no meter el modelo
-completo en el contexto, modificarlo con un script Python de una sola invocación vía `Bash` (el propio
-motor PII ya está en Python — `scripts/pii_policy.py` lee `pii_policy` con esta misma forma de acceso):
+cargarlo entero con `Read`/`Edit`; en workspaces reales de este plugin, entre 288 KB y 664 KB en
+disco). `pii_policy.mode` es un único campo — para no meter el modelo completo en el contexto,
+modificarlo con un script Python de una sola invocación vía `Bash` (el propio motor PII ya está en
+Python — `scripts/pii_policy.py` lee `pii_policy` con esta misma forma de acceso):
 
 ```bash
 python -c "
-import json
+import json, os
 p = r'<model_path>'
+tmp = p + '.tmp'
 with open(p, 'r', encoding='utf-8-sig') as f:
     m = json.load(f)
 pol = m.setdefault('pii_policy', {})
 pol['mode'] = '<off|audit|enforce>'
-with open(p, 'w', encoding='utf-8-sig') as f:
+# Escritura atomica: volcar a un .tmp junto al original (cierra y hace flush al salir del 'with')
+# y sustituir con os.replace, no sobreescribir el original en sitio. Si el proceso Bash muere a
+# mitad de escritura (timeout, Ctrl+C, disco lleno), el .tmp queda a medias pero <model_path>
+# nunca se toca -- sin esto, un modelo de ~600KB truncado deja caidos check_env, db_query, el
+# resto de agentes y la cache del MCP server hasta restaurar el fichero desde el control de
+# versiones. Mismo patron que hooks/sync-from-db.ps1 (Set-Content .tmp + Move-Item -Force) y
+# hooks/sync-indexes.ps1/sync-model-tables.ps1 -- no simplificar esto a un solo open('w').
+with open(tmp, 'w', encoding='utf-8-sig') as f:
     json.dump(m, f, ensure_ascii=False, indent=2)
+os.replace(tmp, p)
 print('OK')
 "
 ```
@@ -212,7 +239,14 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 Modo: off | audit | enforce
 Guardas PreToolUse registradas: sí/no
 <aviso si aplica: enforce incompleto / audit no protege>
-Inventario: docs/inventario-pii.md <existe / no existe — ejecuta /rs-pii bootstrap>
+
+### Columnas en claro sin patrón (clasificación por modelo, sin muestreo) [N, mostrando hasta 40]
+| Tabla | Columna | Tipo |
+|---|---|---|
+| RDEUDORES | OBSERVACIONES | VARCHAR2(200) |
+<+N más si se omiten>
+
+Inventario con muestreo real: docs/inventario-pii.md <existe / no existe — ejecuta /rs-pii bootstrap>
 ```
 
 `bootstrap`:
