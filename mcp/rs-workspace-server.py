@@ -5,6 +5,7 @@ Cada tool llama al hook PowerShell correspondiente y devuelve JSON estructurado.
 
 import csv
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -167,6 +168,29 @@ def _run_ps(script: str, *args: str, timeout: int = 1200) -> dict:
 def _proyecto(workspace: Workspace) -> str:
     """Infiere nombre de proyecto desde ruta workspace (carpeta anterior a trunk/)."""
     return Path(workspace).parent.name
+
+
+_PII_MASK = Path(__file__).resolve().parent.parent / "scripts" / "pii_mask.py"
+_spec_pii = importlib.util.spec_from_file_location("pii_mask", _PII_MASK)
+_pii_mask = importlib.util.module_from_spec(_spec_pii)
+_spec_pii.loader.exec_module(_pii_mask)
+
+
+def _cargar_modelo(workspace) -> dict:
+    """Modelo BD del workspace (BD/<proyecto>-model.json), o {} si no existe.
+
+    Devolver {} y no fallar es deliberado: un workspace sin modelo se comporta como
+    mode=off, igual que hoy. La proteccion se activa declarandola, no por accidente.
+    """
+    bd = _resolve_workspace(Path(workspace)) / "BD"
+    if not bd.is_dir():
+        return {}
+    for ruta in sorted(bd.glob("*-model.json")):
+        try:
+            return json.loads(ruta.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+    return {}
 
 
 def _get_db_password(workspace: Workspace, conexion_id: str = "") -> str:
@@ -459,14 +483,22 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
         columns, rows, total = [], [], 0
         error = "; ".join(diag).strip() or "\n".join(l for l in salida if l.strip()).strip()
 
+    # --- Enmascarado PII ---
+    # Se aplica DESPUES de recortar a max_rows: enmascarar filas que no se devuelven
+    # solo gastaria CPU. Y ANTES de json.dumps: es el ultimo punto antes del contexto.
+    visibles = rows[:max_rows]
+    modelo = _cargar_modelo(workspace)
+    columns, visibles, pii = _pii_mask.mask_resultset(columns, visibles, sql_norm, modelo)
+
     return json.dumps({
         "success": ok,
         "motor": motor,
         "columns": columns,
-        "rows": rows[:max_rows],
+        "rows": visibles,
         "row_count": min(total, max_rows),
         "rows_truncated": total > max_rows,
         "error": error,
+        "pii": pii,
     }, ensure_ascii=False, indent=2)
 
 

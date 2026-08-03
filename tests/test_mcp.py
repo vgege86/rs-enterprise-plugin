@@ -127,3 +127,25 @@ def test_diff_summary_git():
     assert s["file"] == "Foo.cs"
     assert s["+lines"] == 2
     assert s["-lines"] == 1
+
+
+# --- Integracion PII en db_query ---
+
+def test_cargar_modelo_devuelve_dict_vacio_si_no_hay_modelo(tmp_path):
+    # Workspace sin carpeta BD: no debe reventar, solo no aplicar politica.
+    assert srv._cargar_modelo(tmp_path) == {}
+
+
+def test_cargar_modelo_lee_el_json(tmp_path):
+    bd = tmp_path / "BD"
+    bd.mkdir()
+    (bd / "Proyecto-model.json").write_text(
+        '{"pii_policy": {"mode": "enforce"}, "tables": {}}', encoding="utf-8")
+    modelo = srv._cargar_modelo(tmp_path)
+    assert modelo["pii_policy"]["mode"] == "enforce"
+
+
+def test_db_query_expone_el_helper_de_enmascarado():
+    # El servidor debe tener cargado pii_mask: sin el, la integracion no aplica.
+    assert hasattr(srv, "_pii_mask")
+    assert hasattr(srv._pii_mask, "mask_resultset")
