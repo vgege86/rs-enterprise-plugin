@@ -135,3 +135,49 @@ def test_avisa_de_predicado_sobre_columna_pii():
 def test_fila_mas_corta_que_las_columnas_no_revienta():
     _, filas, _ = mk.mask_resultset(COLS, [["1024", "Ana Lopez"]], SQL, MODELO, clave=CLAVE)
     assert len(filas[0]) == 2
+
+
+def test_red_de_seguridad_no_se_salta_en_columna_parametrica():
+    # Fija que la red de seguridad (escanear_columna sobre un veredicto CLARO) se
+    # dispara tambien cuando el CLARO llega por la via "parametrica" (regla 3), no
+    # solo por la via "tipo" (regla 4, ya cubierta por
+    # test_detecta_sospecha_en_columna_declarada_segura). El gate en el codigo es un
+    # unico "if veredicto == CLARO" que no distingue el motivo, y asi debe seguir:
+    # un refactor que separe las ramas y solo escanee la via "tipo" dejaria pasar en
+    # claro una parametrica con forma personal sin que ningun test lo note.
+    sql = "SELECT TEXTO FROM RIDIOMA"
+    valor_con_forma_personal = "usuario.prueba@ejemplo-ficticio.com"
+    _, filas, meta = mk.mask_resultset(["TEXTO"], [[valor_con_forma_personal]], sql, MODELO, clave=CLAVE)
+    assert meta["masked"] == ["TEXTO"]
+    assert meta["suspect"] == ["TEXTO"]
+    assert filas[0][0].startswith("pii:")
+
+
+def test_red_de_seguridad_no_se_salta_en_columna_marcada_safe():
+    # Fija que una marca explicita "safe": true en el modelo NO exime de la red de
+    # seguridad. Confiar ciegamente en la marca es justo lo que la red existe para
+    # cuestionar: si un futuro cambio la salta con el razonamiento de "la columna ya
+    # esta declarada segura, no hace falta escanear", reintroduce una fuga en claro
+    # de forma silenciosa, sin que ningun test falle.
+    modelo = dict(MODELO)
+    modelo["tables"] = dict(MODELO["tables"])
+    modelo["tables"]["RDEUDORES"] = {"columns": {"OBS": {"type": "VARCHAR2(50)", "safe": True}}}
+    sql = "SELECT OBS FROM RDEUDORES"
+    _, filas, meta = mk.mask_resultset(["OBS"], [["12345678Z"]], sql, modelo, clave=CLAVE)
+    assert meta["masked"] == ["OBS"]
+    assert meta["suspect"] == ["OBS"]
+    assert filas[0][0].startswith("pii:")
+
+
+def test_celdas_none_y_en_blanco_no_generan_seudonimo():
+    # Fija que una celda vacia (None, "" o solo espacios) nunca se transforma en un
+    # seudonimo. Un seudonimo de la cadena vacia seria un token estable y adivinable
+    # que revelaria cuales celdas estan en blanco -- justo lo que la guarda del bucle
+    # de transformacion evita al comprobar "str(valor).strip()" antes de enmascarar.
+    sql = "SELECT NOMBRE FROM RDEUDORES"
+    filas_entrada = [["Ana Lopez"], [None], [""], ["   "]]
+    _, filas, _ = mk.mask_resultset(["NOMBRE"], filas_entrada, sql, MODELO, clave=CLAVE)
+    assert filas[0][0].startswith("pii:")
+    assert filas[1][0] is None
+    assert filas[2][0] == ""
+    assert filas[3][0] == "   "
