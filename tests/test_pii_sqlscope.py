@@ -96,3 +96,32 @@ def test_predicados_ignora_columna_en_comentario():
     # Una columna mencionada solo dentro de un comentario no se reporta
     sql = "SELECT COL FROM RDEUDORES WHERE -- OLD_COL = 'X' AND\nCOL = 'Y'"
     assert sc.predicados(sql) == ["COL"]
+
+
+def test_tablas_falla_seguro_con_literal_no_cerrado_linea_comentada():
+    # SQL malformado con string no cerrado y comentario despu­es.
+    # Alcance indeterminable: retorna [] (ni la tabla real ni ninguna falsa).
+    sql = "SELECT * FROM RDEUDORES WHERE X = 'abc -- FROM FAKETABLE"
+    assert sc.tablas(sql) == []
+
+
+def test_tablas_falla_seguro_con_literal_no_cerrado_bloque_comentado():
+    # SQL malformado con string no cerrado y bloque comentado despu­es.
+    # Alcance indeterminable: retorna [] (ni la tabla real ni ninguna falsa).
+    sql = "SELECT * FROM RDEUDORES WHERE X = 'abc /* FROM FAKETABLE */ AND Y=1"
+    assert sc.tablas(sql) == []
+
+
+def test_predicados_falla_seguro_con_literal_no_cerrado():
+    # SQL malformado con string no cerrado.
+    # Alcance indeterminable: retorna [] (ninguna columna).
+    sql = "SELECT * FROM RDEUDORES WHERE X = 'abc -- FROM FAKETABLE"
+    assert sc.predicados(sql) == []
+
+
+def test_regresion_literal_bien_formado_seguido_de_comentario():
+    # Regression: un literal bien formado seguido de comentario debe funcionar.
+    # No confundir el early-out de unterminated con "any quote disables stripping".
+    sql = "SELECT * FROM RDEUDORES WHERE COD = 'A--B' -- FROM FAKETABLE"
+    assert sc.tablas(sql) == ["RDEUDORES"]
+    assert sc.predicados(sql) == ["COD"]

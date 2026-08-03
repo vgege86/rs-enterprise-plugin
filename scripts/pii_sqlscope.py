@@ -12,6 +12,12 @@ def _strip_comments(sql):
 
     Sustituye cada tramo de comentario con un espacio para no unir tokens.
     Los comentarios dentro de strings literales ('...') se preservan intactos.
+
+    Si se alcanza el fin del SQL dentro de un string literal no cerrado (SQL
+    malformado), retorna string vacio. El alcance de una consulta malformada es
+    indeterminable, y un alcance indeterminable debe retornar cero tablas.
+    Falla hacia lo seguro: todas las columnas resultan sin resolver y por tanto
+    enmascaradas segun su forma de valor.
     """
     if not sql:
         return sql
@@ -63,6 +69,11 @@ def _strip_comments(sql):
         # Caracter normal (dentro de string o fuera de comentario)
         result.append(c)
         i += 1
+
+    # Si terminamos dentro de un string no cerrado, el SQL es malformado.
+    # Retornar string vacio para fallar seguro (alcance indeterminable).
+    if in_string:
+        return ''
 
     return ''.join(result)
 
