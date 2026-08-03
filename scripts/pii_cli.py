@@ -2,6 +2,12 @@
 
     echo '{"columns":[],"rows":[[]],"sql":"..."}' | python pii_cli.py <workspace> [<model_path>]
 
+Segundo modo, para /rs-pii (no lo usa el hook):
+
+    python pii_cli.py --clasificar <model_path> [--tablas T1,T2] [--todo] [--max N]
+
+que devuelve el veredicto y el motivo deterministas por columna. Ver _clasificar().
+
 Sale por stdout con {"columns":[],"rows":[[]],"pii":{}}. Ante cualquier error escribe
 el diagnostico en stderr y sale con codigo != 0 SIN emitir datos: el hook decide.
 Existe porque PowerShell no puede importar el modulo, y duplicar la logica en PS seria
@@ -81,7 +87,129 @@ def _modelo(model_path):
     return datos, None
 
 
+def _clasificar(argv):
+    """Modo clasificacion: veredicto y motivo DETERMINISTAS por columna.
+
+        python pii_cli.py --clasificar <model_path> [--tablas T1,T2] [--todo] [--max N]
+        (opcional por stdin) {"muestras": {"TABLA": {"COLUMNA": ["v1", "v2", ...]}}}
+
+    Existe para que /rs-pii bootstrap no rehaga a mano la precedencia del #4.2 ni ojee las
+    formas de dato personal: el inventario que produce es el que Sistemas usara para decidir
+    que columnas se redactan en BD, asi que tiene que coincidir con lo que el plugin
+    enmascara de verdad. Un clasificador escrito en un prompt deriva del real en cuanto uno
+    de los dos cambia, y el sintoma es un inventario que no cuadra con la herramienta.
+
+    Reutiliza pii_policy.clasificar (mismas reglas y mismo orden que mask_resultset) y, si
+    se le pasan muestras, la misma red de seguridad por forma de valor de pii_mask sobre las
+    columnas que saldrian en claro.
+
+    ⛔ La salida NUNCA contiene un valor muestreado: solo nombre de columna, veredicto,
+    motivo, forma detectada y conteos.
+    """
+    if len(argv) < 1:
+        sys.stderr.write("uso: pii_cli.py --clasificar <model_path> [--tablas T1,T2] [--todo] [--max N]\n")
+        return E_USO
+
+    model_path = argv[0]
+    filtro, todo, maximo = set(), False, 500
+    i = 1
+    while i < len(argv):
+        if argv[i] == "--tablas" and i + 1 < len(argv):
+            filtro = {t.strip().upper() for t in argv[i + 1].split(",") if t.strip()}
+            i += 2
+        elif argv[i] == "--todo":
+            todo = True
+            i += 1
+        elif argv[i] == "--max" and i + 1 < len(argv):
+            try:
+                maximo = int(argv[i + 1])
+            except ValueError:
+                sys.stderr.write("--max necesita un entero\n")
+                return E_USO
+            i += 2
+        else:
+            sys.stderr.write("argumento no reconocido: %s\n" % argv[i])
+            return E_USO
+
+    modelo, error_modelo = _modelo(model_path)
+    if error_modelo:
+        sys.stderr.write(error_modelo + "\n")
+        return E_MODELO
+
+    muestras = {}
+    if not sys.stdin.isatty():
+        bruto = sys.stdin.buffer.read().decode("utf-8-sig").strip()
+        if bruto:
+            try:
+                muestras = (json.loads(bruto) or {}).get("muestras") or {}
+            except Exception as exc:
+                sys.stderr.write("muestras JSON invalidas: %s\n" % exc.__class__.__name__)
+                return E_USO
+    muestras = {str(t).upper(): {str(c).upper(): v for c, v in (cols or {}).items()}
+                for t, cols in muestras.items()}
+
+    pol = _cargar("pii_policy")
+    det = _cargar("pii_detect")
+    politica = pol.cargar_politica(modelo)
+    indice = pol.indice_tablas(modelo)
+
+    salida, truncado = {}, False
+    total = claro = mascara = sospechosas = 0
+    for tabla in sorted(indice):
+        if filtro and tabla not in filtro:
+            continue
+        filas = []
+        for columna in sorted(pol.indice_columnas(indice[tabla])):
+            veredicto, motivo = pol.clasificar(columna, [tabla], modelo, politica)
+            entrada = {"columna": columna, "veredicto": veredicto, "motivo": motivo}
+
+            valores = (muestras.get(tabla) or {}).get(columna)
+            if veredicto == pol.CLARO and valores:
+                # Misma red de seguridad que mask_resultset sobre lo que sale en claro.
+                forma = det.escanear_columna(valores)
+                if forma:
+                    no_vacios = [v for v in valores if v is not None and str(v).strip()]
+                    entrada.update({
+                        "veredicto": pol.MASCARA,
+                        "motivo": "forma_%s" % forma,
+                        "sospechosa": True,
+                        "forma": forma,
+                        "coincidencias": sum(1 for v in no_vacios if det.detectar(v) == forma),
+                        "muestra": len(no_vacios),
+                    })
+
+            total += 1
+            if entrada["veredicto"] == pol.CLARO:
+                claro += 1
+            else:
+                mascara += 1
+            if entrada.get("sospechosa"):
+                sospechosas += 1
+
+            if todo or entrada["veredicto"] == pol.CLARO or entrada.get("sospechosa"):
+                if sum(len(v) for v in salida.values()) >= maximo:
+                    truncado = True
+                else:
+                    filas.append(entrada)
+        if filas:
+            salida[tabla] = filas
+
+    json.dump({
+        "mode": politica["mode"],
+        "tablas": salida,
+        "truncado": truncado,
+        "totales": {
+            "tablas_analizadas": len(indice) if not filtro else len(filtro & set(indice)),
+            "columnas": total, "claro": claro, "mascara": mascara, "sospechosas": sospechosas,
+        },
+    }, sys.stdout, ensure_ascii=False)
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--clasificar":
+        return _clasificar(sys.argv[2:])
+
     if len(sys.argv) < 2:
         sys.stderr.write("uso: pii_cli.py <workspace> [<model_path>]\n")
         return E_USO

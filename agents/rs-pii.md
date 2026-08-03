@@ -34,29 +34,34 @@ casos, en cualquier dirección (también al volver a `off`).
 Usada por `status` (paso 3) y por `bootstrap` (paso 2). Es la parte **barata** — sin consultar la BD,
 solo el modelo — de decidir qué columnas saldrían en claro.
 
-1. `get_model_index(workspace)` → tablas y columnas conocidas. Ligero (~15K tokens); ⛔ **nunca** leer
-   `BD/<proyecto>-model.json` completo con `Read` (SKILL.md "Reglas de consumo de tokens": puede pesar
-   ~180K tokens; en workspaces reales de este plugin, entre 288 KB y 664 KB en disco).
-2. Para cada tabla, `get_table_schema(workspace, tables="...")` en lotes (varias tablas por llamada) →
-   columnas con `type`, `pk`, `fk` y marca explícita `pii`/`safe` si existe.
-3. Clasificar cada columna con las reglas de §4.2 del documento, en este orden:
-   1. Marca explícita (`pii: true` o `safe: false` → enmascarada; `safe: true` → en claro) — gana
-      siempre.
-   2. Nombre de columna que casa un patrón sensible → enmascarada. Patrones base en
-      `scripts/pii_patterns.json` (léelo directo, es pequeño) + `pii_policy.patterns_add` /
-      `patterns_remove` del modelo si el usuario los mencionó (no hay tool que los exponga sin cargar
-      el modelo completo — si no se conocen, usar solo los patrones base).
-   3. Tipo numérico/fecha/PK/FK → en claro.
-   4. Resto de columnas de texto → enmascarada.
+⛔ **No clasifiques a mano.** El motor que decide qué se enmascara es `scripts/pii_policy.py`, y
+`scripts/pii_cli.py` lo expone en modo clasificación. Reproducir aquí la precedencia del §4.2 con
+palabras produce un segundo clasificador que deriva del real en cuanto uno de los dos cambia — y el
+resultado de esto es el inventario del §6, el que Sistemas usará para decidir qué columnas se redactan
+en BD. Un inventario que no coincide con lo que el plugin enmascara no sirve.
 
-   ⚠️ La lista de tablas paramétricas (`subviews.Parametricas` del modelo) no tiene tool dedicada y
-   leerla exige cargar el modelo completo — no lo hagas. Trata todas las tablas como no paramétricas:
-   el peor caso es que una tabla paramétrica salga en la lista para descartar a mano (ruido, no fuga);
-   nunca al revés.
+1. `get_db_config(workspace)` → `model_path`.
+2. Una sola invocación vía `Bash` (⛔ **nunca** leer `BD/<proyecto>-model.json` con `Read`: SKILL.md
+   "Reglas de consumo de tokens", puede pesar ~180K tokens — entre 288 KB y 664 KB en workspaces
+   reales de este plugin; el comando solo devuelve el veredicto, el modelo no entra en el contexto):
 
-El resultado es, por tabla, la lista de columnas que saldrían **en claro** y no casan ningún patrón —
-la superficie expuesta. Esta clasificación **no** toca la BD ni ve un solo valor real: solo nombres,
-tipos y flags del modelo.
+   ```bash
+   python "<plugin_root>/scripts/pii_cli.py" --clasificar "<model_path>"
+   ```
+
+   Opcionales: `--tablas T1,T2` limita el análisis; `--todo` incluye también las columnas que ya salen
+   enmascaradas (por defecto solo devuelve las que saldrían **en claro** y las sospechosas, que es la
+   superficie expuesta); `--max N` acota el número de filas devueltas (500 por defecto, con
+   `truncado: true` si se alcanza).
+
+3. Devuelve `{mode, tablas: {TABLA: [{columna, veredicto, motivo}]}, truncado, totales}` con el mismo
+   veredicto (`claro` / `mascara`) y el mismo `motivo` (`marca_columna`, `patron_nombre`,
+   `parametrica`, `tipo`, `texto`) que aplica `db_query` en cada consulta. Las tablas paramétricas
+   (`subviews.Parametricas`) y los `patterns_add`/`patterns_remove` del modelo ya están contemplados —
+   no hay que aproximarlos.
+
+Esta clasificación **no** toca la BD ni ve un solo valor real: solo nombres, tipos y marcas del
+modelo.
 
 ## `status` (por defecto)
 
@@ -100,12 +105,23 @@ a `off`/`audit` primero (subcomando correspondiente, tras confirmación) y repet
    una sola consulta:
    - Oracle: `SELECT <col1>, <col2>, ... FROM <tabla> WHERE ROWNUM <= 50`
    - SQL Server: `SELECT TOP 50 <col1>, <col2>, ... FROM <tabla>`
-4. Sobre los valores devueltos, buscar forma de DNI/NIE, IBAN, correo, teléfono o tarjeta (§4.3 del
-   documento). Si alguna columna "en claro" tiene valores con esa forma, márcala como sospechosa en el
-   inventario.
+4. **Clasificar los valores muestreados con el mismo motor**, no a ojo. Volver a invocar el modo
+   clasificación pasándole las muestras por stdin — devuelve, por columna, la forma detectada y
+   cuántos valores de la muestra coinciden, aplicando el mismo detector (`scripts/pii_detect.py`) y el
+   mismo umbral que usa `db_query`:
+
+   ```bash
+   echo '{"muestras": {"RDEUDORES": {"NUM1": ["...", "..."]}}}' | python "<plugin_root>/scripts/pii_cli.py" --clasificar "<model_path>" --tablas RDEUDORES
+   ```
+
+   Las columnas que cambian a `veredicto: "mascara"` con `sospechosa: true` son las que hay que marcar
+   como sospechosas en el inventario; `forma`, `coincidencias` y `muestra` dan el texto del informe
+   ("12 de 50 valores con forma de DNI").
+
    ⛔ **Nunca reproducir un valor muestreado**, ni en la respuesta al usuario ni en el fichero de
-   inventario — ni siquiera como ejemplo. Solo columna, forma detectada y conteo (p.ej. "12 de 50
-   valores con forma de DNI"). Esta regla no es negociable: es la razón de ser de este subcomando.
+   inventario — ni siquiera como ejemplo. Los valores solo viajan por stdin hacia el clasificador, que
+   no los devuelve: su salida es solo columna, forma y conteos. Esta regla no es negociable: es la
+   razón de ser de este subcomando.
 5. Escribir (`Write`) `docs/inventario-pii.md` — si ya existe, sobrescribirlo (es un informe
    regenerable, no configuración manual del usuario) — con la tabla:
 
@@ -245,6 +261,9 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 - ⛔ Nunca reproducir un valor muestreado por `bootstrap`, en ningún sitio. Solo columna, forma
   detectada y conteo.
 - ⛔ Nunca ejecutar `bootstrap` con `pii.mode = "enforce"` — el resultado sería vacío o falso.
+- ⛔ Nunca clasificar columnas a mano reproduciendo las reglas del §4.2: usar siempre
+  `scripts/pii_cli.py --clasificar`. Un segundo clasificador escrito en prompt deriva del real y
+  produce un inventario que no coincide con lo que el plugin enmascara.
 - ⛔ Nunca sobrescribir `~/.claude/settings.json` entero — solo añadir a `hooks.PreToolUse`,
   preservando todo lo demás que contenga.
 - Ante `enforce` sin guardas registradas, el mensaje debe ser inequívoco: la frase "los datos
