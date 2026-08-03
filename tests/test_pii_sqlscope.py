@@ -125,3 +125,43 @@ def test_regresion_literal_bien_formado_seguido_de_comentario():
     sql = "SELECT * FROM RDEUDORES WHERE COD = 'A--B' -- FROM FAKETABLE"
     assert sc.tablas(sql) == ["RDEUDORES"]
     assert sc.predicados(sql) == ["COD"]
+
+
+# --- Join antiguo por comas (SQL heredado de uCollect) ---
+# Solo se recogia la PRIMERA tabla; todas las columnas de las demas caian a "no resuelta"
+# y las decidia la forma de sus valores, que es donde un identificador numerico largo
+# podia colarse en claro.
+
+def test_tablas_join_por_comas_con_alias():
+    assert sc.tablas("SELECT * FROM RDEUDORES d, REXPEDIENTES e WHERE d.ID = e.ID") == \
+        ["RDEUDORES", "REXPEDIENTES"]
+
+
+def test_tablas_join_por_comas_sin_alias():
+    assert sc.tablas("SELECT * FROM RDEUDORES, REXPEDIENTES") == ["RDEUDORES", "REXPEDIENTES"]
+
+
+def test_tablas_join_por_comas_tres_tablas():
+    assert sc.tablas("SELECT * FROM A a, B b, C c") == ["A", "B", "C"]
+
+
+def test_tablas_join_por_comas_con_esquema():
+    assert sc.tablas("SELECT * FROM ESQ.RDEUDORES d, ESQ.REXPEDIENTES e") == \
+        ["RDEUDORES", "REXPEDIENTES"]
+
+
+def test_tablas_join_por_comas_con_as_explicito():
+    assert sc.tablas("SELECT * FROM RDEUDORES AS d, REXPEDIENTES AS e") == \
+        ["RDEUDORES", "REXPEDIENTES"]
+
+
+def test_tablas_order_by_con_comas_no_cuela_columnas_como_tablas():
+    assert sc.tablas("SELECT a, b FROM T ORDER BY a, b") == ["T"]
+
+
+def test_tablas_group_by_con_comas_no_cuela_columnas_como_tablas():
+    assert sc.tablas("SELECT a FROM T GROUP BY a, b") == ["T"]
+
+
+def test_tablas_in_con_lista_de_valores_no_cuela_nada():
+    assert sc.tablas("SELECT * FROM T WHERE x IN (1,2)") == ["T"]

@@ -86,6 +86,26 @@ _RE_TABLA = re.compile(
     re.I,
 )
 
+# Continuacion de una lista de tablas separadas por comas (join antiguo, la forma habitual
+# en el SQL heredado de uCollect: "FROM RDEUDORES d, REXPEDIENTES e WHERE d.ID = e.ID").
+# Se aplica repetidamente A PARTIR del final de cada tabla ya reconocida: alias opcional,
+# coma, siguiente tabla. Sin esto solo se recogia la PRIMERA tabla y todas las columnas de
+# las demas caian a "no resuelta", es decir, decididas por la forma de sus valores.
+_RE_TABLA_COMA = re.compile(
+    r"\s*(?:(?:AS\s+)?[A-Za-z_][\w$#]*)?\s*,\s*"
+    r"([A-Za-z_][\w$#]*(?:\s*\.\s*[A-Za-z_][\w$#]*)?)",
+    re.I,
+)
+
+# Palabras que nunca son un nombre de tabla. Solo se usan para cortar la lista de comas:
+# una clausula como "ORDER BY a, b" no debe colar "b" como tabla.
+_PALABRAS_CLAVE = {
+    "SELECT", "FROM", "WHERE", "GROUP", "ORDER", "HAVING", "BY", "UNION", "MINUS",
+    "INTERSECT", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "ON",
+    "AND", "OR", "NOT", "IN", "EXISTS", "CONNECT", "START", "WITH", "AS", "CASE",
+    "WHEN", "THEN", "ELSE", "END", "DISTINCT", "FETCH", "OFFSET", "ROWS", "ONLY",
+}
+
 # Columna a la izquierda de un comparador dentro del WHERE. Admite el alias delante
 # ("d.NOMBRE"), del que solo interesa la parte de la columna.
 _RE_PREDICADO = re.compile(
@@ -115,11 +135,27 @@ def _unicos(seq):
 
 
 def tablas(sql):
-    """Tablas del FROM/JOIN, en mayusculas, sin esquema, sin duplicados, en orden."""
+    """Tablas del FROM/JOIN, en mayusculas, sin esquema, sin duplicados, en orden.
+
+    Reconoce tambien el join antiguo por comas ("FROM A a, B b"), que es la forma
+    habitual del SQL heredado de uCollect.
+    """
     if not sql:
         return []
     sql = _strip_comments(sql)
-    encontradas = [_normalizar(m.group(1)) for m in _RE_TABLA.finditer(sql)]
+    encontradas = []
+    for m in _RE_TABLA.finditer(sql):
+        encontradas.append(_normalizar(m.group(1)))
+        pos = m.end()
+        while True:
+            cont = _RE_TABLA_COMA.match(sql, pos)
+            if not cont:
+                break
+            nombre = _normalizar(cont.group(1))
+            if nombre in _PALABRAS_CLAVE:
+                break
+            encontradas.append(nombre)
+            pos = cont.end()
     return _unicos(t for t in encontradas if t and t not in _IGNORADAS)
 
 
