@@ -1,5 +1,50 @@
 # RS Enterprise Agent — Changelog
 
+## 2.30.0 — 2026-07-31
+
+### Security: inyección de comandos, password fuera de argv y guarda SQL más robusta
+
+Endurecimiento de rutas ya vivas del pipeline (hallazgos de auditoría interna). Sin cambios de
+superficie: mismos agentes/comandos/tools/hooks.
+
+- **Inyección de comandos vía `Invoke-Expression`** (`hooks/compile-check.ps1`,
+  `hooks/test-runner-check.ps1`): se construía `"dotnet build \"$SlnPath\" ..."` y se ejecutaba con
+  `Invoke-Expression`; una `.sln` con `"` en la ruta podía romper el quoting e inyectar comandos.
+  Ahora se usa el **operador de llamada con array de argumentos** (`& dotnet @args`), donde `$SlnPath`
+  va como un argumento literal. El CI (`PSScriptAnalyzer`) pasa a **gatear** la regla
+  `PSAvoidUsingInvokeExpression` para que el patrón no se reintroduzca.
+
+- **Password de BD fuera de la línea de comandos** (`hooks/sync-model-tables.ps1`,
+  `hooks/sync-from-db.ps1`, `scripts/installer-inserts.py`): `-P <password>` quedaba visible en la
+  lista de procesos durante toda la ejecución. Ahora se pasa por la variable de entorno
+  `SQLCMDPASSWORD`, mismo patrón que ya usaba la tool MCP `db_query`.
+
+- **Guarda SQL read-only más robusta** (`mcp/rs-workspace-server.py`, `hooks/db-query.ps1`): la
+  validación (SELECT/CTE, sin multi-statement ni verbo de escritura) no quitaba los comentarios SQL
+  antes de contar `;` / buscar verbos, lo que provocaba **falsos positivos** (un `;` dentro de un
+  comentario bloqueaba una query legítima) y dejaba la guarda menos sólida. Se extraen dos helpers
+  puros y **testeables** en el MCP (`_strip_sql_comments`, `_is_readonly_sql`), replicados en el hook
+  (`Remove-SqlComments`) — con nota de paridad. La ejecución sigue usando el SQL original (los
+  comentarios son inocuos para el cliente BD).
+
+- **Tests** (suite existente de 2.21.0): `tests/test_mcp.py` añade 18 casos de
+  `_is_readonly_sql`/`_strip_sql_comments` (comentarios, literales, multi-statement, CTE con verbo);
+  `tests/DbQuery.Tests.ps1` añade que un `;` comentado ya no es falso positivo y que un comentario no
+  oculta un verbo. **33 casos pytest en verde** (15 previos + 18 nuevos).
+
+- **Compat `mcp<2` en `requirements.txt`**: el major `mcp 2.0.0` eliminó `mcp.server.fastmcp`, así que
+  `mcp>=1.2.0` sin tope arrastraba 2.x y rompía el import de FastMCP tanto en el **runtime del server**
+  como en el CI. Se acota `mcp>=1.2.0,<2` (el plugin usa la API FastMCP de la línea 1.x).
+
+Ficheros: `hooks/compile-check.ps1`, `hooks/test-runner-check.ps1`, `hooks/sync-model-tables.ps1`,
+`hooks/sync-from-db.ps1`, `scripts/installer-inserts.py`, `mcp/rs-workspace-server.py`,
+`hooks/db-query.ps1`, `.github/workflows/ci.yml`, `tests/test_mcp.py`, `tests/DbQuery.Tests.ps1`,
+`requirements.txt`, bump de versión.
+
+> Follow-up documentado (fuera de alcance de esta versión): password en claro en el fichero temporal
+> `.sql` de la rama Oracle (`CONNECT user/pass@ds`) — inherente al patrón `sqlplus /nolog`, requiere
+> rediseño mayor; y el rendimiento de `security-scan.ps1` (relee ficheros por patrón).
+
 ## 2.29.0 — 2026-07-31
 
 ### `/rs-instalador`: la fila base de `RVERSIONES` la genera el hook, y las paramétricas por fin se ejecutan
@@ -518,7 +563,6 @@ Ficheros: `scripts/render-help.py` + `scripts/help-template.html` + `hooks/rende
 (fila en la tabla de modos), `README.md` (reescritura + counts), `docs/plugin-architecture.md`
 (43 tools), `references/mcp.md`, `references/hooks.md`, `hooks/README.md`, bump de versión.
 **MCP 42 → 43 tools; hooks 47 → 48; agentes 45 → 46; comandos 42 → 43; modos directos 40 → 41.**
-
 ## 2.21.0 — 2026-07-23
 
 ### Feat: tests del plugin + dashboard de estadísticas + 4 modos directos

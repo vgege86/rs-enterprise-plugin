@@ -127,3 +127,44 @@ def test_diff_summary_git():
     assert s["file"] == "Foo.cs"
     assert s["+lines"] == 2
     assert s["-lines"] == 1
+
+
+# --- guarda read-only: _is_readonly_sql / _strip_sql_comments ---
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1 FROM dual",
+    "  select * from RCLIENTES  ",
+    "WITH t AS (SELECT 1 FROM dual) SELECT * FROM t",
+    "SELECT 1 FROM dual;",                      # ; final permitido
+    "SELECT 1 -- ; DROP TABLE x",               # ; dentro de comentario de línea → NO multi-statement
+    "/* comentario */ SELECT 1 FROM dual",      # comentario de bloque antes del SELECT
+    "SELECT ';' FROM dual",                     # ; dentro de literal
+    "SELECT '--' FROM dual",                    # -- dentro de literal (no es comentario)
+    "WITH x AS (SELECT 1) /* nota */ SELECT * FROM x",
+])
+def test_is_readonly_sql_permite(sql):
+    ok, motivo = srv._is_readonly_sql(sql)
+    assert ok, f"debería permitir: {sql!r} (motivo={motivo})"
+
+
+@pytest.mark.parametrize("sql,frag", [
+    ("SELECT 1; DROP TABLE x", "Multi-statement"),
+    ("SELECT 1 FROM dual; DELETE FROM y", "Multi-statement"),
+    ("UPDATE x SET a = 1", "Solo se permiten"),
+    ("DELETE FROM x", "Solo se permiten"),
+    ("DROP TABLE x", "Solo se permiten"),
+    ("WITH t AS (SELECT 1) DELETE FROM x", "CTE con verbo"),
+    ("WITH t AS (SELECT 1) /* x */ DELETE FROM y", "CTE con verbo"),   # comentario no oculta el verbo
+    ("SELECT 1 /* ; */; DROP TABLE x", "Multi-statement"),             # ; real fuera del comentario
+])
+def test_is_readonly_sql_bloquea(sql, frag):
+    ok, motivo = srv._is_readonly_sql(sql)
+    assert not ok, f"debería bloquear: {sql!r}"
+    assert frag in motivo
+
+
+def test_strip_sql_comments_respeta_literales():
+    assert srv._strip_sql_comments("SELECT '-- no comentario' FROM dual").strip() \
+        == "SELECT '-- no comentario' FROM dual"
+    assert ";" not in srv._strip_sql_comments("SELECT 1 -- ; x\n")
+    assert "secreto" not in srv._strip_sql_comments("SELECT 1 /* secreto */ FROM dual")

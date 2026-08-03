@@ -49,4 +49,18 @@ Describe "db-query.ps1 read-only guard" {
         $out.error | Should -Not -Match "Solo se permiten"
         $out.error | Should -Not -Match "Multi-statement"
     }
+
+    It "un ; dentro de comentario de línea NO cuenta como multi-statement" {
+        # Antes daba falso positivo: el ; del comentario inflaba el conteo. Ahora la guarda quita
+        # comentarios antes de contar, así que este SELECT legítimo debe pasar la guarda.
+        $out = & $script:hook -Workspace "X:\dummy" -Sql "SELECT 1 FROM dual -- ; DROP TABLE x" | ConvertFrom-Json
+        $out.error | Should -Not -Match "Multi-statement"
+        $out.error | Should -Not -Match "Solo se permiten"
+    }
+
+    It "un comentario de bloque NO oculta un verbo de escritura en un CTE" {
+        $out = & $script:hook -Workspace "X:\dummy" -Sql "WITH t AS (SELECT 1 FROM dual) /* x */ DELETE FROM y" | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error | Should -Match "CTE con verbo de escritura"
+    }
 }

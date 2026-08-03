@@ -274,11 +274,15 @@ def run_query_sqlserver(sql: str, cfg: dict) -> list:
     # -f 65001 → codepage UTF-8 de entrada/salida (SQL Server 2016+)
     cmd = ["sqlcmd", "-S", cfg["datasource"], "-d", cfg["schema"],
            "-Q", full, "-h", "-1", "-W", "-y", "0", "-Y", "0", "-f", "65001"]
+    entorno = os.environ
     if cfg["user"]:
-        cmd += ["-U", cfg["user"], "-P", cfg["password"]]
+        # Password por variable de entorno SQLCMDPASSWORD, no como -P en argv (visible en la lista de
+        # procesos). Mismo patrón que la tool MCP db_query (rs-workspace-server.py).
+        cmd += ["-U", cfg["user"]]
+        entorno = {**os.environ, "SQLCMDPASSWORD": cfg["password"]}
     else:
         cmd += ["-E"]  # autenticación integrada
-    r = subprocess.run(cmd, capture_output=True, env=os.environ)  # bytes
+    r = subprocess.run(cmd, capture_output=True, env=entorno)  # bytes
     out, err = _decode(r.stdout), _decode(r.stderr)
     if r.returncode != 0:
         raise RuntimeError((err or out).strip())

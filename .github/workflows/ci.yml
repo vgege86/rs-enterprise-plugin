@@ -43,14 +43,18 @@ jobs:
                   Format-Table Severity, ScriptName, Line, RuleName -AutoSize |
                   Out-String -Width 200 | Write-Host
           }
-          # Falla solo con errores reales de sintaxis/análisis (Error/ParseError). Los Warnings
-          # (p.ej. Write-Host intencionado en los hooks) se imprimen pero no rompen el build.
-          $errors = @($findings | Where-Object { $_.Severity -in @('Error', 'ParseError') })
-          if ($errors.Count -gt 0) {
-              Write-Host "::error::PSScriptAnalyzer encontró $($errors.Count) problema(s) de severidad Error/ParseError"
+          # Falla con errores reales de sintaxis/análisis (Error/ParseError) Y con la regla de
+          # inyección PSAvoidUsingInvokeExpression (aunque sea Warning): Invoke-Expression sobre una
+          # cadena con rutas es un vector de inyección de comandos, no debe reintroducirse. El resto
+          # de Warnings (p.ej. Write-Host intencionado) se imprimen pero no rompen el build.
+          $blocking = @($findings | Where-Object {
+              $_.Severity -in @('Error', 'ParseError') -or $_.RuleName -eq 'PSAvoidUsingInvokeExpression'
+          })
+          if ($blocking.Count -gt 0) {
+              Write-Host "::error::PSScriptAnalyzer encontró $($blocking.Count) problema(s) bloqueante(s) (Error/ParseError o PSAvoidUsingInvokeExpression)"
               exit 1
           }
-          Write-Host "PSScriptAnalyzer OK — sin errores (los warnings son informativos)"
+          Write-Host "PSScriptAnalyzer OK — sin errores bloqueantes (los warnings restantes son informativos)"
       - name: Pester (guarda read-only de db-query.ps1)
         shell: pwsh
         run: |
