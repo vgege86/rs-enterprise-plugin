@@ -249,8 +249,13 @@ reproduce un valor muestreado, ni en la respuesta ni en el fichero); `audit`/`en
 escriben `pii_policy.mode` en el modelo BD. `enforce` no conmuta el modo sin antes registrar las
 dos guardas `PreToolUse` (`hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1`) en
 `~/.claude/settings.json` y confirmar el registro con `check_env` — un workspace que crea estar
-protegido sin estarlo es peor que uno que sabe que está en `off`. ⛔ Gate de confirmación explícita
-en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
+protegido sin estarlo es peor que uno que sabe que está en `off`. La verificación de `check_env` es
+estructural (parsea `settings.json` y exige entradas reales bajo `hooks.PreToolUse` con matcher
+plausible, vía `Test-RsPiiGuards` de `hooks/lib-pii.ps1`) y comprueba el **fichero, no la sesión**:
+Claude Code captura los hooks al arrancar, así que `enforce` cierra pidiendo el reinicio en vez de
+declarar la protección activa. La clasificación de columnas la hace
+`scripts/pii_cli.py --clasificar`, no un clasificador reescrito en el prompt. ⛔ Gate de
+confirmación explícita en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
 de este documento (los módulos `scripts/pii_*.py` que aplica la política).
 
 ---
@@ -422,7 +427,7 @@ módulo, `scripts/pii_patterns.json`, no es código sino la lista base de patron
 | `scripts/pii_sqlscope.py` | Extrae tablas (`FROM`/`JOIN`) y columnas de predicado (`WHERE`) de un SQL de texto. No es un parser SQL: reconoce las formas habituales de las consultas que generan los agentes. Elimina antes los comentarios (`--`, `/* */`) con un escáner que respeta los literales de cadena; un literal sin cerrar (SQL malformado) hace que no se resuelva ninguna tabla — el alcance indeterminable degrada hacia el lado seguro (todo sin resolver, todo enmascarado), nunca al revés. |
 | `scripts/pii_policy.py` | Clasifica cada columna del resultset como en claro, enmascarada o no resuelta, con la precedencia documentada en `docs/proteccion-pii-consultas-bd.md` §4.2: marca explícita del modelo → patrón de nombre → tabla paramétrica → tipo → resto de texto → no resuelta. Para las no resueltas, decide por la forma de los valores con una prueba numérica estricta (rechaza signo `+`, `inf`/`nan`, separadores de miles, y cualquier entero de 9+ dígitos sin parte decimal — forma de identificador, no de cantidad). Si `pii_patterns.json` no se puede leer, la lista de patrones falla **cerrada** a `["*"]` en vez de abrirse en silencio. |
 | `scripts/pii_mask.py` | Punto único de transformación (`mask_resultset`): combina `pii_policy` + `pii_detect` sobre un resultset y sustituye los valores marcados por un seudónimo HMAC-SHA256 (clave de 32 bytes en el perfil local del usuario, `%LOCALAPPDATA%\rs-enterprise-agent\pii.key`, nunca en el repositorio) o por `[PII]` si `transform=suppress`. Es el módulo que importa directamente la tool MCP `db_query` (`mcp/rs-workspace-server.py`, vía `importlib`). |
-| `scripts/pii_cli.py` | Envoltorio CLI de `pii_mask` (stdin JSON `{columns,rows,sql}` → stdout JSON `{columns,rows,pii}`) para que `hooks/db-query.ps1` pueda invocarlo como proceso — PowerShell no puede importar un módulo Python. Nunca escribe un valor de dato personal en stderr, solo el nombre del problema (fichero, tipo de error). |
+| `scripts/pii_cli.py` | Envoltorio CLI de `pii_mask` (stdin JSON `{columns,rows,sql}` → stdout JSON `{columns,rows,pii}`) para que `hooks/db-query.ps1` pueda invocarlo como proceso — PowerShell no puede importar un módulo Python. El `model_path` se lo pasa el llamante (`Get-RsModelPath`), no lo busca él. Todo código de salida != 0 significa "corrí y no pude aplicar la política" → el hook falla cerrado. Modo `--clasificar` para `/rs-pii`. Nunca escribe un valor de dato personal en stderr, solo el nombre del problema (fichero, tipo de error). |
 
 **Por qué Python y no una segunda implementación en PowerShell.** El resto del plugin sigue la
 convención "tool MCP ↔ hook fallback 1:1" con dos implementaciones independientes — una en Python
