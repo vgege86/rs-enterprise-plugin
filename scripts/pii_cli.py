@@ -27,27 +27,46 @@ def _cargar(nombre):
 
 
 def _modelo(workspace):
-    """(modelo, error) del primer BD/*-model.json legible del workspace.
+    """(modelo, error) del primer BD/*-model.json del workspace.
 
-    ({}, None) es el caso normal: no hay modelo, o no hay carpeta BD (mode=off aguas
-    abajo). ({}, motivo) solo cuando un fichero SI se pudo parsear como JSON pero su
-    raiz no es un objeto (p.ej. una lista): eso no se trata como "no hay modelo" en
-    silencio porque mask_resultset asume dict y revienta con AttributeError sobre esa
-    raiz (visto en la revision de la Tarea 5). Se hace fallar el CLI explicitamente en
-    vez de continuar con datos a medio procesar.
+    Dos situaciones bien distintas, que NO deben confundirse:
+
+    1. No hay modelo en absoluto (no existe la carpeta BD, o no hay ningun
+       fichero *-model.json dentro). Caso normal de un workspace que nunca
+       declaro politica PII. Silencioso: ({}, None), mode=off aguas abajo.
+
+    2. Hay un fichero *-model.json pero no se puede usar: JSON invalido,
+       fichero ilegible, o su raiz no es un objeto (p.ej. una lista). Esto
+       es un workspace ROTO, no la ausencia de politica, y no puede tratarse
+       igual que el caso 1: si se tragara en silencio, un modelo corrupto o
+       a medio escribir (merge sin terminar, disco lleno) apagaria el
+       enmascarado sin ningun aviso, justo la fuga silenciosa que este CLI
+       existe para evitar. Ademas, pasar una raiz que no es dict a
+       mask_resultset revienta con AttributeError (visto en la revision de
+       la Tarea 5: pii_policy.cargar_politica hace `(modelo or {}).get(...)`
+       sobre lo que le llegue). Por eso aqui se devuelve un motivo y el
+       caller hace fallar el CLI (exit != 0) en vez de seguir con datos a
+       medio procesar.
     """
     bd = Path(workspace) / "BD"
     if not bd.is_dir():
         return {}, None
-    for ruta in sorted(bd.glob("*-model.json")):
-        try:
-            datos = json.loads(ruta.read_text(encoding="utf-8-sig"))
-        except Exception:
-            continue
-        if not isinstance(datos, dict):
-            return {}, "modelo BD invalido (%s): la raiz del JSON no es un objeto" % ruta.name
-        return datos, None
-    return {}, None
+    ficheros = sorted(bd.glob("*-model.json"))
+    if not ficheros:
+        return {}, None
+
+    ruta = ficheros[0]
+    try:
+        texto = ruta.read_text(encoding="utf-8-sig")
+    except Exception as exc:
+        return {}, "modelo BD ilegible (%s): %s" % (ruta.name, exc.__class__.__name__)
+    try:
+        datos = json.loads(texto)
+    except Exception as exc:
+        return {}, "modelo BD invalido (%s): %s" % (ruta.name, exc.__class__.__name__)
+    if not isinstance(datos, dict):
+        return {}, "modelo BD invalido (%s): la raiz del JSON no es un objeto" % ruta.name
+    return datos, None
 
 
 def main():

@@ -54,6 +54,12 @@ if ($semiCount -gt 0) {
     exit 1
 }
 
+# Eco de SQL saneado: UNA sola vez, para toda salida que incluya "sql" (error de sqlplus,
+# sin filas, o resultado con filas). Un literal con dato personal (ej. WHERE DNI =
+# '12345678Z') no debe quedar persistido en NINGUNA respuesta, y una consulta que no
+# encuentra filas es justo la forma de una busqueda dirigida a una persona concreta.
+$sqlEcho = ($Sql -replace "'[^']*'", "'?'")
+
 $Workspace = Resolve-RsWorkspace $Workspace
 
 # --- Leer docs\.rs-databases.json ---
@@ -125,16 +131,40 @@ EXIT;
         $raw = @(Get-Content $tempOut -Encoding UTF8 -ErrorAction SilentlyContinue)
 
         if ($exitCode -ne 0) {
+            # Sin columns/pii a proposito: una consulta que nunca llego a ejecutarse no tiene
+            # nada que enmascarar. Solo se sanea el eco de SQL, igual que en el resto de salidas.
             $errMsg = ($raw | Where-Object { $_ -match 'ORA-|SP2-|ERROR' }) -join "; "
             if (-not $errMsg) { $errMsg = $raw -join " " }
-            @{ success = $false; error = $errMsg.Trim(); sql = $Sql } | ConvertTo-Json
+            @{ success = $false; error = $errMsg.Trim(); sql = $sqlEcho } | ConvertTo-Json
             exit 0
         }
 
         # Primera línea = cabeceras CSV, resto = datos. Sin filas, sqlplus no emite ni la cabecera.
         $lines = @($raw | Where-Object { $_.Trim() -ne "" })
         if ($lines.Count -le 1) {
-            @{ success = $true; rows = @(); row_count = 0; truncated = $false; sql = $Sql } | ConvertTo-Json
+            # Sin filas no hay nada que enmascarar (no se llama a pii_cli para un resultset
+            # vacio), pero la forma de la respuesta se mantiene igual que la del camino con
+            # filas: columns/rows/pii siempre presentes, para que el consumidor no tenga que
+            # distinguir "vacio" de "con datos" por la forma del JSON.
+            # Cabeceras vía ConvertFrom-Csv, NUNCA partiendo la linea por comas a mano: un
+            # alias de columna entre comillas con una coma dentro se corromperia en silencio.
+            # Truco: la propia linea de cabecera sirve de "fila" tambien, asi el objeto que
+            # produce ConvertFrom-Csv trae los nombres reales en sus propiedades; el valor de
+            # cada propiedad se descarta (es igual al nombre) y solo se usan las Properties.Name.
+            $cabeceras = @()
+            if ($lines.Count -eq 1 -and $lines[0]) {
+                $filaCabecera = @($lines[0], $lines[0]) | ConvertFrom-Csv
+                $cabeceras = @($filaCabecera[0].PSObject.Properties.Name)
+            }
+            @{
+                success   = $true
+                row_count = 0
+                truncated = $false
+                sql       = $sqlEcho
+                columns   = $cabeceras
+                rows      = @()
+                pii       = @{ mode = "off"; reason = "sin filas" }
+            } | ConvertTo-Json -Depth 4
             exit 0
         }
 
@@ -181,7 +211,7 @@ EXIT;
             success   = $true
             row_count = $matriz.Count
             truncated = $todas.Count -gt $MaxRows
-            sql       = ($Sql -replace "'[^']*'", "'?'")   # literales fuera del eco
+            sql       = $sqlEcho   # ya saneado arriba, una sola vez para todas las salidas
             columns   = @($cabeceras)
             rows      = @($matriz)
             pii       = $piiMeta
