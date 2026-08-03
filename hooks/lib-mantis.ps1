@@ -1,6 +1,9 @@
 # Funciones puras de la integración Mantis (dot-sourceable, sin red).
 # Patrón: hooks/lib-dbconfig.ps1. El token NUNCA se emite: usar Protect-MantisToken.
 
+# Cripto de secretos (Unprotect-RsSecret): el token puede venir cifrado con DPAPI (enc:<base64>).
+. (Join-Path $PSScriptRoot "lib-crypto.ps1")
+
 function Get-MantisCreds {
     param([string]$Path)
     if (-not (Test-Path $Path)) {
@@ -9,7 +12,7 @@ function Get-MantisCreds {
     try { $c = Get-Content -Raw -Path $Path -Encoding UTF8 | ConvertFrom-Json }
     catch { throw "No se pudo parsear $Path como JSON." }
     $baseUrl = ("$($c.baseUrl)").TrimEnd('/')
-    $token   = "$($c.token)"
+    $token   = Unprotect-RsSecret "$($c.token)"
     if (-not $baseUrl -or -not $token) {
         throw "Credenciales incompletas en $Path (se requieren baseUrl, token)."
     }

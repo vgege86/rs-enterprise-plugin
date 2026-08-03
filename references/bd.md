@@ -24,7 +24,13 @@ Obtener vía `get_db_config` (tool MCP) o `hooks\get-config.ps1` — nunca leer 
 
 Varias conexiones → `conexiones[0]` es la principal; las demás solo para generar DDL.
 
-⛔ **NUNCA** leer `docs/.rs-databases.json` directamente: contiene el password en texto plano.
+⛔ **NUNCA** leer `docs/.rs-databases.json` directamente: puede contener el password (en texto plano
+o cifrado). Usar `get-config.ps1` / `get_db_config` (que nunca emiten el password) o `db_query`.
+
+> 🔐 **Cifrado en reposo (opcional):** el password del `cadena` puede guardarse cifrado con DPAPI como
+> `Password=enc:<base64>`. Los lectores lo descifran al vuelo (`Unprotect-RsSecret` en PS,
+> `_unprotect_secret` en Python); un valor sin el prefijo `enc:` se trata como texto plano. Para migrar
+> los secretos existentes: `/rs-cifrar` (hook `secure-credentials.ps1`).
 
 ---
 

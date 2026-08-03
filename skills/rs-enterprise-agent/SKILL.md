@@ -169,6 +169,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Runbook operativo 🔷 | `/rs-runbook`, "documenta cómo se hace la carga de X", "runbook de <proceso>", "procedimiento de operación", "documenta los errores de <proceso>" | `rs-runbook` (procedimiento + reglas críticas + errores conocidos; **entrevista al usuario**, persiste a `funcional\OPERACION\`) |
 | Validar entorno ⚡ | `/rs-env`, "check entorno" | `rs-validar-entorno` |
 | Inicializar workspace 🔷 | `/rs-init`, "prepara este workspace", "inicializa el proyecto" | `rs-init` (crea .rs-databases.json + andamiaje docs + primer modelo BD; ⛔ no sobrescribe) |
+| Cifrar credenciales ⚡ | `/rs-cifrar`, "cifra las credenciales", "cifra el password de la BD/token" | `rs-cifrar` (cifra en reposo con DPAPI el password BD + tokens Jira/Mantis; idempotente, retrocompatible) |
 | Estructura ⚡ | `/rs-estructura`, "qué proyectos tiene X" | `rs-estructura` |
 | Explicar 🔷 | `/rs-explicar`, "qué hace X", "explícame la clase Y" | `rs-explicar` (explicación NL de una clase/método/proceso + flujo de datos; onboarding) |
 | Commit 🔷 | `/rs-commit`, "commit X.sln" | `detect_vcs` → `rs-commit` (ramifica svn/git; Git hace commit+push con doble confirmación) |

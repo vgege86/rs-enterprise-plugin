@@ -163,6 +163,28 @@ def test_is_readonly_sql_bloquea(sql, frag):
     assert frag in motivo
 
 
+# --- cifrado de secretos: _unprotect_secret ---
+
+def test_unprotect_secret_plaintext_passthrough():
+    # Un valor sin el prefijo enc: se devuelve tal cual (texto plano legacy) — retrocompatibilidad.
+    assert srv._unprotect_secret("secreto") == "secreto"
+    assert srv._unprotect_secret("") == ""
+    assert srv._unprotect_secret("Password_con_simbolos!@#") == "Password_con_simbolos!@#"
+
+
+def test_unprotect_secret_enc_no_descifra_fuera_de_windows():
+    # Un valor cifrado (enc:) exige DPAPI: en CI (Linux) no hay windll → OSError. En Windows con un
+    # blob inválido, CryptUnprotectData también falla → OSError. En ambos casos, degradación controlada.
+    with pytest.raises(OSError):
+        srv._unprotect_secret("enc:QUJDRA==")
+
+
+def test_get_db_password_plaintext_pasa_por_unprotect(tmp_path):
+    # El password en texto plano sigue funcionando tras introducir _unprotect_secret en el camino.
+    _write_db_config(tmp_path, "Data Source=DS;User Id=u;Password=llano")
+    assert srv._get_db_password(str(tmp_path)) == "llano"
+
+
 def test_strip_sql_comments_respeta_literales():
     assert srv._strip_sql_comments("SELECT '-- no comentario' FROM dual").strip() \
         == "SELECT '-- no comentario' FROM dual"

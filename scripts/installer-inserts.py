@@ -68,6 +68,35 @@ RAW_BASES = {'RAW', 'VARBINARY', 'BINARY'}
 BLOB_BASES = {'BLOB', 'LONG RAW', 'IMAGE'}
 
 
+def _unprotect_secret(value: str) -> str:
+    """Descifra un valor 'enc:<base64>' con DPAPI (CurrentUser, Windows). Sin el prefijo 'enc:' se
+    devuelve tal cual (texto plano legacy). ⛔ PARIDAD con _unprotect_secret de mcp/rs-workspace-server.py
+    y con Unprotect-RsSecret de hooks/lib-crypto.ps1 (mismo blob DPAPI). Windows-only."""
+    if not value or not value.startswith("enc:"):
+        return value
+    import base64
+    import ctypes
+    from ctypes import wintypes
+    if not hasattr(ctypes, "windll"):
+        raise OSError("DPAPI (descifrado de secretos) solo está disponible en Windows")
+
+    class _DataBlob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    raw = base64.b64decode(value[len("enc:"):])
+    buf_in = ctypes.create_string_buffer(raw, len(raw))
+    blob_in = _DataBlob(len(raw), ctypes.cast(buf_in, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DataBlob()
+    ok = ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out))
+    if not ok:
+        raise OSError("CryptUnprotectData falló (¿secreto cifrado por otro usuario/máquina?)")
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData).decode("utf-8")
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
 def _read_password(workspace: str) -> str:
     """Mirror de _get_db_password del MCP: password directo de docs/.rs-databases.json
     (conexión principal, conexiones[0]). No pasar por get-config.ps1, que la omite deliberadamente.
@@ -88,7 +117,8 @@ def _read_password(workspace: str) -> str:
         for part in str(sel.get("cadena", "")).split(";"):
             part = part.strip()
             if part.lower().startswith("password="):
-                return part.split("=", 1)[1].strip()
+                # El valor puede venir cifrado (enc:<base64>) o en texto plano (legacy).
+                return _unprotect_secret(part.split("=", 1)[1].strip())
     except Exception:
         pass
     return ""

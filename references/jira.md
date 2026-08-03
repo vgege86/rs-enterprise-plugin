@@ -54,6 +54,9 @@ Scaffolding rápido: `/rs-tarea init`.
 - El hook `jira-attach.ps1` lee este fichero, hace Basic auth `email:token` y `POST
   {baseUrl}/rest/api/3/issue/{KEY}/attachments` con `X-Atlassian-Token: no-check`.
 - ⛔ El token **nunca** se imprime en output de tool/hook ni se guarda en `.jira-dev-config.json`.
+- 🔐 **Cifrado en reposo (opcional):** el `token` puede guardarse cifrado con DPAPI como `enc:<base64>`;
+  `jira-attach.ps1`/`jira-download.ps1` lo descifran al vuelo (`Unprotect-RsSecret`). Un token sin el
+  prefijo `enc:` se trata como texto plano. Para cifrar el fichero existente: `/rs-cifrar`.
 
 ## Descarga de adjuntos — `hooks/jira-download.ps1` (desde 2.25.0)
 
