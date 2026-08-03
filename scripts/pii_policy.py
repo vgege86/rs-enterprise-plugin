@@ -14,6 +14,7 @@ reglas automaticas se equivocan, y tiene que ganar siempre.
 """
 import fnmatch
 import json
+import re
 from pathlib import Path
 
 import importlib.util
@@ -47,10 +48,15 @@ def _patrones_base():
     try:
         datos = json.loads(_PATRONES_BASE.read_text(encoding="utf-8"))
         return list(datos.get("patrones") or [])
-    except Exception:
-        # Sin lista base seguimos funcionando: el default de texto sigue tapando lo
-        # textual. Solo se pierde la deteccion por nombre sobre columnas numericas.
-        return []
+    except (OSError, ValueError):
+        # Fallar cerrado, no abierto: las columnas numericas con datos personales
+        # (TELEFONO NUMBER(9)) solo estan protegidas por esta lista de patrones de
+        # nombre. Perderla en silencio convertiria el enmascarado en fuga de texto
+        # claro sin ningun error visible. Un comodin unico hace que toda columna
+        # case con el patron de nombre, asi que todo se enmascara: una instalacion
+        # rota degrada a "inutil pero segura", nunca a "funciona pero filtra".
+        # json.JSONDecodeError es subclase de ValueError, asi que queda cubierto.
+        return ["*"]
 
 
 def cargar_politica(modelo):
@@ -133,11 +139,40 @@ def clasificar(columna, tablas, modelo, politica):
     return MASCARA, "texto"
 
 
+# Numero plano: signo '-' opcional, digitos, separador decimal opcional ('.' o ',')
+# seguido de digitos. Deliberadamente NO admite: '+' (una cantidad de un resultset
+# no lo lleva, un telefono si), notacion 'inf'/'nan' (heredada de la gramatica de
+# float() de Python) ni separadores de miles tipo '1_000'.
+_RX_NUMERO_PLANO = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+
+# A partir de este numero de digitos sin parte decimal, la forma deja de ser una
+# cantidad o un conteo y pasa a ser la de un identificador.
+_MIN_DIGITOS_IDENTIFICADOR = 9
+
+
+def _es_numero(v):
+    """True si v es una cantidad o conteo plano; False si es un identificador.
+
+    Un entero de 9 o mas digitos SIN parte decimal tiene la forma de un telefono,
+    cuenta, contrato o tarjeta, no la de una cantidad o un COUNT(*). Se enmascara
+    aunque en teoria pudiera ser un agregado real por encima de 99.999.999 sin
+    decimales: es un coste de usabilidad aceptado a proposito, en el sentido seguro.
+    """
+    if not _RX_NUMERO_PLANO.match(v):
+        return False
+    sin_signo = v[1:] if v.startswith("-") else v
+    tiene_decimales = "." in sin_signo or "," in sin_signo
+    if not tiene_decimales and len(sin_signo) >= _MIN_DIGITOS_IDENTIFICADOR:
+        return False
+    return True
+
+
 def resolver_no_resuelta(valores):
     """Decide una columna NO_RESUELTA por la forma de sus valores.
 
     Mantiene util `SELECT COUNT(*) AS TOTAL` sin dejar pasar `SUBSTR(DNI,1,8) AS X`:
     numerico limpio -> claro; cualquier forma personal o cualquier texto -> mascara.
+    Cero informacion (todo vacio) tampoco produce la respuesta permisiva.
     """
     forma = _det.escanear_columna(valores)
     if forma:
@@ -145,14 +180,7 @@ def resolver_no_resuelta(valores):
 
     no_vacios = [str(v).strip() for v in valores if v is not None and str(v).strip()]
     if not no_vacios:
-        return CLARO, "vacia"
-
-    def _es_numero(v):
-        try:
-            float(v.replace(",", "."))
-            return True
-        except ValueError:
-            return False
+        return MASCARA, "vacia"
 
     if all(_es_numero(v) for v in no_vacios):
         return CLARO, "valores_numericos"

@@ -134,3 +134,77 @@ def test_modo_por_defecto_es_off():
 
 def test_transform_por_defecto_es_hash():
     assert pol.cargar_politica({})["transform"] == "hash"
+
+
+# --- Fix round 1: formas numericas estrictas en resolver_no_resuelta ---
+
+@pytest.mark.parametrize("valores", [
+    ["+441234567", "+447911123456"],   # movil internacional, no es la forma ES
+    ["nan", "NaN", "inf"],             # grammar de float() de Python, no una cantidad
+    ["1_000", "2_000"],                # separador de miles, no una cantidad plana
+])
+def test_no_resuelta_formas_rechazadas_se_enmascaran(valores):
+    v, m = pol.resolver_no_resuelta(valores)
+    assert v == pol.MASCARA
+
+
+def test_no_resuelta_negativo_sale_en_claro():
+    # Un saldo negativo es una cantidad legitima: el signo '-' se mantiene permitido.
+    v, m = pol.resolver_no_resuelta(["-1250.00"])
+    assert (v, m) == (pol.CLARO, "valores_numericos")
+
+
+def test_no_resuelta_entero_largo_sin_decimales_se_enmascara():
+    # 9+ digitos sin parte decimal es la forma de un identificador (telefono, cuenta,
+    # contrato, tarjeta), no de una cantidad o un conteo.
+    v, m = pol.resolver_no_resuelta(["123456789"])
+    assert (v, m) == (pol.MASCARA, "valores_no_numericos")
+
+
+def test_no_resuelta_entero_de_8_digitos_lo_decide_la_forma_dni():
+    # 8 digitos exactos es la forma dni_num del detector de valores: se enmascara,
+    # pero por un motivo distinto al de un entero largo sin forma reconocida. Se
+    # afirma el motivo para mantener los dos caminos distinguibles.
+    v, m = pol.resolver_no_resuelta(["12345678"])
+    assert (v, m) == (pol.MASCARA, "forma_dni_num")
+
+
+def test_no_resuelta_agregados_ordinarios_no_se_ven_afectados():
+    assert pol.resolver_no_resuelta(["1250.00"]) == (pol.CLARO, "valores_numericos")
+    assert pol.resolver_no_resuelta(["200"]) == (pol.CLARO, "valores_numericos")
+
+
+def test_no_resuelta_todo_vacio_se_enmascara():
+    # Cero informacion no debe producir la respuesta permisiva.
+    v, m = pol.resolver_no_resuelta(["", None, "   "])
+    assert (v, m) == (pol.MASCARA, "vacia")
+
+
+def test_patrones_base_falla_cerrado_si_falta_el_fichero(monkeypatch, tmp_path):
+    ruta_falsa = tmp_path / "no_existe.json"
+    monkeypatch.setattr(pol, "_PATRONES_BASE", ruta_falsa)
+    p = pol.cargar_politica({})
+    assert p["patrones"] == ["*"]
+    modelo = {"tables": {"CUALQUIER_TABLA": {"columns": {
+        "CUALQUIER_COLUMNA": {"type": "VARCHAR2(10)"},
+    }}}}
+    v, m = pol.clasificar("CUALQUIER_COLUMNA", ["CUALQUIER_TABLA"], modelo, p)
+    assert (v, m) == (pol.MASCARA, "patron_nombre")
+
+
+def test_patrones_base_falla_cerrado_si_el_fichero_es_json_invalido(monkeypatch, tmp_path):
+    ruta_mala = tmp_path / "roto.json"
+    ruta_mala.write_text("{ no es json valido", encoding="utf-8")
+    monkeypatch.setattr(pol, "_PATRONES_BASE", ruta_mala)
+    p = pol.cargar_politica({})
+    assert p["patrones"] == ["*"]
+
+
+def test_patterns_remove_libera_columna_numerica_telefono_a_proposito():
+    # Comportamiento deliberado, no un bug: si el workspace quita el patron, la
+    # valvula de escape gana y la columna sale por tipo. La red de seguridad por
+    # forma de valor sobre columnas que salen en claro la anade la Tarea 4.
+    modelo = dict(MODELO, pii_policy={"patterns_remove": ["TELEFON*"]})
+    p = pol.cargar_politica(modelo)
+    v, m = pol.clasificar("TELEFONO", ["RDEUDORES"], modelo, p)
+    assert (v, m) == (pol.CLARO, "tipo")
