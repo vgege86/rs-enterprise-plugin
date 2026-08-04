@@ -14,6 +14,15 @@ Ruta: `BD\<proyecto>-model.json`
   "datasource": "ORACLEDS",
   "schema": "MIPROYECTO",
   "updated_at": "2026-06-22T10:00:00",
+  "subviews": {
+    "Parametricas": ["RIDIOMA", "RCONTROLES", "RVERSIONES", "RMODULOS"]
+  },
+  "pii_policy": {
+    "mode": "off",
+    "transform": "hash",
+    "patterns_add": ["OBSERVACION*", "*_CONTACTO"],
+    "patterns_remove": ["NOMBRE*"]
+  },
   "tables": {
     "CLIENTES": {
       "description": "Tabla maestra de clientes",
@@ -31,7 +40,16 @@ Ruta: `BD\<proyecto>-model.json`
           "nullable": false,
           "pk": false,
           "description": "Nombre completo del cliente",
-          "source": "db"
+          "source": "db",
+          "pii": true
+        },
+        "COD_ESTADO": {
+          "type": "VARCHAR2(2)",
+          "nullable": true,
+          "pk": false,
+          "description": "Código de estado del cliente",
+          "source": "db",
+          "safe": true
         },
         "ID_TIPO": {
           "type": "NUMBER(5)",
@@ -82,6 +100,8 @@ Ruta: `BD\<proyecto>-model.json`
 | `datasource` | string | Data Source / Server extraído de la cadena de la conexión principal de .rs-databases.json |
 | `schema` | string | Schema Oracle o base de datos SQL Server |
 | `updated_at` | ISO8601 | Última actualización |
+| `subviews` | object | Mapa `<vista> → [tablas]`. La vista `Parametricas` la consume el instalador de cliente (`scripts/installer-inserts.py`) **y** la política PII, que trata esas tablas como no personales (ver abajo) |
+| `pii_policy` | object | Política de protección de datos personales en `db_query`. Ausente = `mode: "off"` (ver abajo) |
 | `tables` | object | Mapa de tablas por nombre |
 
 ### Nivel tabla
@@ -102,6 +122,8 @@ Ruta: `BD\<proyecto>-model.json`
 | `pk` | boolean \| integer | Es parte de la PK. `true` = sí, sin posición definida (se asume el orden de declaración de las columnas). Un entero (`1`, `2`, `3`...) fija la **posición dentro de la PK**: úsalo cuando el orden de la PK real no coincide con el de las columnas, porque ese orden es el del índice que respalda la PK y con él cambiado se pierden los accesos por prefijo de clave |
 | `description` | string | Descripción semántica (manual o inferida) |
 | `source` | `db\|dalc\|manual` | Origen del dato |
+| `pii` | boolean | Marca explícita de dato personal. `true` → la columna se enmascara siempre. Manda sobre patrones, paramétricas y tipo (ver `pii_policy`) |
+| `safe` | boolean | Marca explícita de dato NO personal. `true` → la columna sale en claro; `false` equivale a `pii: true`. Manda sobre patrones, paramétricas y tipo, con **una** excepción: la red de seguridad por forma de valor (ver `pii_policy`) |
 
 ### Nivel relación
 
@@ -115,6 +137,67 @@ Ruta: `BD\<proyecto>-model.json`
 | `confidence` | `high\|medium\|low` | Confianza en la inferencia |
 | `source_file` | string \| null | Fichero DALC donde se detectó |
 | `source` | `dalc\|manual` | Origen de la relación |
+
+---
+
+## Política PII (`pii_policy`)
+
+Bloque raíz que gobierna el enmascarado de datos personales en los resultados de `db_query`
+(tool MCP y hook). Motor: `scripts/pii_policy.py` + `scripts/pii_mask.py`. Visión de usuario en
+el README; la medida y sus límites en `docs/proteccion-pii-consultas-bd.md`.
+
+⛔ El modelo puede pesar ~180K tokens: **nunca** editarlo con `Read`/`Edit`. Para cambiar el modo
+está `/rs-pii audit|enforce|off`; para el resto de campos, un script de una invocación (patrón en
+`agents/rs-pii.md`, "Cómo escribir `pii_policy.mode`").
+
+| Campo | Tipo | Por defecto | Descripción |
+|-------|------|-------------|-------------|
+| `mode` | `off\|audit\|enforce` | `off` | `off` = no se evalúa nada, datos en claro. `audit` = se evalúa y se informa en el bloque `pii` de la respuesta, pero **los datos siguen saliendo en claro — no protege**. `enforce` = se aplica `transform` |
+| `transform` | `hash\|suppress` | `hash` | `hash` → seudónimo `pii:` + 12 hex (HMAC-SHA256 con clave local, determinista: el mismo valor da siempre el mismo seudónimo). `suppress` → literal `[PII]`, sin correlación posible. Solo aplica en `enforce` |
+| `patterns_add` | array\<string\> | `[]` | Patrones de nombre de columna **añadidos** a la lista base `scripts/pii_patterns.json` |
+| `patterns_remove` | array\<string\> | `[]` | Patrones **eliminados** de la lista resultante (base + `patterns_add`) |
+
+Bloque ausente, o campo ausente dentro del bloque, equivale al valor por defecto. Un `pii_policy`
+sin `mode` es, por tanto, `off`.
+
+**Patrones.** Sintaxis glob (`*`, `?`, `[seq]`) sobre el nombre de columna. Nombres y patrones se
+comparan en mayúsculas, así que `dni*` y `DNI*` son el mismo patrón. `patterns_remove` elimina por
+**patrón literal**, no por nombre de columna: para quitar `NOMBRE*` hay que escribir exactamente
+`NOMBRE*`, y poner `NOMBRE` no quita nada. Se aplica después de `patterns_add`, de modo que puede
+cancelar una entrada añadida ahí. Si `scripts/pii_patterns.json` no se puede leer, la lista pasa a
+`["*"]` — todo se enmascara: una instalación rota degrada a inútil pero segura, nunca a "funciona
+pero filtra".
+
+**Precedencia**, por columna del resultset (`scripts/pii_policy.py`):
+
+| # | Regla | Resultado |
+|---|-------|-----------|
+| 1a | Marca explícita en la columna: `"pii": true` o `"safe": false` | Enmascarar |
+| 1b | Marca explícita `"safe": true` | En claro |
+| 2 | El nombre casa con un patrón. Aplica **aunque la columna no esté en el modelo** | Enmascarar |
+| 3 | Todas las tablas del ámbito están en `subviews["Parametricas"]` | En claro |
+| 4 | `pk`, `fk`, o `type` que empieza por numérico/fecha (`NUMBER`, `INT`, `DECIMAL`, `DATE`, `TIMESTAMP`…) | En claro |
+| 5 | Resto (texto) | Enmascarar |
+| 6 | La columna no resuelve contra el modelo (alias, expresión calculada) | Se decide por la **forma de los valores** devueltos |
+
+Las marcas van primero a propósito: son la válvula de escape cuando las reglas 2-6 se equivocan.
+Cuando la consulta toca **varias** tablas y la columna existe en más de una, gana lo más
+restrictivo: basta una definición con `pii`/`safe: false` para enmascarar, y las reglas 3 y 4 solo
+dejan en claro si **todas** las definiciones lo permiten.
+
+**La única excepción a la marca explícita** es la red de seguridad por forma de valor
+(`mask_resultset` + `scripts/pii_detect.py`): toda columna que vaya a salir en claro —incluidas las
+marcadas `"safe": true`— se reescanea, y si sus **valores** tienen forma de DNI, NIE, IBAN, correo,
+teléfono o tarjeta, se enmascara igualmente y se reporta en `pii.suspect`. Solo va en la dirección
+segura, nunca al revés: **no existe una marca de "en claro pase lo que pase"**, y es deliberado.
+
+Los valores `NULL` y los que solo contienen espacios no se transforman: se devuelven tal cual
+aunque la columna esté enmascarada.
+
+**`subviews["Parametricas"]`** no es una lista específica de PII: es la misma que consume el
+instalador de cliente para volcar los INSERT de tablas paramétricas. Se reutiliza a propósito para
+no mantener dos listas que se desincronicen. Consecuencia a tener presente al editarla: **añadir
+una tabla ahí también la saca en claro** en las consultas.
 
 ---
 
