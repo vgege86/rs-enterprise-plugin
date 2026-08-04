@@ -111,14 +111,35 @@ function Invoke-RsPii {
             error = "fallo al invocar pii_cli - la politica PII no se pudo aplicar, no se devuelven filas"
         } }
     }
-    if ($code -eq 0 -and $res) {
-        $obj = $res | ConvertFrom-Json
-        return @{ ok = $true; abierto = $false; columns = @($obj.columns); rows = @($obj.rows); pii = $obj.pii }
+    if ($code -ne 0 -or -not $res) {
+        return @{ ok = $false; abierto = $false; pii = @{
+            mode  = "error"
+            error = "pii_cli fallo (exit $code) - la politica PII no se pudo aplicar, no se devuelven filas"
+        } }
     }
-    return @{ ok = $false; abierto = $false; pii = @{
-        mode  = "error"
-        error = "pii_cli fallo (exit $code) - la politica PII no se pudo aplicar, no se devuelven filas"
-    } }
+    # El parseo va DENTRO de su propio try. Fuera, un CLI que sale con 0 pero emite algo
+    # que no es JSON (salida truncada, una linea de aviso colada por delante, un fallo de
+    # codificacion) dejaba $obj a $null y este camino devolvia ok = $true con columns/rows
+    # vacios y pii = $null. No se escapaba ninguna fila, pero once agentes tienen
+    # instruccion de LEER ese bloque pii, asi que un null ahi es un defecto que van a
+    # pisar. Una salida no parseable es exactamente el mismo caso que un exit != 0: el
+    # CLI corrio, tenia las filas y no consta que aplicara la politica -> fallo CERRADO.
+    try {
+        $obj = $res | ConvertFrom-Json
+    } catch {
+        return @{ ok = $false; abierto = $false; pii = @{
+            mode  = "error"
+            error = "pii_cli devolvio una salida no parseable - la politica PII no se pudo aplicar, no se devuelven filas"
+        } }
+    }
+    if (-not $obj -or -not $obj.pii) {
+        # JSON valido pero sin bloque pii: mismo razonamiento. Nunca se devuelve pii = $null.
+        return @{ ok = $false; abierto = $false; pii = @{
+            mode  = "error"
+            error = "pii_cli devolvio una respuesta sin bloque pii - la politica PII no se pudo aplicar, no se devuelven filas"
+        } }
+    }
+    return @{ ok = $true; abierto = $false; columns = @($obj.columns); rows = @($obj.rows); pii = $obj.pii }
 }
 
 # --- Guarda solo-lectura (misma validación que la tool MCP db_query, rs-workspace-server.py) ---

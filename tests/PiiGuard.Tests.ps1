@@ -355,6 +355,31 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
         $out.rows[0][1] | Should -Be "Ana Lopez"
     }
 
+    It "si pii_cli sale con 0 pero su salida no es JSON, no devuelve filas ni un pii nulo" {
+        # El parseo estaba FUERA del try/catch que envuelve la invocacion: un CLI que sale
+        # con 0 y emite algo no parseable dejaba $obj a $null y el hook respondia ok con
+        # columns/rows vacios y pii = $null. Once agentes tienen instruccion de leer ese
+        # bloque pii. Ocurria de verdad: antes del arreglo de codificacion, un valor con
+        # un caracter fuera de cp1252 hacia que el CLI emitiera JSON a medias.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 0
+            "IDDEUDOR,NOMBRE"
+            "1024,`"Ana Lopez`""
+        }
+        Mock -CommandName python -MockWith { $global:LASTEXITCODE = 0; '{"columns": ["NOMBRE"], "rows": [' }
+
+        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "prod" `
+                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+
+        $out.success       | Should -Be $false
+        $out.row_count     | Should -Be 0
+        @($out.rows).Count | Should -Be 0
+        $out.pii           | Should -Not -BeNullOrEmpty
+        $out.pii.mode      | Should -Be "error"
+        $out.pii.error     | Should -Not -BeNullOrEmpty
+        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
+    }
+
     It "enmascara las filas usando el modelo de la conexion seleccionada" {
         Mock -CommandName sqlplus -MockWith {
             $global:LASTEXITCODE = 0
