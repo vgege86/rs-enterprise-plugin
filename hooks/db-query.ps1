@@ -70,13 +70,21 @@ function Invoke-RsPii {
                               la politica: el llamante NO debe devolver ninguna fila. Antes
                               esto caia en el mismo saco que el caso anterior, asi que un
                               modelo en forma inesperada devolvia todas las filas en claro
-                              con pii.mode = "error". #>
+                              con pii.mode = "error".
+
+       -PorConvenio dice que $ModelPath NO esta declarado en .rs-databases.json, sino
+       derivado del convenio BD\<proyecto>-model.json. Solo cambia el caso "el fichero no
+       esta": con la ruta declarada es un error (politica declarada que no se aplica), con
+       la ruta del convenio es el workspace ordinario sin politica (mode=off). El CLI
+       asume DECLARADO si no se le dice nada, para que la imprecision degrade hacia mas
+       enmascarado y no hacia menos. #>
     param(
         [AllowEmptyCollection()][array]$Cabeceras,
         [AllowEmptyCollection()][array]$Matriz,
         [string]$Sql,
         [string]$Workspace,
-        [AllowEmptyString()][string]$ModelPath
+        [AllowEmptyString()][string]$ModelPath,
+        [switch]$PorConvenio
     )
     # Join-Path de DOS argumentos: con tres es PS 6+ y este hook corre en 5.1.
     $cli = Join-Path $PSScriptRoot "..\scripts\pii_cli.py"
@@ -89,7 +97,9 @@ function Invoke-RsPii {
     try {
         $entrada = @{ columns = @($Cabeceras); rows = @($Matriz); sql = $Sql } |
                    ConvertTo-Json -Depth 6 -Compress
-        if ($ModelPath) {
+        if ($ModelPath -and $PorConvenio) {
+            $res = $entrada | python $cli $Workspace $ModelPath --convenio 2>$null
+        } elseif ($ModelPath) {
             $res = $entrada | python $cli $Workspace $ModelPath 2>$null
         } else {
             $res = $entrada | python $cli $Workspace 2>$null
@@ -208,13 +218,12 @@ if ($Conexion) {
 # Modelo BD de LA CONEXION SELECCIONADA (no el de la principal): lleva la politica PII
 # entera. Misma resolucion que get-config.ps1 -> config["model_path"] de la tool MCP.
 $modelPath = Get-RsModelPath -Workspace $Workspace -Conexion $c -Proyecto $cfg.proyecto
-if (-not "$($c.model)" -and -not (Test-Path $modelPath)) {
-    # Ni campo "model" declarado ni el fichero por convenio: workspace sin politica.
-    # Caso ordinario (mode=off), igual que _cargar_modelo() de la tool MCP. Si en cambio
-    # SI hay ruta declarada y el fichero no esta, se pasa igual y pii_cli falla visible:
-    # una politica declarada que no se aplica no puede pasar por "no hay politica".
-    $modelPath = ""
-}
+# Declarado (campo "model") o derivado del convenio BD\<proyecto>-model.json. La ruta sola
+# no lo distingue, y de esa distincion depende que un fichero ausente sea un error
+# (politica declarada que no se aplica) o el workspace ordinario sin politica (mode=off).
+# Se le dice al CLI en vez de decidirlo aqui: asi la regla vive en un solo sitio y es la
+# MISMA que aplica _cargar_modelo() de la tool MCP con config["model_declarado"].
+$modelPorConvenio = -not (Test-RsModelDeclarado -Conexion $c)
 
 $motor      = "$($c.motor)".ToUpper()
 $cadena     = "$($c.cadena)"
@@ -287,11 +296,17 @@ EXIT;
             # WHERE DNI = '...' que no encuentra nada tambien informa sobre el valor).
             # Nota: con SET PAGESIZE 0 sqlplus no emite cabecera cuando no hay filas, asi que
             # $lines.Count es 0 en este camino; no se intenta extraer nombres de columna.
-            # Sin filas que proteger, un fallo del CLI no obliga a fallar cerrado: se propaga
-            # su bloque pii (con el error) y ya.
-            $rPii = Invoke-RsPii -Cabeceras @() -Matriz @() -Sql $sqlNorm -Workspace $Workspace -ModelPath $modelPath
+            # Sin filas que proteger no hay nada que se pueda escapar, pero si el CLI corrio
+            # y fallo (modelo declarado ausente, modelo corrupto) la respuesta sale con
+            # success = $false igual que en el camino con filas y que la tool MCP: el
+            # workspace esta roto y el usuario tiene que enterarse, no leer un success = true
+            # con el motivo escondido dentro del bloque pii. El fallo ABIERTO (sin python)
+            # sigue saliendo con success = $true, que es su contrato documentado.
+            $rPii = Invoke-RsPii -Cabeceras @() -Matriz @() -Sql $sqlNorm -Workspace $Workspace `
+                                 -ModelPath $modelPath -PorConvenio:$modelPorConvenio
             @{
-                success   = $true
+                success   = ($rPii.ok -or $rPii.abierto)
+                error     = if ($rPii.ok -or $rPii.abierto) { $null } else { $rPii.pii.error }
                 row_count = 0
                 truncated = $false
                 sql       = $sqlEcho
@@ -318,7 +333,8 @@ EXIT;
             $matriz += , @($cabeceras | ForEach-Object { "$($fila.$_)" })
         }
 
-        $rPii = Invoke-RsPii -Cabeceras $cabeceras -Matriz $matriz -Sql $sqlNorm -Workspace $Workspace -ModelPath $modelPath
+        $rPii = Invoke-RsPii -Cabeceras $cabeceras -Matriz $matriz -Sql $sqlNorm -Workspace $Workspace `
+                             -ModelPath $modelPath -PorConvenio:$modelPorConvenio
         if ($rPii.ok) {
             $cabeceras = $rPii.columns
             $matriz    = $rPii.rows

@@ -1,6 +1,6 @@
 """Envoltorio CLI de pii_mask para hooks/db-query.ps1.
 
-    echo '{"columns":[],"rows":[[]],"sql":"..."}' | python pii_cli.py <workspace> [<model_path>]
+    echo '{"columns":[],"rows":[[]],"sql":"..."}' | python pii_cli.py <workspace> [<model_path>] [--convenio]
 
 Segundo modo, para /rs-pii (no lo usa el hook):
 
@@ -19,6 +19,11 @@ su cuenta: hacerlo con un glob de BD/*-model.json ignoraba el campo "model" de l
 y bastaba un nombre de fichero fuera del patron, o dos ficheros en BD/, para que el hook
 devolviera mode=off -- indistinguible de un workspace sin politica -- mientras la tool MCP
 enmascaraba con la politica declarada.
+
+--convenio dice que <model_path> NO esta declarado en .rs-databases.json sino derivado del
+convenio BD/<proyecto>-model.json (lo pasa hooks/db-query.ps1 segun Test-RsModelDeclarado).
+Sin el, una ruta cuyo fichero no existe se trata como DECLARADA, es decir como error: la
+imprecision tiene que degradar hacia mas enmascarado, nunca hacia menos. Ver _modelo().
 
 Codigos de salida. TODOS los != 0 significan "el CLI corrio y NO pudo aplicar la politica
 a unos datos que ya tenia": el hook debe fallar CERRADO (sin filas). El unico fallo abierto
@@ -48,42 +53,58 @@ def _cargar(nombre):
     return mod
 
 
-def _modelo(model_path):
+_AYUDA_MODELO = ("Generar el modelo con /rs-init (workspace nuevo) o sincronizarlo desde la "
+                 "BD con /rs-erd. Mientras tanto la consulta no devuelve filas: sin modelo no "
+                 "se puede aplicar la politica de datos personales del workspace.")
+
+
+def _modelo(model_path, por_convenio=False):
     """(modelo, error) del modelo BD configurado.
 
-    Tres situaciones bien distintas, que NO deben confundirse:
+    Tres situaciones bien distintas, que NO deben confundirse. Son las MISMAS que
+    distingue _cargar_modelo() de mcp/rs-workspace-server.py en el camino de la tool MCP
+    (⛔ PARIDAD: si cambia una, cambia la otra):
 
-    1. No hay modelo configurado (model_path vacio). Caso normal de un workspace
-       que nunca declaro politica PII. Silencioso: ({}, None), mode=off aguas
-       abajo. Es tambien lo que hace _cargar_modelo() de la tool MCP.
+    1. No hay modelo configurado (model_path vacio), o la ruta viene del CONVENIO
+       BD/<proyecto>-model.json y el fichero no existe (por_convenio=True). Caso normal
+       de un workspace que nunca declaro politica PII. Silencioso: ({}, None), mode=off
+       aguas abajo. Es lo que garantiza que un workspace que actualiza no cambie de
+       comportamiento.
 
-    2. Hay una ruta configurada pero el fichero no existe. NO es el caso 1: alguien
-       declaro una politica y no se esta aplicando. Tratarlo como ausencia de modelo
-       devolveria mode=off, que es exactamente la fuga silenciosa que este CLI existe
-       para evitar. Error.
+    2. Hay una ruta DECLARADA en .rs-databases.json y el fichero no existe. NO es el
+       caso 1: alguien declaro una politica y no se esta aplicando. Tratarlo como
+       ausencia de modelo devolveria mode=off, que es exactamente la fuga silenciosa que
+       este CLI existe para evitar. Error.
+
+       El llamante marca el caso 1 con --convenio; sin esa marca la ruta se asume
+       declarada, porque la imprecision debe degradar hacia mas enmascarado.
 
     3. El fichero existe pero no se puede usar: JSON invalido, ilegible, o su raiz no
        es un objeto (p.ej. una lista). Workspace ROTO -- un modelo a medio escribir
        (merge sin terminar, disco lleno) apagaria el enmascarado sin ningun aviso.
        Ademas, pasar una raiz que no es dict a mask_resultset revienta con
-       AttributeError. Error tambien.
+       AttributeError. Error tambien, venga de donde venga la ruta.
     """
     if not model_path:
         return {}, None
 
     ruta = Path(model_path)
     if not ruta.is_file():
-        return {}, "modelo BD configurado pero no encontrado: %s" % ruta.name
+        if por_convenio:
+            return {}, None
+        return {}, ("modelo BD declarado en docs/.rs-databases.json pero no encontrado: %s. %s"
+                    % (ruta.name, _AYUDA_MODELO))
     try:
         texto = ruta.read_text(encoding="utf-8-sig")
     except Exception as exc:
-        return {}, "modelo BD ilegible (%s): %s" % (ruta.name, exc.__class__.__name__)
+        return {}, "modelo BD ilegible (%s): %s. %s" % (ruta.name, exc.__class__.__name__, _AYUDA_MODELO)
     try:
         datos = json.loads(texto)
     except Exception as exc:
-        return {}, "modelo BD invalido (%s): %s" % (ruta.name, exc.__class__.__name__)
+        return {}, "modelo BD invalido (%s): %s. %s" % (ruta.name, exc.__class__.__name__, _AYUDA_MODELO)
     if not isinstance(datos, dict):
-        return {}, "modelo BD invalido (%s): la raiz del JSON no es un objeto" % ruta.name
+        return {}, ("modelo BD invalido (%s): la raiz del JSON no es un objeto. %s"
+                    % (ruta.name, _AYUDA_MODELO))
     return datos, None
 
 
@@ -210,10 +231,15 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--clasificar":
         return _clasificar(sys.argv[2:])
 
-    if len(sys.argv) < 2:
-        sys.stderr.write("uso: pii_cli.py <workspace> [<model_path>]\n")
+    # Parseo a mano y no argparse: --convenio es la unica opcion y el resto son
+    # posicionales que ya estaban; argparse cambiaria mensajes y codigos de salida, y
+    # todos los != 0 de este CLI tienen significado para el hook.
+    argv = [a for a in sys.argv[1:] if a != "--convenio"]
+    por_convenio = "--convenio" in sys.argv[1:]
+    if len(argv) < 1:
+        sys.stderr.write("uso: pii_cli.py <workspace> [<model_path>] [--convenio]\n")
         return E_USO
-    model_path = sys.argv[2] if len(sys.argv) > 2 else ""
+    model_path = argv[1] if len(argv) > 1 else ""
     try:
         # utf-8-sig, y por bytes: hooks/db-query.ps1 fija
         # $OutputEncoding = [Text.Encoding]::UTF8, que en PowerShell 5.1 antepone el BOM a
@@ -226,7 +252,7 @@ def main():
         sys.stderr.write("entrada JSON invalida: %s\n" % exc.__class__.__name__)
         return E_USO
 
-    modelo, error_modelo = _modelo(model_path)
+    modelo, error_modelo = _modelo(model_path, por_convenio)
     if error_modelo:
         sys.stderr.write(error_modelo + "\n")
         return E_MODELO

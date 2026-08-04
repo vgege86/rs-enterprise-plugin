@@ -104,6 +104,30 @@ function Get-RsModelPath {
     return (Join-Path $Workspace "BD\$Proyecto-model.json")
 }
 
+function Test-RsModelDeclarado {
+    <# $true si la conexion DECLARA su modelo (campo "model"); $false si la ruta que
+       devuelve Get-RsModelPath sale del convenio BD\<proyecto>-model.json.
+
+       Get-RsModelPath devuelve SIEMPRE una ruta, asi que tenerla no dice nada sobre si
+       alguien declaro una politica. Esa distincion es la que decide que pasa cuando el
+       fichero no esta:
+
+         declarado y ausente -> workspace ROTO. Hay una politica declarada que no se
+                                puede aplicar; devolver las filas seria devolverlas en
+                                claro etiquetadas como "workspace sin politica", que es
+                                indistinguible de uno que nunca configuro nada. Error.
+         convenio y ausente  -> workspace que nunca declaro politica. Caso ordinario:
+                                mode=off, datos en claro. Es lo que garantiza que un
+                                workspace que actualiza no cambie de comportamiento.
+
+       Unico sitio que conoce la regla, igual que Get-RsModelPath: la publica
+       get-config.ps1 como model_declarado (de ahi la consume la tool MCP db_query) y la
+       usa db-query.ps1 para decirselo a scripts/pii_cli.py. Si cada camino la dedujera
+       por su cuenta volverian a divergir. #>
+    param([Parameter(Mandatory=$true)]$Conexion)
+    return [bool]"$($Conexion.model)"
+}
+
 function Resolve-RsWorkspace {
     <# Si el agente pasó una subcarpeta (docs, BD, Batch, OnLine) sube al trunk. #>
     param([Parameter(Mandatory=$true)][string]$Workspace)

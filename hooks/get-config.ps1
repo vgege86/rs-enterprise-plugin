@@ -48,6 +48,11 @@ foreach ($c in $cfg.conexiones) {
     # entera, no solo el esquema).
     $modelPath   = Get-RsModelPath -Workspace $Workspace -Conexion $c -Proyecto $proyecto
     $modelExists = Test-Path $modelPath
+    # model_declarado: si la ruta viene del campo "model" de la conexion o del convenio.
+    # model_path no lo distingue (Get-RsModelPath siempre devuelve una), y de esa
+    # distincion depende que un modelo ausente sea un error o el caso ordinario sin
+    # politica. Ver Test-RsModelDeclarado en lib-dbconfig.ps1.
+    $modelDeclarado = Test-RsModelDeclarado -Conexion $c
 
     # Si el schema cayó al fallback (= usuario de conexión) y ya existe model.json, su campo
     # "schema" es la fuente de verdad real: el owner de las tablas puede no ser el usuario de
@@ -67,6 +72,7 @@ foreach ($c in $cfg.conexiones) {
         user         = $user
         model_path   = $modelPath
         model_exists = $modelExists
+        model_declarado = $modelDeclarado
     }
 }
 
@@ -81,6 +87,7 @@ $principal = $resueltas[0]
     user         = $principal.user
     model_path   = $principal.model_path
     model_exists = $principal.model_exists
+    model_declarado = $principal.model_declarado
     conexiones   = @($resueltas)
     motores      = @($resueltas | ForEach-Object { $_.motor } | Select-Object -Unique)
 } | ConvertTo-Json -Depth 5

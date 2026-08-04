@@ -240,35 +240,59 @@ def _diagnostico(stdout: str, stderr: str, exit_code: int) -> str:
             "la salida capturada no se devuelve porque puede contener filas de datos")
 
 
+_AYUDA_MODELO = ("Genera el modelo con /rs-init (workspace nuevo) o sincronizalo desde la BD "
+                 "con /rs-erd. Mientras tanto db_query no devuelve filas: sin modelo no se "
+                 "puede aplicar la politica de datos personales del workspace.")
+
+
 def _cargar_modelo(config: dict) -> tuple[dict, str | None]:
-    """(modelo, aviso) a partir de config["model_path"] — el mismo model_path que ya
+    """(modelo, error) a partir de config["model_path"] — el mismo model_path que ya
     resuelve _get_config()/get-config.ps1 (incluye el Resolve-RsWorkspace de subcarpeta)
     y que usan get_table_schema/search_model/get_model_index. Reusar ese camino en vez
     de buscar el fichero por nuestra cuenta evita que db_query vea un modelo BD distinto
     al del resto de tools, y comparte la cache mtime de _load_model en vez de releer y
     reparsear el JSON en cada llamada.
 
-    aviso solo es distinto de None cuando el fichero EXISTE pero no se puede usar (JSON
-    invalido o su raiz no es un objeto): ese caso hay que verlo, no tragarlo en silencio,
-    porque una politica pii_policy declarada dejaria de aplicarse sin ningun aviso en
-    pantalla. Nunca incluye el contenido del fichero, solo su nombre y el motivo — un
-    modelo corrupto puede contener datos.
+    Tres situaciones, las MISMAS que distingue scripts/pii_cli.py._modelo() en el camino
+    del hook (⛔ PARIDAD: si cambia una, cambia la otra):
 
-    Ausencia de modelo (no configurado o no encontrado) sigue siendo el caso ordinario:
-    ({}, None), igual que el mode=off de siempre. Aqui no hay nada que avisar: es la
-    situacion normal de un workspace que no ha declarado politica.
+    1. Sin ruta, o ruta derivada del CONVENIO (BD/<proyecto>-model.json) cuyo fichero no
+       existe: workspace que nunca declaro politica. ({}, None) -> mode=off, datos en
+       claro. Es el caso ordinario y lo que garantiza que un workspace que actualiza no
+       cambie de comportamiento.
+    2. Ruta DECLARADA en .rs-databases.json cuyo fichero no existe: workspace ROTO.
+       Alguien declaro una politica y no se esta aplicando. Tratarlo como el caso 1
+       devolvia TODAS las filas en claro etiquetadas mode=off, indistinguible de un
+       workspace sin politica: la fuga silenciosa que esta funcion existe para evitar.
+       El hook ya fallaba cerrado aqui; el MCP, que es el camino principal, no.
+    3. El fichero existe pero no se puede usar (ilegible, JSON invalido, o su raiz no es
+       un objeto): workspace roto igual — un modelo a medio escribir apagaria el
+       enmascarado sin aviso. Error tambien, venga de donde venga la ruta.
+
+    config["model_declarado"] lo publica get-config.ps1 (Test-RsModelDeclarado). Si
+    falta, se asume DECLARADO: la imprecision tiene que degradar hacia mas enmascarado,
+    nunca hacia menos.
+
+    El error nunca incluye el contenido del fichero, solo su nombre y el motivo — un
+    modelo corrupto puede contener datos.
     """
     model_path = config.get("model_path", "")
     if not model_path:
         return {}, None
+    declarado = bool(config.get("model_declarado", True))
+    nombre = Path(model_path).name
     try:
         modelo = _load_model(Path(model_path))
     except Exception as exc:
-        return {}, f"Modelo BD ilegible ({Path(model_path).name}): {exc.__class__.__name__}"
+        return {}, f"Modelo BD ilegible ({nombre}): {exc.__class__.__name__}. {_AYUDA_MODELO}"
     if modelo is None:
+        if declarado:
+            return {}, (f"Modelo BD declarado en docs/.rs-databases.json pero no encontrado: "
+                        f"{nombre}. {_AYUDA_MODELO}")
         return {}, None
     if not isinstance(modelo, dict):
-        return {}, f"Modelo BD invalido ({Path(model_path).name}): la raiz del JSON no es un objeto"
+        return {}, (f"Modelo BD invalido ({nombre}): la raiz del JSON no es un objeto. "
+                    f"{_AYUDA_MODELO}")
     return modelo, None
 
 
@@ -551,6 +575,25 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
     user       = sel.get("user", "")
     password   = _get_db_password(workspace, str(sel.get("id", "")))
 
+    # Modelo de la conexion SELECCIONADA. config["model_path"] es SIEMPRE el de conexiones[0]
+    # (get-config.ps1 publica los campos planos de la principal), pero el modelo lleva la
+    # politica PII entera: con conexion="PROD" sobre un conexiones[0] sin politica, los datos
+    # de produccion salian en claro y etiquetados pii.mode = "off". get-config.ps1 publica
+    # model_path por conexion dentro de conexiones[], asi que aqui se usa el de sel.
+    #
+    # Se carga ANTES de tocar la BD: si la politica declarada no se puede aplicar, la
+    # consulta no llega a ejecutarse y no hay ninguna fila que pueda escaparse por una
+    # rama de error. Ver _cargar_modelo para las tres situaciones que distingue.
+    cfg_modelo = sel if sel.get("model_path") else config
+    modelo, error_modelo = _cargar_modelo(cfg_modelo)
+    if error_modelo:
+        return json.dumps({
+            "success": False,
+            "error": error_modelo,
+            "columns": [], "rows": [], "row_count": 0, "rows_truncated": False,
+            "pii": {"mode": "error", "error": error_modelo, "model_error": error_modelo},
+        }, ensure_ascii=False, indent=2)
+
     if motor == "SQLSERVER":
         # -s con separador improbable: sqlcmd no entrecomilla, así que un valor que contenga el
         # separador partiría la fila en silencio. Sin -h -1 para que emita la cabecera: es la única
@@ -631,13 +674,6 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
             "pii": {"mode": "error", "error": "motor de enmascarado no disponible - no se devuelven filas"},
         }, ensure_ascii=False, indent=2)
 
-    # Modelo de la conexion SELECCIONADA. config["model_path"] es SIEMPRE el de conexiones[0]
-    # (get-config.ps1 publica los campos planos de la principal), pero el modelo lleva la
-    # politica PII entera: con conexion="PROD" sobre un conexiones[0] sin politica, los datos
-    # de produccion salian en claro y etiquetados pii.mode = "off". get-config.ps1 publica
-    # model_path por conexion dentro de conexiones[], asi que aqui se usa el de sel.
-    cfg_modelo = sel if sel.get("model_path") else config
-    modelo, aviso_modelo = _cargar_modelo(cfg_modelo)
     try:
         columns, visibles, pii = _pii_mask.mask_resultset(columns, visibles, sql_norm, modelo)
     except Exception as exc:  # noqa: BLE001
@@ -648,8 +684,6 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
             "columns": [], "rows": [], "row_count": 0, "rows_truncated": False,
             "pii": {"mode": "error", "error": "fallo al enmascarar - no se devuelven filas"},
         }, ensure_ascii=False, indent=2)
-    if aviso_modelo:
-        pii["model_error"] = aviso_modelo
 
     return json.dumps({
         "success": ok,

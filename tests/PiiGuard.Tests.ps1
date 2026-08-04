@@ -92,6 +92,8 @@ Describe "pii_cli.py" {
     It "sale con error si el modelo configurado no existe (no lo trata como ausencia de modelo)" {
         # Una politica declarada que no se puede cargar NO puede reportarse como "no hay
         # politica": seria mode=off silencioso sobre un workspace que cree estar protegido.
+        # Sin --convenio la ruta se asume DECLARADA: la imprecision degrada hacia mas
+        # enmascarado, no hacia menos.
         $entrada = @{
             columns = @("NOMBRE")
             rows    = @(, @("Ana Lopez"))
@@ -100,6 +102,23 @@ Describe "pii_cli.py" {
 
         $null = $entrada | python $script:cli $script:ws (Join-Path $script:ws "BD\no-existe.json") 2>$null
         $LASTEXITCODE | Should -Not -Be 0
+    }
+
+    It "con --convenio, un modelo ausente es el workspace ordinario sin politica (mode=off)" {
+        # La otra mitad de la decision: la ruta BD\<proyecto>-model.json la fabrica
+        # Get-RsModelPath siempre, exista o no el fichero. Si ahi se tratara como politica
+        # declarada, todo workspace que nunca configuro nada dejaria de poder consultar.
+        $entrada = @{
+            columns = @("NOMBRE")
+            rows    = @(, @("Ana Lopez"))
+            sql     = "SELECT NOMBRE FROM RDEUDORES"
+        } | ConvertTo-Json -Depth 5 -Compress
+
+        $salida = $entrada | python $script:cli $script:ws (Join-Path $script:ws "BD\no-existe.json") --convenio |
+                  ConvertFrom-Json
+        $LASTEXITCODE      | Should -Be 0
+        $salida.pii.mode   | Should -Be "off"
+        $salida.rows[0][0] | Should -Be "Ana Lopez"
     }
 
     It "sale con error si el modelo BD no es JSON valido (no lo trata como ausencia de modelo)" {
@@ -280,6 +299,60 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
 }
 '@ | Set-Content (Join-Path $docs4 ".rs-databases.json") -Encoding UTF8
         "{ esto no es json" | Set-Content (Join-Path $bd4 "Roto.json") -Encoding UTF8
+
+        # Workspace cuyo modelo esta DECLARADO y NO existe: la mitad peligrosa del
+        # hallazgo. Get-RsModelPath devuelve una ruta igualmente, asi que tenerla no dice
+        # nada sobre si alguien declaro politica.
+        $script:ws5 = Join-Path $TestDrive "trunk-modelo-declarado-ausente"
+        $docs5      = Join-Path $script:ws5 "docs"
+        New-Item -ItemType Directory -Path $docs5 -Force | Out-Null
+        @'
+{
+  "proyecto": "Ausente",
+  "conexiones": [
+    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Ausente-model.json" }
+  ]
+}
+'@ | Set-Content (Join-Path $docs5 ".rs-databases.json") -Encoding UTF8
+    }
+
+
+    It "un modelo DECLARADO que no existe no devuelve filas (no es un workspace sin politica)" {
+        # La tool MCP devolvia aqui TODAS las filas en claro etiquetadas mode="off",
+        # indistinguible de un workspace que nunca configuro nada. Los dos caminos tienen
+        # que dar lo mismo: success=false, cero filas y como generar el modelo.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 0
+            "IDDEUDOR,NOMBRE"
+            "1024,`"Ana Lopez`""
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws5 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
+               ConvertFrom-Json
+
+        $out.success       | Should -Be $false
+        $out.row_count     | Should -Be 0
+        @($out.rows).Count | Should -Be 0
+        $out.pii.error     | Should -Not -BeNullOrEmpty
+        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
+    }
+
+    It "un modelo por CONVENIO que no existe mantiene el comportamiento de 3.0.0 (mode=off)" {
+        # ws3/desa no declara "model" y BD\Proyecto-model.json no existe: workspace que
+        # nunca declaro politica. La consulta corre y los datos salen en claro. Es la
+        # garantia de que un workspace que actualiza no cambia de comportamiento.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 0
+            "IDDEUDOR,NOMBRE"
+            "1024,`"Ana Lopez`""
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "desa" `
+                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+
+        $out.success    | Should -Be $true
+        $out.pii.mode   | Should -Be "off"
+        $out.rows[0][1] | Should -Be "Ana Lopez"
     }
 
     It "enmascara las filas usando el modelo de la conexion seleccionada" {

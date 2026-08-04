@@ -190,3 +190,45 @@ def test_el_caso_de_predicado_realmente_avisa():
         MODELO,
     )
     assert meta["predicate_warning"] == ["DNI"]
+
+
+# --- Modelo declarado y ausente: los dos caminos tienen que decir lo mismo ---
+# El MCP lo resuelve en _cargar_modelo (config["model_declarado"]) y el hook pasandole
+# --convenio a este CLI. Si divergen vuelve el agujero: un camino error, el otro mode=off
+# con las filas en claro.
+
+def _ejecutar_cli(argumentos, entrada, entorno=None):
+    return subprocess.run([sys.executable, str(_CLI)] + argumentos, input=entrada,
+                          capture_output=True, text=True, encoding="utf-8", env=entorno)
+
+
+_ENTRADA = json.dumps({"columns": ["NOMBRE"], "rows": [["Ana Lopez"]],
+                       "sql": "SELECT NOMBRE FROM RDEUDORES"})
+
+
+def test_cli_modelo_declarado_ausente_es_error(tmp_path):
+    ausente = tmp_path / "declarado-model.json"
+    proc = _ejecutar_cli([str(tmp_path), str(ausente)], _ENTRADA)
+    assert proc.returncode != 0
+    assert proc.stdout == ""                      # ni una fila sale por stdout
+    assert ausente.name in proc.stderr
+    assert "/rs-init" in proc.stderr and "/rs-erd" in proc.stderr
+
+
+def test_cli_modelo_por_convenio_ausente_es_mode_off(tmp_path):
+    ausente = tmp_path / "BD" / "Proyecto-model.json"
+    proc = _ejecutar_cli([str(tmp_path), str(ausente), "--convenio"], _ENTRADA)
+    assert proc.returncode == 0
+    salida = json.loads(proc.stdout)
+    assert salida["pii"]["mode"] == "off"
+    assert salida["rows"] == [["Ana Lopez"]]
+
+
+def test_cli_modelo_corrupto_es_error_aunque_venga_del_convenio(tmp_path):
+    # --convenio solo excusa la AUSENCIA del fichero. Uno que existe y no se puede parsear
+    # es un workspace roto venga la ruta de donde venga, igual que en _cargar_modelo.
+    roto = tmp_path / "Proyecto-model.json"
+    roto.write_text("{ esto no es json", encoding="utf-8")
+    proc = _ejecutar_cli([str(tmp_path), str(roto), "--convenio"], _ENTRADA)
+    assert proc.returncode != 0
+    assert proc.stdout == ""

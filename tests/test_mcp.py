@@ -209,10 +209,33 @@ def test_cargar_modelo_sin_model_path_devuelve_vacio_sin_aviso():
     assert srv._cargar_modelo({}) == ({}, None)
 
 
-def test_cargar_modelo_model_path_inexistente_devuelve_vacio_sin_aviso(tmp_path):
-    # El fichero no existe: mismo caso ordinario que "no hay modelo", sin aviso.
-    config = {"model_path": str(tmp_path / "no-existe-model.json")}
+def test_cargar_modelo_ruta_por_convenio_inexistente_no_es_error(tmp_path):
+    # Ruta derivada del convenio BD/<proyecto>-model.json cuyo fichero no existe: el
+    # workspace nunca declaro politica. Caso ordinario, sin error -> mode=off aguas abajo.
+    # Es la garantia de que un workspace que actualiza no cambia de comportamiento.
+    config = {"model_path": str(tmp_path / "no-existe-model.json"), "model_declarado": False}
     assert srv._cargar_modelo(config) == ({}, None)
+
+
+def test_cargar_modelo_declarado_e_inexistente_es_error(tmp_path):
+    # Modelo DECLARADO en .rs-databases.json cuyo fichero no esta: workspace roto. Antes
+    # caia en el mismo saco que "no hay modelo" y db_query devolvia TODAS las filas en
+    # claro etiquetadas mode=off, indistinguible de un workspace sin politica. El camino
+    # del hook ya fallaba cerrado aqui; este es el que no.
+    ruta = tmp_path / "declarado-model.json"
+    modelo, error = srv._cargar_modelo({"model_path": str(ruta), "model_declarado": True})
+    assert modelo == {}
+    assert error is not None
+    assert ruta.name in error
+    assert "/rs-init" in error and "/rs-erd" in error
+
+
+def test_cargar_modelo_sin_saber_si_esta_declarado_falla_cerrado(tmp_path):
+    # Sin model_declarado en la config, la ruta se asume DECLARADA: la imprecision tiene
+    # que degradar hacia mas enmascarado, nunca hacia menos.
+    ruta = tmp_path / "sin-saber-model.json"
+    _, error = srv._cargar_modelo({"model_path": str(ruta)})
+    assert error is not None
 
 
 def test_cargar_modelo_lee_el_json_valido(monkeypatch, tmp_path):
@@ -283,11 +306,12 @@ def _preparar_db_query(monkeypatch, tmp_path, config, stdout, returncode=0, stde
     monkeypatch.setattr(srv._pii_mask, "ruta_clave", lambda: tmp_path / "pii.key")
 
 
-def _config_sqlserver(model_path=""):
+def _config_sqlserver(model_path="", model_declarado=True):
     return {
         "conexiones": [{"id": "principal", "motor": "SQLSERVER",
                         "datasource": "DS", "schema": "dbo", "user": "u"}],
         "model_path": model_path,
+        "model_declarado": model_declarado,
     }
 
 
@@ -334,7 +358,11 @@ def test_db_query_row_count_y_truncado_reflejan_total_previo_al_recorte(monkeypa
     assert len(out["rows"]) == 2
 
 
-def test_db_query_modelo_corrupto_no_revienta_y_avisa_en_pii(monkeypatch, tmp_path):
+def test_db_query_modelo_corrupto_no_devuelve_filas(monkeypatch, tmp_path):
+    # Antes esto salia con success=true, mode="off" y las filas EN CLARO, con el motivo
+    # escondido en pii.model_error. Un modelo a medio escribir apagaba el enmascarado y la
+    # respuesta era indistinguible de la de un workspace sin politica. El camino del hook
+    # ya fallaba cerrado aqui.
     sep = srv._SEP_SQLSERVER
     stdout = f"ID{sep}NOMBRE\n1{sep}Ana\n"
     modelo_path = tmp_path / "Proyecto-model.json"
@@ -343,10 +371,65 @@ def test_db_query_modelo_corrupto_no_revienta_y_avisa_en_pii(monkeypatch, tmp_pa
 
     out = json.loads(srv.db_query(str(tmp_path), "SELECT ID, NOMBRE FROM RDEUDORES"))
 
-    assert out["success"] is True                # el error de modelo no tumba la query
-    assert out["pii"]["mode"] == "off"            # modelo no usable -> se trata como ausente
-    assert "model_error" in out["pii"]
+    assert out["success"] is False
+    assert out["rows"] == []
+    assert out["row_count"] == 0
+    assert out["pii"]["mode"] == "error"
     assert modelo_path.name in out["pii"]["model_error"]
+    assert "Ana" not in json.dumps(out, ensure_ascii=False)
+
+
+def test_db_query_modelo_declarado_ausente_no_devuelve_filas(monkeypatch, tmp_path):
+    # El caso que abria el agujero: modelo declarado en .rs-databases.json cuyo fichero no
+    # existe. La tool devolvia todas las filas en claro con mode="off".
+    sep = srv._SEP_SQLSERVER
+    stdout = f"ID{sep}NOMBRE\n1{sep}Ana\n"
+    modelo_path = tmp_path / "declarado-model.json"          # no se crea a proposito
+    _preparar_db_query(monkeypatch, tmp_path, _config_sqlserver(str(modelo_path)), stdout)
+
+    out = json.loads(srv.db_query(str(tmp_path), "SELECT ID, NOMBRE FROM RDEUDORES"))
+
+    assert out["success"] is False
+    assert out["rows"] == []
+    assert modelo_path.name in out["error"]
+    assert "/rs-init" in out["error"] and "/rs-erd" in out["error"]
+    assert "Ana" not in json.dumps(out, ensure_ascii=False)
+
+
+def test_db_query_modelo_por_convenio_ausente_sigue_en_claro(monkeypatch, tmp_path):
+    # La otra mitad de la decision: un workspace que NUNCA declaro modelo mantiene el
+    # comportamiento de 3.0.0 -- la consulta corre, mode=off, datos en claro.
+    sep = srv._SEP_SQLSERVER
+    stdout = f"ID{sep}NOMBRE\n1{sep}Ana\n"
+    modelo_path = tmp_path / "BD" / "Proyecto-model.json"     # convenio, no existe
+    _preparar_db_query(monkeypatch, tmp_path,
+                       _config_sqlserver(str(modelo_path), model_declarado=False), stdout)
+
+    out = json.loads(srv.db_query(str(tmp_path), "SELECT ID, NOMBRE FROM RDEUDORES"))
+
+    assert out["success"] is True
+    assert out["pii"]["mode"] == "off"
+    assert out["rows"] == [["1", "Ana"]]
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("get_table_schema", ("RDEUDORES",)),
+    ("search_model", ("NOMBRE",)),
+    ("get_model_index", ()),
+])
+def test_los_otros_consumidores_de_model_path_no_cambian(monkeypatch, tmp_path, tool, args):
+    # get_table_schema/search_model/get_model_index leen el mismo config["model_path"] que
+    # db_query, pero NO les afecta model_declarado: siguen devolviendo su propio error
+    # "Modelo BD no encontrado" y nunca el mensaje de politica PII de db_query. Pin de que
+    # el arreglo de db_query se quedo en db_query.
+    monkeypatch.setattr(srv, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(srv, "_get_config",
+                        lambda workspace: _config_sqlserver(str(tmp_path / "no-existe.json")))
+
+    out = json.loads(getattr(srv, tool)(str(tmp_path), *args))
+
+    assert "Modelo BD no encontrado" in out["error"]
+    assert "/rs-erd" not in out["error"]
 
 
 def test_db_query_error_path_no_revienta_devuelve_success_false(monkeypatch, tmp_path):
