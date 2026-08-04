@@ -21,3 +21,6 @@ __pycache__/
 .svn/
 *.bak
 *.tmp
+
+# Workspaces temporales de pruebas
+.tmp-ws/

@@ -11,6 +11,27 @@
 
 ---
 
+# 🔒 Datos personales en los resultados de `db_query`
+
+`db_query` aplica la política de protección de datos personales del workspace y devuelve
+siempre un bloque `pii`. **Ese bloque hay que leerlo y trasladar al usuario lo que traiga —
+nunca ignorarlo en silencio.** Tabla completa de campos y de qué decir en cada caso:
+`references/mcp.md` → "El bloque `pii` de `db_query`". En corto:
+
+- `pii.error` / `pii.model_error` → el filtro **no** se aplicó (o los datos vienen sin
+  enmascarar). Avisar siempre.
+- `pii.suspect` → columnas en claro con valores con forma de dato personal. Nombrarlas.
+- `pii.predicate_warning` → se está filtrando por una columna con datos personales; el valor
+  se puede inferir aunque la salida vaya enmascarada. Avisar.
+- `pii.mode` → `off` sin protección, `audit` **los datos salen en claro**, `enforce` activo.
+  No decir "protegido" salvo con `enforce`.
+
+⛔ Un valor `pii:xxxxxxxx` es un pseudónimo: no reproducirlo como si fuera el dato, y **no
+rodear el filtro** (misma columna con otra expresión, `sqlplus`/`sqlcmd` directos). Si un dato
+se necesita en claro, declarar la columna como segura en el modelo BD (`/rs-pii`).
+
+---
+
 # 🧠 Motores soportados
 
 - SQL Server

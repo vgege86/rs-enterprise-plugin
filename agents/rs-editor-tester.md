@@ -5,6 +5,10 @@ model: sonnet
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__run_tests, mcp__plugin_rs-enterprise-agent_rs-workspace__scan_aspx, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, Read, Grep, Glob, Write
 ---
 
+> 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
+> `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
+> `db_query`". Nunca ignorarlo en silencio.
+
 > Problemas comunes de build/test: `references/troubleshooting.md`
 
 # Tester

@@ -1,0 +1,12 @@
+{
+  "_comentario": "Patrones BASE de nombre de columna sensible. Viajan con el plugin y aplican a todos los workspaces. Cada workspace puede anadir o quitar en BD/<proyecto>-model.json -> pii_policy.patterns_add / patterns_remove. Sintaxis glob: * comodin.",
+  "patrones": [
+    "TELEFON*", "MOVIL*", "FIJO*", "*_TFNO", "TFNO*", "TLF*",
+    "NIF*", "DNI*", "NIE*", "CIF*", "*_DNI", "DOCUMENTO_ID*",
+    "*CUENTA*", "*IBAN*", "*CCC*", "TARJETA*", "*_TARJ",
+    "EMAIL*", "*MAIL*", "CORREO*",
+    "FECHANAC*", "*_NACIM", "F_NACIMIENTO*",
+    "DIRECCION*", "DOMICILIO*",
+    "NOMBRE*", "APELLIDO*", "*_NOMBRE"
+  ]
+}

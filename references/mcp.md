@@ -26,7 +26,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `svn_status(workspace)` | Estado SVN → modificados, añadidos, eliminados, ? sin versionar |
 | `git_status(workspace)` | Estado Git → modificados, staged, ?? sin trackear, conflicto (U). Equivalente Git de `svn_status` |
 | `create_test_project(sln_path, framework?, project_name?)` | Crea proyecto xUnit/mstest/nunit |
-| `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden) |
+| `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden). Aplica la política PII del workspace (`pii_policy.mode` del modelo BD) y devuelve `pii` con el detalle de lo enmascarado — **el bloque `pii` hay que leerlo y trasladarlo al usuario, ver debajo**. Detalle en `docs/proteccion-pii-consultas-bd.md` |
 | `compare_model(workspace)` | Diff model.json vs BD real → tablas/columnas nuevas/eliminadas |
 | `scan_aspx(sln_path)` | Extrae controles AIS de .aspx → IDs y textos para RIDIOMA/RCONTROLES |
 | `log_execution(workspace, solution, task, status?, agents?)` | Registra en executions/history.json |
@@ -55,3 +55,24 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `export_dmd(workspace)` | Exporta modelo a Oracle Data Modeler (.dmd) — devuelve ruta |
 | `jira_attach(issue_key, files)` | Adjunta ficheros (`.sql`) a una issue de Jira Cloud. files = rutas coma-separadas. Credenciales en `~/.claude/rs-jira-credentials.json`. Usado por la skill `rs-jira` (ver `references/jira.md`) |
 | `jira_download(issue_key, file_id, out)` | Descarga un adjunto de una issue de Jira Cloud a `out`. `file_id` = id del adjunto (de `getJiraIssue`). Mismas credenciales que `jira_attach`. Usado por `rs-jira` y por `/rs-actualizador` para recoger los `.sql` de las tareas del rango |
+
+---
+
+## El bloque `pii` de `db_query` (obligatorio leerlo)
+
+`db_query` devuelve siempre un objeto `pii`. **No es informativo: hay que mirarlo y, si trae
+alguno de estos campos con contenido, decírselo al usuario en la respuesta.** Ignorarlo en
+silencio convierte en nominales los avisos que la medida de protección de datos personales
+promete (`docs/proteccion-pii-consultas-bd.md` §4.3 y §5.2c).
+
+| Campo | Qué significa y qué hay que hacer |
+|---|---|
+| `pii.error` | El filtro no pudo aplicarse. En el camino de hook puede significar que los datos vienen **sin enmascarar** (fallo abierto), o que no vienen filas. **Avisar siempre, literal** |
+| `pii.model_error` | Hay una política declarada pero el modelo BD no se puede usar (JSON corrupto, raíz que no es objeto): **la política NO se está aplicando**. Avisar y pedir revisar el modelo |
+| `pii.suspect` | Columnas que salían en claro y cuyos **valores** tienen forma de dato personal (DNI, IBAN, correo, teléfono, tarjeta). La lista de patrones está incompleta. Nombrar las columnas y sugerir `/rs-pii bootstrap` |
+| `pii.predicate_warning` | Columnas con datos personales usadas como **filtro** en el `WHERE`. Aunque la salida vaya enmascarada, el valor se puede inferir repitiendo la consulta (§5.2c). Avisar de que esa consulta interroga un dato personal |
+| `pii.mode` | `off` = sin protección, `audit` = **los datos salen en claro**, `enforce` = enmascarado activo. No decir "protegido" con `off` ni con `audit` |
+
+⛔ Nunca reproducir el valor de una celda enmascarada ni intentar sortear el filtro (por ejemplo
+consultando la misma columna con otra expresión). Si un dato hace falta en claro, la salida es
+declarar la columna como segura en el modelo BD (`/rs-pii`), no rodear el filtro.

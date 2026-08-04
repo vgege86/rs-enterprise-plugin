@@ -80,6 +80,30 @@ function Read-RsDatabases {
     return @{ ok = $true; error = ""; proyecto = $proyecto; conexiones = $conexiones; path = $path }
 }
 
+function Get-RsModelPath {
+    <# Ruta del modelo BD de UNA conexion. Unico sitio que resuelve el campo "model".
+
+       Lo usan get-config.ps1 (que la publica como model_path, y de ahi la consume la tool
+       MCP db_query) y db-query.ps1 (que se la pasa a scripts/pii_cli.py). Tiene que ser
+       una sola implementacion: el modelo NO es solo el esquema, lleva pii_policy entera
+       (mode, transform, patterns_add/remove y las tablas parametricas). Si los dos caminos
+       resuelven modelos distintos, uno enmascara y el otro no, y la respuesta del que no
+       enmascara es indistinguible de la de un workspace sin politica declarada.
+
+       Sin campo "model" en la conexion cae al convenio BD\<proyecto>-model.json. #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Workspace,
+        [Parameter(Mandatory=$true)]$Conexion,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Proyecto
+    )
+    $declarado = "$($Conexion.model)"
+    if ($declarado) {
+        if ([System.IO.Path]::IsPathRooted($declarado)) { return $declarado }
+        return (Join-Path $Workspace $declarado)
+    }
+    return (Join-Path $Workspace "BD\$Proyecto-model.json")
+}
+
 function Resolve-RsWorkspace {
     <# Si el agente pasó una subcarpeta (docs, BD, Batch, OnLine) sube al trunk. #>
     param([Parameter(Mandatory=$true)][string]$Workspace)

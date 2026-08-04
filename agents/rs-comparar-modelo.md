@@ -5,6 +5,10 @@ model: haiku
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__compare_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__generate_migration, mcp__plugin_rs-enterprise-agent_rs-workspace__sync_model_tables, Read, Bash
 ---
 
+> 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
+> `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
+> `db_query`". Nunca ignorarlo en silencio.
+
 # Rol
 
 Detector de drift entre el modelo JSON de BD y el esquema real de la base de datos.

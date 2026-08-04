@@ -70,7 +70,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 |--------|-----------|-------------|
 | `hooks/get-config.ps1` | `<workspace>` | Lee .rs-databases.json → `motor, datasource, schema, model_path` (principal) + `conexiones[], motores[]` |
 | `hooks/get-bd-model.ps1` | `-Workspace <ws> [-Tables "T1,T2"]` | Schemas de tablas del model.json (equivalente a `get_table_schema`) |
-| `hooks/db-query.ps1` | `-Workspace <ws> -Sql "<SELECT\|WITH...SELECT>" [-MaxRows 200] [-Conexion <id>]` | Consulta solo-lectura (SELECT o CTE WITH...SELECT; WITH con verbo de escritura se rechaza) contra una BD de .rs-databases.json (`-Conexion <id>`, default principal; solo Oracle) (equivalente a `db_query`) |
+| `hooks/db-query.ps1` | `-Workspace <ws> -Sql "<SELECT\|WITH...SELECT>" [-MaxRows 200] [-Conexion <id>]` | Consulta solo-lectura (SELECT o CTE WITH...SELECT; WITH con verbo de escritura se rechaza) contra una BD de .rs-databases.json (`-Conexion <id>`, default principal; solo Oracle) (equivalente a `db_query`). Aplica la política PII vía `scripts/pii_cli.py` (con el `model_path` de la conexión seleccionada) y devuelve `columns`/`rows`/`pii` igual que la tool MCP. Falla **abierto** solo si el filtro no se puede ni ejecutar (sin `python` o sin el fichero): datos sin tocar + `pii.error`. Si el filtro corre y falla, falla **cerrado**: `success: false`, `pii.error` y **cero filas** |
 | `hooks/lib-dbconfig.ps1` | (librería, no se invoca sola) | Lectura/validación de `.rs-databases.json` y parseo de cadenas de conexión — usada internamente por `get-config.ps1`, `db-query.ps1`, `check-env.ps1`. Dot-sourcea `lib-crypto.ps1` para descifrar el password |
 | `hooks/lib-crypto.ps1` | (librería, no se invoca sola) | Cifrado en reposo de secretos con DPAPI: `Protect-RsSecret`/`Unprotect-RsSecret`/`Test-RsEncrypted` (formato `enc:<base64>`; valor sin prefijo = texto plano legacy). Paridad con `_unprotect_secret` (Python) |
 | `hooks/secure-credentials.ps1` | `[-Workspace <ws>] [-SkipJira] [-SkipMantis]` | Cifra in situ (DPAPI) el password de `.rs-databases.json` + tokens Jira/Mantis de `~/.claude`. Idempotente, no imprime secretos → `{changed[], skipped[], errors[]}`. Fallback 1:1 de `secure_credentials` |
@@ -86,6 +86,19 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/render-help.ps1` | `<workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y lo abre → `{path, opened}`. Fallback 1:1 de `render_help` |
 | `hooks/generate-sql.ps1` | `<workspace> [-Proyecto <nombre>] [-Motor ORACLE\|SQLSERVER]` | Genera DDL SQL → `C:\AIS\<proyecto-lowercase>\scripts\<proyecto>-ddl-<motor>.sql` |
 | `hooks/export-dmd.ps1` | `<workspace> [-Proyecto <nombre>]` | Exporta a Oracle Data Modeler `.dmd` |
+
+## Protección de datos personales (PII)
+
+Guardas `PreToolUse` — no son fallback de una tool MCP, se registran directamente en la config
+personal del usuario (`~/.claude/settings.json`) solo tras `/rs-pii enforce`. Ver
+`docs/proteccion-pii-consultas-bd.md`.
+
+| Script | Parámetros | Descripción |
+|--------|-----------|-------------|
+| `hooks/pii-guard-bash.ps1` | (stdin: evento PreToolUse) | Guarda PreToolUse sobre `Bash`: bloquea `sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp` invocados directamente. **Guardarraíl, no control** — se elude con un script intermedio o invocando el binario por otra ruta; el control real es la credencial de BD (§3.1/§5.2b del documento). Registro en `~/.claude/settings.json` bajo `hooks.PreToolUse` |
+| `hooks/pii-guard-write.ps1` | (stdin: evento PreToolUse) | Guarda PreToolUse sobre `Write`/`Edit`: bloquea contenido con forma de DNI/NIE (con letra de control válida), IBAN o correo. Teléfono y tarjeta quedan fuera **a propósito** — son puramente numéricos y casarían con cualquier importe o identificador de fila largo, y una guarda que salta a diario se acaba desactivando. Excluye rutas `Instalador\` y `Actualizador\` (el volcado de datos reales es el propósito de esos ficheros) |
+| `hooks/lib-pii.ps1` | (librería, no se invoca sola) | Patrones DNI/NIE/IBAN/correo y el validador de letra de control (`Test-DniNieChecksum`), compartidos por `pii-guard-write.ps1` y `log-execution.ps1` — mismo patrón que `hooks/lib-dbconfig.ps1`. Deliberadamente **no** usa `scripts/pii_detect.py`: mantiene un subconjunto de formas distinto (sin teléfono ni tarjeta) porque aquí el texto inspeccionado no es un resultset de BD |
+| `scripts/pii_cli.py` | `<workspace> [<model_path>]` (stdin: `{columns,rows,sql}`) — o `--clasificar <model_path> [--tablas T1,T2] [--todo] [--max N]` | Envoltorio CLI de `scripts/pii_mask.py`: aplica la política PII completa (las seis formas) a un resultset. Lo usa `hooks/db-query.ps1` porque PowerShell no puede importar un módulo Python; la tool MCP `db_query` importa `pii_mask` directamente. **No busca el modelo**: la ruta se la pasa el llamante (`Get-RsModelPath` de `hooks/lib-dbconfig.ps1`, la misma que resuelve `get-config.ps1` → `model_path`). Salida != 0 = el filtro corrió y no pudo aplicar la política (2 uso, 3 modelo, 10 interno) → el llamante no debe devolver filas. El modo `--clasificar` devuelve el veredicto/motivo determinista por columna para `/rs-pii` |
 
 ## Control de versiones (SVN / Git)
 

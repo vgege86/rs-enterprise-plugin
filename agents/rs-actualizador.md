@@ -5,6 +5,10 @@ model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__detect_vcs, mcp__plugin_rs-enterprise-agent_rs-workspace__vcs_delta, mcp__plugin_rs-enterprise-agent_rs-workspace__jira_download, mcp__claude_ai_Atlassian_Rovo__getJiraIssue, Read, Write, Bash, Glob
 ---
 
+> 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
+> `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
+> `db_query`". Nunca ignorarlo en silencio.
+
 # Rol
 
 Ingeniero de release senior. Prepara la **entrega incremental** (actualizador) de un producto

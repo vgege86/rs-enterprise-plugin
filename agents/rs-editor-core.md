@@ -5,6 +5,10 @@ model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, Read, Edit, Write, Grep, Glob
 ---
 
+> 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
+> `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
+> `db_query`". Nunca ignorarlo en silencio.
+
 > 📖 Arquitectura: `references/arquitectura.md`
 > 📖 Convenciones: `references/conventions.md`
 > 📖 Reglas BD / DDL: `references/bd.md`

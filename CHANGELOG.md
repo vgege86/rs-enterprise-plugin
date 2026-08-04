@@ -1,5 +1,130 @@
 # RS Enterprise Agent — Changelog
 
+## 3.0.0 — 2026-08-03
+
+### Protección de datos personales en las consultas a BD
+
+`db_query` (tool MCP y hook) enviaba al contexto de la conversación el resultado íntegro
+de cada consulta, incluidas columnas con nombres, DNI, teléfonos y cuentas. Ese contexto
+se transmite a un proveedor externo. No había ningún filtro entre la BD y el envío.
+
+Ahora los valores de las columnas con datos personales se sustituyen por un seudónimo
+determinista (`pii:3f9a2c1b`) calculado con HMAC-SHA256 y una clave que vive en el perfil
+local del usuario, fuera del repositorio. El mismo valor produce siempre el mismo
+seudónimo, de modo que se conserva la capacidad de detectar duplicados y correlacionar
+filas sin exponer el dato.
+
+**Arranca apagado.** `pii_policy.mode` vale `off` mientras no se declare otra cosa, así
+que un workspace que actualice sigue viendo los resultados de `db_query` igual que antes.
+`/rs-pii` gestiona la transición `off` → `audit` → `enforce` con `status`, `bootstrap`,
+`audit`, `enforce` y `off`.
+
+Dos cosas **sí** cambian aunque el modo sea `off`, a propósito, porque no dependen de la
+política del workspace: `hooks/log-execution.ps1` sanea siempre el texto que persiste en
+`executions/history.json` (una descripción de tarea con un DNI/NIE válido, un IBAN o un
+correo se guarda con `[PII]` en su lugar), y las guardas `PreToolUse`, si están
+registradas, bloquean siempre `sqlplus`/`sqlcmd` directos y la escritura de datos
+personales en ficheros. Ninguna de las dos afecta a lo que devuelve una consulta.
+
+Qué se considera dato personal, por orden de precedencia: la marca `"pii"` / `"safe"` de
+la columna en el modelo; el patrón del nombre (`TELEFON*`, `DNI*`, `*IBAN*`…); si la
+tabla es paramétrica (`subviews["Parametricas"]`, la misma lista que usa el instalador);
+el tipo (numérico, fecha, PK y FK salen en claro); y por defecto, el texto se enmascara.
+
+Una columna que no resuelve contra el modelo — un alias, una expresión — se decide por la
+forma de sus valores, con una prueba numérica **estricta**: rechaza el signo `+`, la
+notación `inf`/`nan`, los separadores de miles con guion bajo (`1_000`), y cualquier
+entero de **9 o más dígitos sin parte decimal** — la forma de un teléfono, una cuenta, un
+contrato o una tarjeta, aunque en teoría pudiera ser un agregado real por encima de
+99.999.999. Una muestra completamente vacía también se enmascara, no sale en claro. Así
+`SELECT COUNT(*) AS TOTAL` sigue siendo útil y `SUBSTR(DNI,1,8) AS X` no.
+
+Un detector por forma de valor (DNI, NIE, IBAN, correo, teléfono, tarjeta) corre sobre lo
+que sale en claro y avisa cuando encuentra algo: es la señal de que la lista de patrones
+de nombre está incompleta, y en `enforce` esa columna se tapa igualmente. Las formas
+fuertes (DNI, NIE, IBAN, correo) bastan con un acierto; las débiles, puramente numéricas
+(teléfono, tarjeta, DNI sin letra), exigen **mayoría estricta — al menos el 50% de los
+valores no vacíos de la columna** — para no disparar por un importe suelto que parezca un
+teléfono. Si `scripts/pii_patterns.json` no se puede leer, la lista de patrones de nombre
+falla **cerrada**: pasa a ser `["*"]`, que enmascara toda columna, en vez de abrirse en
+silencio y dejar pasar texto claro sin ningún aviso.
+
+La extracción de tablas del SQL (`scripts/pii_sqlscope.py`) elimina antes los comentarios
+(`--`, `/* */`) con un escáner que respeta los literales de cadena; un literal sin cerrar
+(SQL malformado) hace que no se resuelva ninguna tabla — el alcance indeterminable
+degrada hacia el lado seguro (todo sin resolver, todo enmascarado por forma de valor),
+nunca al revés.
+
+**El guardarraíl de escritura no usa los mismos patrones que el detector de columnas, a
+propósito.** `hooks/pii-guard-write.ps1` excluye teléfono y tarjeta: un número suelto de
+nueve, o de trece a diecinueve dígitos, casa con importes, identificadores de fila y
+timestamps, y una guarda que salta constantemente se acaba desactivando — entonces no
+protege nada. Mantiene DNI, NIE, IBAN y correo, y **valida la letra de control** de
+DNI/NIE en vez de bastarle la forma (el repositorio está lleno de cadenas `AAAAMMDD` de
+`Actualizador\<ENTORNO>_<AAAAMMDD>` que casan "8 dígitos + letra" por casualidad). El
+detector de columnas de `scripts/pii_detect.py`, en cambio, mantiene las seis formas: ahí
+el contexto ya se sabe que es dato de un resultset, no texto libre del repositorio.
+`hooks/lib-pii.ps1` es nuevo — los patrones compartidos y el validador de letra de
+control, dot-sourced por `pii-guard-write.ps1` y por `log-execution.ps1` (mismo patrón que
+`hooks/lib-dbconfig.ps1`) — para que esta regla de detección no pueda divergir en dos
+sitios.
+
+`db_query` (tool MCP) gana `pii.model_error`: si el fichero de modelo existe pero no se
+puede parsear o su raíz no es un objeto JSON, el dato vuelve **sin enmascarar** con un
+diagnóstico visible que nombra el fichero, en vez de que la tool reviente o falle en
+silencio.
+
+`hooks/db-query.ps1` cambia la forma de su respuesta: ahora emite `columns` más `rows`
+como arrays de valores, igual que la tool MCP, tanto en el camino con filas como en el de
+"sin filas". El eco del SQL sustituye sus literales de cadena en todas las salidas.
+Delega el enmascarado en `scripts/pii_cli.py`, al que le pasa el `model_path` de la
+conexión seleccionada (`Get-RsModelPath` de `hooks/lib-dbconfig.ps1`, la misma resolución
+que alimenta a la tool MCP). Falla **abierto** a propósito solo cuando el filtro no se
+puede ni ejecutar —falta `python` o falta el fichero—: ahí el dato vuelve sin tocar con
+`pii.error` puesto, porque es el camino de fallback y un filtro que bloquea cada consulta
+empuja a la gente a `sqlplus` directo, que es peor. Si el filtro **sí corre** y falla, se
+falla **cerrado**: `success: false`, `pii.error` y cero filas — tenía los datos en la mano
+y no pudo aplicarles la política.
+
+Se añaden dos guardas `PreToolUse` — `hooks/pii-guard-bash.ps1` impide invocar
+`sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp` saltándose `db_query`,
+`hooks/pii-guard-write.ps1` impide escribir datos con forma personal en ficheros — y
+`log-execution.ps1` sanea el texto de la tarea antes de persistirlo en `history.json`.
+
+`/rs-pii` gestiona `status`, `bootstrap`, `audit`, `enforce` y `off`. `bootstrap` se niega
+a ejecutar bajo `enforce` (las muestras ya llegarían enmascaradas y el inventario saldría
+vacío o falso) y nunca imprime un valor muestreado. `enforce` no cambia el modo sin antes
+registrar las guardas y confirmar vía `check_env` que quedaron registradas — un workspace
+que cree estar protegido sin estarlo es peor que uno que sabe que está en `off`. Esa
+confirmación es **estructural** (`Test-RsPiiGuards` parsea `settings.json` y exige entradas
+reales bajo `hooks.PreToolUse` con un matcher que dispare; `check_env` devuelve
+`guards_missing` diciendo cuál falta), y comprueba el **fichero, no la sesión**: Claude Code
+captura la configuración de hooks al arrancar, así que unas guardas registradas a mitad de
+sesión no están vivas hasta reiniciar. Por eso `enforce` cierra pidiendo el reinicio en vez
+de declarar la protección activa. La clasificación de columnas que hace `bootstrap` sale de
+`scripts/pii_cli.py --clasificar`, el mismo motor que aplica `db_query`, y no de las reglas
+reescritas en el prompt: el inventario que produce tiene que coincidir con lo que el plugin
+enmascara de verdad.
+
+`check_env` gana un bloque `pii`: `mode`, `guards_registered`, `ok` y `error` cuando no
+está `ok`. `ok` es falso únicamente cuando el modo es `enforce` y faltan las guardas.
+
+**Versión mayor** porque `db_query` añade la clave `pii` a su respuesta, porque el hook
+cambia por completo la forma de la suya, y porque existe un modo (`enforce`) capaz de
+alterar los valores devueltos.
+
+**Límites, documentados en `docs/proteccion-pii-consultas-bd.md` §5:** el filtro actúa
+DESPUES de que el dato salga del motor; el bloqueo de `sqlplus` es un guardarraíl y no un
+control; filtrar por una columna enmascarada en el `WHERE` permite inferir su valor; y un
+seudónimo sigue siendo dato personal a efectos del RGPD. El control efectivo es que la BD
+no emita el dato — §3 de ese documento recoge la petición a Sistemas.
+
+Ficheros tocados: `scripts/pii_detect.py`, `scripts/pii_sqlscope.py`, `scripts/pii_policy.py`,
+`scripts/pii_mask.py`, `scripts/pii_cli.py`, `mcp/rs-workspace-server.py`,
+`hooks/db-query.ps1`, `hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1`,
+`hooks/lib-pii.ps1`, `hooks/log-execution.ps1`, `hooks/check-env.ps1`, `agents/rs-pii.md`,
+`commands/rs-pii.md`, `docs/proteccion-pii-consultas-bd.md`.
+
 ## 2.31.0 — 2026-08-03
 
 ### Security: cifrado en reposo (DPAPI) de los secretos en texto plano

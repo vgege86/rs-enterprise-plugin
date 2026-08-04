@@ -1,0 +1,224 @@
+"""Clasifica cada columna de un resultset como en claro, enmascarada o no resuelta.
+
+Precedencia (documentada en docs/proteccion-pii-consultas-bd.md #4.2):
+
+  1. Marca explicita en la columna del modelo ("pii": true / "safe": true)
+  2. Patron de nombre sensible                  -> enmascarar
+  3. Tabla parametrica (subviews.Parametricas)  -> en claro
+  4. Tipo numerico, fecha, PK o FK              -> en claro
+  5. Resto de texto                             -> enmascarar
+  6. Columna que no resuelve                    -> NO_RESUELTA (decide el valor)
+
+La marca explicita va primero a proposito: es la valvula de escape para cuando las
+reglas automaticas se equivocan, y gana a las reglas 2-6.
+
+Con UNA excepcion, deliberada: la red de seguridad por forma de valor de pii_mask
+(mask_resultset, paso "veredicto == CLARO") reescanea TODA columna que salga en claro,
+incluidas las marcadas "safe": true, y la tapa igualmente si sus valores tienen forma de
+dato personal. Es lo unico que puede revertir una marca explicita, y solo en la direccion
+segura -- nunca al reves. Que una marca "safe" salte ahi significa que la columna contiene
+datos con forma personal, asi que lo correcto es revisar la columna, no la red: si tras
+comprobarlo sigue siendo un falso positivo (un identificador interno de 8 digitos, una
+referencia con forma de IBAN), la salida es cambiar la CONSULTA para que no devuelva esa
+columna en bruto, o asumir el enmascarado. No hay forma de exigir "en claro pase lo que
+pase", y es a proposito.
+"""
+import fnmatch
+import json
+import re
+from pathlib import Path
+
+import importlib.util
+
+CLARO = "claro"
+MASCARA = "mascara"
+NO_RESUELTA = "no_resuelta"
+
+_RAIZ = Path(__file__).resolve().parent
+_PATRONES_BASE = _RAIZ / "pii_patterns.json"
+
+
+def _cargar_modulo(nombre):
+    spec = importlib.util.spec_from_file_location(nombre, _RAIZ / f"{nombre}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_det = _cargar_modulo("pii_detect")
+
+# Prefijos de tipo que salen en claro sin mas comprobaciones.
+_TIPOS_CLARO = (
+    "NUMBER", "NUMERIC", "INT", "BIGINT", "SMALLINT", "TINYINT",
+    "DECIMAL", "DEC", "FLOAT", "REAL", "DOUBLE", "MONEY", "BIT",
+    "DATE", "TIMESTAMP", "DATETIME", "SMALLDATETIME", "TIME",
+)
+
+
+def _patrones_base():
+    try:
+        datos = json.loads(_PATRONES_BASE.read_text(encoding="utf-8"))
+        return list(datos.get("patrones") or [])
+    except (OSError, ValueError):
+        # Fallar cerrado, no abierto: las columnas numericas con datos personales
+        # (TELEFONO NUMBER(9)) solo estan protegidas por esta lista de patrones de
+        # nombre. Perderla en silencio convertiria el enmascarado en fuga de texto
+        # claro sin ningun error visible. Un comodin unico hace que toda columna
+        # case con el patron de nombre, asi que todo se enmascara: una instalacion
+        # rota degrada a "inutil pero segura", nunca a "funciona pero filtra".
+        # json.JSONDecodeError es subclase de ValueError, asi que queda cubierto.
+        return ["*"]
+
+
+def cargar_politica(modelo):
+    """Combina los patrones base con los ajustes del workspace.
+
+    modelo["pii_policy"] admite: mode (off|audit|enforce), transform (hash|suppress),
+    patterns_add (list), patterns_remove (list).
+    """
+    cfg = (modelo or {}).get("pii_policy") or {}
+    patrones = _patrones_base()
+    patrones += list(cfg.get("patterns_add") or [])
+    quitar = {p.upper() for p in (cfg.get("patterns_remove") or [])}
+    patrones = [p for p in patrones if p.upper() not in quitar]
+
+    subviews = (modelo or {}).get("subviews") or {}
+    parametricas = {t.upper() for t in (subviews.get("Parametricas") or [])}
+
+    return {
+        "mode": cfg.get("mode", "off"),
+        "transform": cfg.get("transform", "hash"),
+        "patrones": [p.upper() for p in patrones],
+        "parametricas": parametricas,
+    }
+
+
+def indice_tablas(modelo):
+    """{NOMBRE_TABLA: tdef} admitiendo las DOS formas de modelo del codebase.
+
+    tables puede ser un dict {"RDEUDORES": {...}} o una lista [{"name": "RDEUDORES", ...}].
+    Ambas son formas reales aqui: mcp/rs-workspace-server.py las normaliza en seis sitios
+    (get_table_schema, get_model_index, search_model...). Si esta normalizacion faltase, un
+    modelo en forma de lista reventaria con AttributeError y los dos consumidores del
+    enmascarado reaccionarian en direcciones OPUESTAS -- la tool MCP se caeria (sin datos)
+    y el hook caeria por su rama de fallo abierto (todos los datos en claro). Se normaliza
+    aqui, en el contrato de entrada, y no en cada consumidor.
+    """
+    bruto = (modelo or {}).get("tables") or {}
+    if isinstance(bruto, dict):
+        return {str(k).upper(): v for k, v in bruto.items() if isinstance(v, dict)}
+    return {str(t.get("name") or t.get("tableName", "?")).upper(): t
+            for t in bruto if isinstance(t, dict)}
+
+
+def indice_columnas(tdef):
+    """{NOMBRE_COLUMNA: coldef} admitiendo dict o lista, igual que indice_tablas."""
+    cols = (tdef or {}).get("columns") or {}
+    if isinstance(cols, dict):
+        return {str(k).upper(): v for k, v in cols.items() if isinstance(v, dict)}
+    return {str(c.get("name") or c.get("columnName", "?")).upper(): c
+            for c in cols if isinstance(c, dict)}
+
+
+def _definiciones(columna, tablas, modelo):
+    """[(tabla, coldef)] de la columna en las tablas del ambito."""
+    salida = []
+    tablas_modelo = indice_tablas(modelo)
+    for t in tablas:
+        tdef = tablas_modelo.get(str(t).upper())
+        if not tdef:
+            continue
+        cdef = indice_columnas(tdef).get(str(columna).upper())
+        if cdef is not None:
+            salida.append((str(t).upper(), cdef))
+    return salida
+
+
+def _casa_patron(columna, politica):
+    return any(fnmatch.fnmatch(columna, p) for p in politica["patrones"])
+
+
+def _claro_por_tipo(coldef):
+    if coldef.get("pk") or coldef.get("fk"):
+        return True
+    tipo = str(coldef.get("type", "")).upper().strip()
+    return tipo.startswith(_TIPOS_CLARO)
+
+
+def clasificar(columna, tablas, modelo, politica):
+    """(veredicto, motivo) para una columna del resultset."""
+    col = str(columna).upper().strip()
+    defs = _definiciones(col, tablas, modelo)
+
+    # 1. Marca explicita. Ante tablas en conflicto gana la mas restrictiva.
+    marcas = [d.get("pii") is True or d.get("safe") is False for _, d in defs]
+    if any(marcas):
+        return MASCARA, "marca_columna"
+    if defs and all(d.get("safe") is True for _, d in defs):
+        return CLARO, "marca_columna"
+
+    # 2. Patron de nombre. Aplica aunque la columna no este en el modelo.
+    if _casa_patron(col, politica):
+        return MASCARA, "patron_nombre"
+
+    if not defs:
+        return NO_RESUELTA, "sin_definicion"
+
+    # 3. Parametrica: en claro solo si TODAS las tablas del ambito lo son.
+    if all(t in politica["parametricas"] for t, _ in defs):
+        return CLARO, "parametrica"
+
+    # 4. Tipo: en claro solo si TODAS las definiciones lo permiten.
+    if all(_claro_por_tipo(d) for _, d in defs):
+        return CLARO, "tipo"
+
+    # 5. Resto.
+    return MASCARA, "texto"
+
+
+# Numero plano: signo '-' opcional, digitos, separador decimal opcional ('.' o ',')
+# seguido de digitos. Deliberadamente NO admite: '+' (una cantidad de un resultset
+# no lo lleva, un telefono si), notacion 'inf'/'nan' (heredada de la gramatica de
+# float() de Python) ni separadores de miles tipo '1_000'.
+_RX_NUMERO_PLANO = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+
+# A partir de este numero de digitos sin parte decimal, la forma deja de ser una
+# cantidad o un conteo y pasa a ser la de un identificador.
+_MIN_DIGITOS_IDENTIFICADOR = 9
+
+
+def _es_numero(v):
+    """True si v es una cantidad o conteo plano; False si es un identificador.
+
+    Un entero de 9 o mas digitos SIN parte decimal tiene la forma de un telefono,
+    cuenta, contrato o tarjeta, no la de una cantidad o un COUNT(*). Se enmascara
+    aunque en teoria pudiera ser un agregado real por encima de 99.999.999 sin
+    decimales: es un coste de usabilidad aceptado a proposito, en el sentido seguro.
+    """
+    if not _RX_NUMERO_PLANO.match(v):
+        return False
+    sin_signo = v[1:] if v.startswith("-") else v
+    tiene_decimales = "." in sin_signo or "," in sin_signo
+    if not tiene_decimales and len(sin_signo) >= _MIN_DIGITOS_IDENTIFICADOR:
+        return False
+    return True
+
+
+def resolver_no_resuelta(valores):
+    """Decide una columna NO_RESUELTA por la forma de sus valores.
+
+    Mantiene util `SELECT COUNT(*) AS TOTAL` sin dejar pasar `SUBSTR(DNI,1,8) AS X`:
+    numerico limpio -> claro; cualquier forma personal o cualquier texto -> mascara.
+    Cero informacion (todo vacio) tampoco produce la respuesta permisiva.
+    """
+    forma = _det.escanear_columna(valores)
+    if forma:
+        return MASCARA, "forma_%s" % forma
+
+    no_vacios = [str(v).strip() for v in valores if v is not None and str(v).strip()]
+    if not no_vacios:
+        return MASCARA, "vacia"
+
+    if all(_es_numero(v) for v in no_vacios):
+        return CLARO, "valores_numericos"
+    return MASCARA, "valores_no_numericos"
