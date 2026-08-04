@@ -154,6 +154,8 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 44 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
+> El catálogo de abajo lista 47 comandos: los 44 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+
 ### 1. Pipeline principal
 
 | Comando | Qué hace |
