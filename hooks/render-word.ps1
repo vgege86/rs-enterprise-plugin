@@ -8,9 +8,15 @@
     Requiere Microsoft Word instalado (automatización COM). El plugin NO lleva pandoc ni
     python-docx: sin Word no hay conversión posible y la tool devuelve success=false.
 
-    Cada fichero .md se vuelca como un capítulo: su encabezado de nivel 1 pasa a Título 1 y el
-    resto de niveles baja en consecuencia. Los estilos se resuelven por ID built-in de Word
-    (wdStyleHeading1 = -2 ...), no por nombre local, para que funcione con Word en cualquier idioma.
+    Con VARIOS orígenes cada fichero .md es un capítulo: su encabezado de nivel 1 pasa a Título 1 y
+    el resto de niveles baja en consecuencia. Con UN SOLO origen y -Title explícito, el '#' del
+    fichero ya está en la portada: se omite y los niveles suben uno ('##' -> Título 1).
+
+    Los estilos se resuelven por ID built-in de Word (wdStyleHeading1 = -2, wdStyleListBullet = -49,
+    wdStyleListNumber = -50, wdStyleHtmlPre = -102 ...), no por nombre local, para que funcione con
+    Word en cualquier idioma y con cualquier plantilla. Si un ID no existe se cae a Normal.
+    Las tablas usan además dos estilos de párrafo PROPIOS de la plantilla (cabecera y cuerpo); si la
+    plantilla no los trae se cae a Normal con formato manual.
 
     Sobre la plantilla se hace:
       - portada: el párrafo con estilo Title de la PRIMERA sección recibe -Title, el Subtitle -Objeto
@@ -88,6 +94,18 @@ $WD_NORMAL   = -1
 $WD_HEADING  = @(-2, -3, -4, -5, -6, -7, -8, -9, -10)   # Heading 1..9
 $WD_TITLE    = -63
 $WD_SUBTITLE = -75
+$WD_BULLET   = @(-49, -55, -56, -57, -58)               # ListBullet 1..5
+$WD_NUMBER   = @(-50, -59, -60, -61, -62)               # ListNumber 1..5
+$WD_HTML_PRE = -102                                     # HtmlPre (texto preformateado)
+
+# Estilos de tabla: NO son built-in, los define cada plantilla. Se buscan por nombre y si no
+# estan se cae a Normal con formato manual — el hook debe funcionar con cualquier plantilla.
+$TBL_HEAD_NAMES = @("Encabezado de la tabla", "Table Heading", "Table Header")
+$TBL_BODY_NAMES = @("Texto de la tabla", "Table Text", "Table Body")
+
+# -Title explicito: hay que capturarlo ANTES de los valores por defecto de mas abajo, que lo
+# rellenan a partir del nombre del fichero.
+$titleGiven = ($Title.Length -gt 0)
 
 # --- marcas de procedencia --------------------------------------------------
 $MARK_CODE = [string][char]0x2705                                  # verificado en código
@@ -203,11 +221,32 @@ try {
     $doc = $word.Documents.Add($tplLocal, $false, 0, $true)
 
     $styNormal = $doc.Styles.Item($WD_NORMAL)
-    $styHead   = @()
-    foreach ($id in $WD_HEADING) {
-        try   { $styHead += $doc.Styles.Item($id) }
-        catch { $styHead += $styNormal }
+
+    function Resolve-Styles($ids) {
+        # Un ID built-in que la plantilla no tenga cargado degrada a Normal, nunca rompe
+        $r = @()
+        foreach ($id in $ids) {
+            try   { $r += $doc.Styles.Item($id) }
+            catch { $r += $styNormal }
+        }
+        return $r
     }
+    function Resolve-StyleByName($names) {
+        # Estilos propios de la plantilla: $null si no existe ninguno de los nombres
+        foreach ($n in $names) {
+            try { return $doc.Styles.Item($n) } catch { }
+        }
+        return $null
+    }
+
+    $styHead   = Resolve-Styles $WD_HEADING
+    $styBullet = Resolve-Styles $WD_BULLET
+    $styNumber = Resolve-Styles $WD_NUMBER
+    $styPre    = $styNormal
+    try { $styPre = $doc.Styles.Item($WD_HTML_PRE) } catch { }
+
+    $styTblHead = Resolve-StyleByName $TBL_HEAD_NAMES
+    $styTblBody = Resolve-StyleByName $TBL_BODY_NAMES
 
     # ---- 1. contenido de ejemplo de la plantilla -----------------------------
     $lastSection = $doc.Sections.Count
@@ -225,18 +264,34 @@ try {
     }
 
     # ---- 2. portada (por estilo, no por texto literal) -----------------------
-    $portadaOk = $false
+    function Set-CoverPara($paras, [string]$Text) {
+        # La plantilla puede traer VARIOS parrafos con el mismo estilo de portada (uno de ellos
+        # vacio, de separacion). Se sustituye solo UNO — el primero con texto, o el primero si
+        # todos estan vacios: escribir en todos saca el titulo repetido en la portada.
+        if ($paras.Count -eq 0) { return $false }
+        $target = $null
+        foreach ($p in $paras) {
+            if (($p.Range.Text -replace "[\r\n\x07]", "").Trim().Length -gt 0) { $target = $p; break }
+        }
+        if ($null -eq $target) { $target = $paras[0] }
+        $r = $target.Range
+        $r.MoveEnd(1, -1) | Out-Null
+        $r.Text = $Text
+        return $true
+    }
+
+    $nmTitle  = $doc.Styles.Item($WD_TITLE).NameLocal
+    $nmSub    = $doc.Styles.Item($WD_SUBTITLE).NameLocal
+    $parTitle = @()
+    $parSub   = @()
     foreach ($p in $doc.Paragraphs) {
         if ($p.Range.Sections.Item(1).Index -ne 1) { continue }
         $st = $p.Style.NameLocal
-        $r = $p.Range
-        if ($st -eq $doc.Styles.Item($WD_TITLE).NameLocal) {
-            $r.MoveEnd(1, -1) | Out-Null; $r.Text = $Title; $portadaOk = $true
-        }
-        elseif ($Objeto.Length -gt 0 -and $st -eq $doc.Styles.Item($WD_SUBTITLE).NameLocal) {
-            $r.MoveEnd(1, -1) | Out-Null; $r.Text = $Objeto
-        }
+        if     ($st -eq $nmTitle) { $parTitle += $p }
+        elseif ($st -eq $nmSub)   { $parSub   += $p }
     }
+    $portadaOk = Set-CoverPara $parTitle $Title
+    if ($Objeto.Length -gt 0) { Set-CoverPara $parSub $Objeto | Out-Null }
     if (-not $portadaOk) { [void]$warnings.Add("La plantilla no tiene párrafo con estilo Title en la 1ª sección: portada sin sustituir") }
 
     # ---- 3. historial de cambios --------------------------------------------
@@ -247,6 +302,12 @@ try {
             $ht.Cell(2, 2).Range.Text = (Get-Date -Format "dd/MM/yyyy")
             $ht.Cell(2, 3).Range.Text = $Autor
             $ht.Cell(2, 4).Range.Text = "Versión inicial"
+            if ($null -ne $styTblBody) { $ht.Rows.Item(2).Range.Style = $styTblBody }
+            # La plantilla trae filas de relleno vacias: las que no se usan sobran en el entregable
+            for ($r = $ht.Rows.Count; $r -ge 3; $r--) {
+                $rowTxt = ($ht.Rows.Item($r).Range.Text -replace "[\r\n\x07]", "").Trim()
+                if ($rowTxt.Length -eq 0) { try { $ht.Rows.Item($r).Delete() } catch { } }
+            }
         } else {
             [void]$warnings.Add("No se encontró tabla de historial de cambios (>=2 filas, >=4 columnas): -Autor ignorado")
         }
@@ -266,34 +327,68 @@ try {
 
     $script:tableBuf = @()
     $script:inTable  = $false
+    $script:numStart = -1
+
+    function End-NumList {
+        # Word encadena la numeracion de TODAS las listas que comparten estilo: dos listas
+        # independientes saldrian 1,2,3,4,5,6. Al cerrar cada bloque se reaplica la plantilla de
+        # lista sobre un rango colapsado en su primer parrafo con ContinuePreviousList=$false
+        # (ApplyTo=0 wdListApplyToWholeList, DefaultListBehavior=2 wdWord10ListBehavior): reinicia
+        # solo esa lista y respeta los niveles anidados (2.1, 2.2...).
+        if ($script:numStart -lt 0) { return }
+        $pos = $script:numStart
+        $script:numStart = -1
+        try {
+            $lt = $styNumber[0].ListTemplate
+            if ($null -ne $lt) { $doc.Range($pos, $pos).ListFormat.ApplyListTemplateWithLevel($lt, $false, 0, 2) | Out-Null }
+        } catch { }
+    }
 
     function Add-Para {
-        param([string]$Text, $Style, [int]$IndentPt = 0, [bool]$Mono = $false)
+        param([string]$Text, $Style, [int]$IndentPt = 0, [bool]$KeepNumList = $false)
+        if (-not $KeepNumList) { End-NumList }
         $sel.Style = $Style
-        $sel.ParagraphFormat.LeftIndent = $IndentPt
-        if ($Mono) { $sel.Font.Name = "Consolas"; $sel.Font.Size = 9 }
+        # La sangria base la pone el propio estilo (las listas la traen); el formato directo del
+        # parrafo anterior se limpia siempre, si no se arrastra de una vineta al parrafo siguiente.
+        $baseLeft  = 0
+        $baseFirst = 0
+        try {
+            $baseLeft  = $Style.ParagraphFormat.LeftIndent
+            $baseFirst = $Style.ParagraphFormat.FirstLineIndent
+        } catch { }
+        $sel.ParagraphFormat.LeftIndent      = $baseLeft + $IndentPt
+        $sel.ParagraphFormat.FirstLineIndent = $baseFirst
         if ($Text.Length -gt 0) { $sel.TypeText($Text) }
         $sel.TypeParagraph()
-        if ($Mono) { $sel.Font.Name = $styNormal.Font.Name; $sel.Font.Size = $styNormal.Font.Size }
+    }
+
+    function Add-Continuation {
+        # Continuacion sangrada de un item de lista: en Markdown es el MISMO parrafo. Se borra la
+        # marca de parrafo recien escrita y se concatena — si no, cada linea partiria el item, el
+        # bloque numerado se cerraria a cada linea y todos los items saldrian "1.".
+        param([string]$Text)
+        if ($Text.Length -eq 0) { return }
+        $sel.TypeBackspace()
+        $sel.TypeText(" " + $Text)
+        $sel.TypeParagraph()
     }
 
     function Flush-Table {
         if (-not $script:inTable -or $script:tableBuf.Count -eq 0) {
             $script:tableBuf = @(); $script:inTable = $false; return
         }
+        End-NumList
         $rows = $script:tableBuf
         $nRows = $rows.Count
         $nCols = 0
         foreach ($r in $rows) { if ($r.Count -gt $nCols) { $nCols = $r.Count } }
 
         $sel.Style = $styNormal
-        $sel.ParagraphFormat.LeftIndent = 0
+        $sel.ParagraphFormat.LeftIndent      = 0
+        $sel.ParagraphFormat.FirstLineIndent = 0
         $tbl = $doc.Tables.Add($sel.Range, $nRows, $nCols)
         $tbl.Borders.InsideLineStyle  = 1
         $tbl.Borders.OutsideLineStyle = 1
-        $tbl.Range.ParagraphFormat.SpaceAfter  = 2
-        $tbl.Range.ParagraphFormat.SpaceBefore = 2
-        $tbl.Range.Font.Size = 9
 
         for ($r = 0; $r -lt $nRows; $r++) {
             for ($c = 0; $c -lt $nCols; $c++) {
@@ -302,23 +397,43 @@ try {
                 if ($val.Length -gt 0) { $tbl.Cell($r + 1, $c + 1).Range.Text = $val }
             }
         }
-        $tbl.Rows.Item(1).Range.Font.Bold = $true
-        $tbl.Rows.Item(1).Shading.BackgroundPatternColor = 15132390
+        # Tipografia corporativa de tabla si la plantilla la trae; si no, formato manual
+        if ($null -ne $styTblBody) {
+            $tbl.Range.Style = $styTblBody
+        } else {
+            $tbl.Range.ParagraphFormat.SpaceAfter  = 2
+            $tbl.Range.ParagraphFormat.SpaceBefore = 2
+            $tbl.Range.Font.Size = 9
+        }
+        if ($null -ne $styTblHead) {
+            $tbl.Rows.Item(1).Range.Style = $styTblHead
+        } else {
+            $tbl.Rows.Item(1).Range.Font.Bold = $true
+            $tbl.Rows.Item(1).Shading.BackgroundPatternColor = 15132390
+        }
         $tbl.Rows.Item(1).HeadingFormat = $true          # repite cabecera al partir de página
         $tbl.AutoFitBehavior(2) | Out-Null               # wdAutoFitWindow
 
         $sel.EndKey(6) | Out-Null
         $sel.Style = $styNormal
-        $sel.ParagraphFormat.LeftIndent = 0
+        $sel.ParagraphFormat.LeftIndent      = 0
+        $sel.ParagraphFormat.FirstLineIndent = 0
 
         $script:tableBuf = @()
         $script:inTable  = $false
     }
 
+    # Con UN SOLO origen y -Title explicito, el '#' del fichero ya esta en la portada: emitirlo otra
+    # vez duplica el titulo y hunde un nivel todo el documento ('##' acabaria en Titulo 2). Se omite
+    # y los niveles suben uno. Con VARIOS origenes cada '#' es un capitulo distinto del documento y
+    # no hay duplicidad: la correspondencia se mantiene.
+    $shiftHead = ($mdFiles.Count -eq 1) -and $titleGiven
+
     foreach ($mdPath in $mdFiles) {
         $lines = Get-Content -LiteralPath $mdPath -Encoding UTF8
         $firstH1 = $true
         $inFence = $false
+        $inItem  = $false   # la linea anterior era un item de lista (o su continuacion)
 
         foreach ($rawLine in $lines) {
             $line = $rawLine.TrimEnd()
@@ -330,7 +445,8 @@ try {
                 continue
             }
             if ($inFence) {
-                Add-Para $rawLine $styNormal 18 $true
+                Add-Para $rawLine $styPre
+                $inItem = $false
                 continue
             }
 
@@ -345,17 +461,24 @@ try {
                     $script:tableBuf += , $clean
                 }
                 $script:inTable = $true
+                $inItem = $false
                 continue
             }
             if ($script:inTable) { Flush-Table }
 
-            if ($line.Trim().Length -eq 0) { continue }
-            if ($line -match '^\s*---+\s*$') { continue }
+            if ($line.Trim().Length -eq 0) { $inItem = $false; continue }
+            if ($line -match '^\s*---+\s*$') { $inItem = $false; continue }
 
             # ---- encabezados ----
             if ($line -match '^(#{1,6})\s+(.*)$') {
                 $lvl = $Matches[1].Length
                 $txt = Clean-Text $Matches[2]
+                if ($shiftHead) {
+                    if ($lvl -eq 1 -and $firstH1) { $firstH1 = $false; continue }   # ya esta en la portada
+                    $idx = [Math]::Max([Math]::Min($lvl - 1, 9), 1) - 1
+                    Add-Para (Strip-HeadingNumber $txt) $styHead[$idx]
+                    continue
+                }
                 if ($lvl -eq 1) {
                     if ($firstH1) { Add-Para $txt $styHead[0]; $firstH1 = $false }
                     else { Add-Para (Strip-HeadingNumber $txt) $styHead[1] }
@@ -363,6 +486,7 @@ try {
                 }
                 $idx = [Math]::Min($lvl, 9) - 1
                 Add-Para (Strip-HeadingNumber $txt) $styHead[$idx]
+                $inItem = $false
                 continue
             }
 
@@ -372,33 +496,51 @@ try {
                 if ($inner.Trim().Length -eq 0) { continue }
                 if ($inner -match '^\s*-\s+(.*)$') { Add-Para ("• " + (Clean-Text $Matches[1])) $styNormal 36 }
                 else { Add-Para (Clean-Text $inner) $styNormal 24 }
+                $inItem = $false
                 continue
             }
 
             # ---- checklist ----
             if ($line -match '^\s*-\s+\[( |x|X)\]\s+(.*)$') {
                 Add-Para ([string][char]0x2610 + " " + (Clean-Text $Matches[2])) $styNormal 18
+                $inItem = $true
                 continue
             }
 
             # ---- viñetas ----
+            # El estilo built-in ya pone la vineta y la sangria: nada de caracter literal
             if ($line -match '^(\s*)[-\*]\s+(.*)$') {
-                $depth = [Math]::Floor($Matches[1].Length / 2)
-                $bullet = [string][char]0x2022
-                if ($depth -ge 1) { $bullet = [string][char]0x25E6 }
-                Add-Para ($bullet + " " + (Clean-Text $Matches[2])) $styNormal (18 + 18 * $depth)
+                $depth = [int][Math]::Floor($Matches[1].Length / 2)
+                if ($depth -gt ($styBullet.Count - 1)) { $depth = $styBullet.Count - 1 }
+                # Una vineta ANIDADA cuelga del item numerado que la precede: no cierra su bloque
+                Add-Para (Clean-Text $Matches[2]) $styBullet[$depth] 0 ($depth -ge 1)
+                $inItem = $true
                 continue
             }
 
             # ---- numeradas ----
+            # El estilo built-in numera solo: el "1." del Markdown no se escribe. El bloque se
+            # cierra (y reinicia su numeracion) en End-NumList.
             if ($line -match '^(\s*)\d+\.\s+(.*)$') {
-                Add-Para (Clean-Text $line.Trim()) $styNormal 18
+                $depth = [int][Math]::Floor($Matches[1].Length / 2)
+                if ($depth -gt ($styNumber.Count - 1)) { $depth = $styNumber.Count - 1 }
+                if ($script:numStart -lt 0) { $script:numStart = $sel.Range.Start }
+                Add-Para (Clean-Text $Matches[2]) $styNumber[$depth] 0 $true
+                $inItem = $true
+                continue
+            }
+
+            # ---- continuacion sangrada del item anterior ----
+            if ($inItem -and $line -match '^\s+\S') {
+                Add-Continuation (Clean-Text $line)
                 continue
             }
 
             Add-Para (Clean-Text $line) $styNormal 0
+            $inItem = $false
         }
         Flush-Table
+        End-NumList
     }
 
     # ---- 6. formato inline ---------------------------------------------------

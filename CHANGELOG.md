@@ -1,5 +1,46 @@
 # RS Enterprise Agent — Changelog
 
+## 3.2.1 — 2026-08-04
+
+### `/rs-word`: el documento salía con la tipografía de la plantilla perdida
+
+Comparando la salida del hook con el mismo documento maquetado a mano sobre la misma plantilla, el
+hook reconocía todas las construcciones del Markdown pero las escribía como `Normal` con formato
+manual: 0 párrafos de lista, 0 preformateado y 0 estilos de tabla frente a 10 / 5 / 22 del maquetado
+a mano. Cinco correcciones sobre `hooks/render-word.ps1`:
+
+- **Título duplicado.** Con `-Title` la portada ya lleva el título; volcar además el `#` del
+  Markdown lo repetía y hundía un nivel todo el documento (`##` acababa en Título 2 y el índice
+  salía con un solo `TDC 1`). Con **un solo origen y `-Title` explícito** se omite el `#` y los
+  niveles suben uno (`##` → Título 1). Con **varios orígenes** cada `#` es un capítulo distinto y
+  la correspondencia anterior se mantiene. Además, si la plantilla trae varios párrafos con estilo
+  Title en la portada (uno vacío de separación), ahora se sustituye solo uno.
+- **Viñetas** → estilo built-in de lista (`wdStyleListBullet`), sin el carácter `•` literal ni
+  sangría manual. Los niveles anidados usan las variantes profundas (`ListBullet2`...).
+- **Listas numeradas** → estilo built-in (`wdStyleListNumber`), sin el `1.` literal: numera Word.
+  Word encadena la numeración de todas las listas que comparten estilo, así que al cerrar cada
+  bloque se reaplica su plantilla de lista con `ContinuePreviousList=$false` sobre un rango
+  colapsado en el primer párrafo: dos listas independientes vuelven a empezar en 1 y los niveles
+  anidados (2.1, 2.2) se respetan.
+- **Bloques fenced** → estilo built-in preformateado (`wdStyleHtmlPre`) en vez de `Normal` con
+  Consolas y sangría a mano.
+- **Tablas.** Las tablas generadas y la fila rellenada del historial reciben los estilos de párrafo
+  de tabla de la plantilla (cabecera y cuerpo); si la plantilla no los trae se cae a `Normal` con
+  el formato manual de antes. Del historial se borran las filas de relleno no usadas (7 → 2).
+
+Efecto colateral necesario: una línea sangrada que continúa un ítem de lista ya no se escribe como
+párrafo suelto, se concatena al ítem — si no, cada línea partía el ítem, el bloque numerado se
+cerraba en cada una y **todos** los ítems salían "1.".
+
+Los tres primeros estilos son **built-in de Word y se resuelven por ID numérico**, nunca por nombre
+local: el hook sigue funcionando con Word en cualquier idioma y con cualquier plantilla. Solo los
+dos estilos de tabla se buscan por nombre, porque los define la plantilla, y degradan a `Normal`.
+
+`tests/RenderWord.Tests.ps1` (nuevo) se fabrica su propia plantilla `.dotx` con Word en el
+directorio temporal — la plantilla corporativa es material de marca y no se versiona — y comprueba
+estilos, numeración reiniciada, ausencia de título duplicado y borrado de filas del historial. Sin
+Word instalado el fichero entero se salta.
+
 ## 3.2.0 — 2026-08-04
 
 ### `/rs-word`: la documentación del `agentic_manual` sale a Word con la plantilla del cliente
