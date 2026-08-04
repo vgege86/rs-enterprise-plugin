@@ -1,6 +1,6 @@
 # Protección de datos personales en consultas a BD desde herramientas de IA
 
-**Fecha:** 2026-08-03
+**Fecha:** 2026-08-04 (rev. 1.1 — corrige el supuesto sobre el usuario de conexión)
 **Ámbito:** Soluciones uCollect/RS consultadas mediante el plugin `rs-enterprise-agent`
 **Destinatario:** Departamento de Sistemas / Administración de Bases de Datos
 **Estado:** Petición de control definitivo + medida provisional en curso
@@ -24,12 +24,25 @@ En §3 se presentan **todas** las opciones técnicas disponibles, con y sin cost
 licencia, en igualdad de condiciones. Desarrollo no tiene visibilidad sobre las
 licencias contratadas ni sobre el presupuesto: **la elección corresponde a Sistemas.**
 
+**Punto de partida verificado.** En la instalación de **B2Impact** el plugin ya conecta
+con un usuario de consulta, `RSB2IMPACTQUERY`, que **no es el propietario** del esquema
+consultado (`RSB2IMPACT`). Eso significa que los mecanismos de redacción del §3.2 **sí
+pueden aplicarse a la credencial que ya está en uso**, y que el trabajo del §3.1 se
+reduce a reapuntar sus permisos en lugar de crear un usuario nuevo. La comprobación
+está hecha solo para B2Impact: **se pide a Sistemas que confirme si vale igual para el
+resto de proyectos y entornos** (§2.4).
+
+**Hay una pregunta previa que decide el alcance de todo lo demás** y que solo Sistemas
+puede responder: **¿ese usuario de consulta lo utiliza algo más aparte de las
+herramientas de desarrollo?** De la respuesta depende que baste con reapuntar permisos
+o que haya que crear un usuario dedicado (pregunta previa del §3).
+
 | | Control definitivo (Sistemas) | Medida provisional (Desarrollo) |
 |---|---|---|
 | Dónde actúa | En el motor de BD | En la herramienta, tras recibir el dato |
 | ¿Se puede eludir? | No | Sí (ver §5.2) |
 | Coste de licencia | Según opción elegida (§3.2) | Ninguno |
-| Esfuerzo | Entre 1 y 5 jornadas de DBA según opción | Estimado 8-12 jornadas de desarrollo |
+| Esfuerzo | Entre 1 y 5 jornadas de DBA según la opción, más unas horas de reapuntado de permisos (§3.1) | Estimado 8-12 jornadas de desarrollo |
 | Válido ante auditoría | Sí | Parcialmente, con salvedades documentadas |
 
 ---
@@ -73,48 +86,150 @@ de **exposición**.
 - La exposición es **silenciosa**: no queda constancia de qué datos concretos se
   enviaron ni cuándo, más allá del historial de conversaciones.
 
-### 2.4 Por qué el usuario de conexión actual agrava el problema
+### 2.4 El usuario de conexión actual: qué habilita y qué no protege
 
-En las instalaciones actuales, el desarrollador conecta con el **usuario propietario
-del esquema**. Ese usuario tiene `SELECT` sobre todo. Cualquier control que dependa
-de permisos, políticas o redacción queda anulado si se mantiene esa credencial: en
-Oracle el propietario ve siempre sus propias tablas sin redactar, y en SQL Server los
-miembros de `db_owner` conservan el privilegio `UNMASK`.
+En la instalación de **B2Impact** —la única verificada al redactar este documento— el
+plugin **no conecta con el propietario del esquema**. La conexión declarada en
+`docs/.rs-databases.json` usa el usuario `RSB2IMPACTQUERY`, mientras que el esquema
+consultado es `RSB2IMPACT`: son dos principales distintos.
 
-**Cambiar la credencial es el primer paso y habilita todos los demás.**
+Conviene decirlo con precisión, porque cambia qué medidas son aplicables:
+
+- En **Oracle**, un usuario que no es el propietario **no disfruta del acceso
+  automático** del dueño a sus propias tablas, que es lo que anula cualquier redacción.
+  Las políticas de las opciones C y D, y el esquema de vistas de la opción A, pueden
+  por tanto surtir efecto sobre él.
+- En **SQL Server**, siempre que ese usuario **no pertenezca a `db_owner`**, no
+  conserva el privilegio `UNMASK`, de modo que el enmascarado de la opción B también
+  le aplica.
+
+Dicho de otro modo: los mecanismos del §3.2 **sí pueden** actuar sobre la credencial
+que ya se usa. No hace falta crear un usuario para desbloquearlos.
+
+**La advertencia sigue en pie, reformulada.** La propiedad que protege no es «ser de
+solo lectura», es **«no poder llegar a la columna original»**. Son cosas distintas y se
+confunden con facilidad:
+
+- Un usuario de solo lectura con `SELECT` sobre la tabla base **sigue devolviendo el
+  DNI en claro**. No poder escribir no es no poder leer.
+- Mientras ese `SELECT` directo exista, una vista redactada (opción A) es un rodeo
+  voluntario: nada impide que la consulta vaya a la tabla en lugar de a la vista.
+
+Por eso el §3.1 no pide crear un usuario, sino **quitarle a este el camino directo a las
+tablas con datos personales** y dejarle únicamente el que pasa por el mecanismo de
+redacción que se elija.
+
+**Alcance de esta comprobación.** Lo anterior está verificado **únicamente** para la
+instalación de B2Impact. Este documento **no puede afirmar** que ocurra lo mismo en el
+resto de proyectos ni en el resto de entornos (desarrollo, test, producción) de este
+mismo proyecto: Desarrollo no tiene visibilidad sobre cómo se dieron de alta esas
+credenciales. **Se pide a Sistemas que lo confirme entorno por entorno.** Allí donde la
+conexión sí sea la del propietario del esquema, la advertencia original se mantiene
+íntegra: mientras se use esa credencial ninguna opción del §3.2 es efectiva, y lo
+primero es sustituirla.
 
 ---
 
 ## 3. Control definitivo: petición a Sistemas
 
-### 3.1 Paso 1 — Usuario dedicado de solo lectura (imprescindible)
+**PREGUNTA PREVIA — ¿el usuario de consulta es exclusivo de Desarrollo?**
 
-Crear un usuario de BD por entorno destinado exclusivamente a las herramientas de
-desarrollo asistido, **sin** privilegios administrativos y **sin** `SELECT` directo
-sobre las tablas que contienen datos personales.
+**Esta es la pregunta que decide cuál de los dos caminos de esta sección se aplica, y
+Desarrollo no puede responderla.** Se pide a Sistemas que la conteste antes que
+cualquier otra cosa.
+
+> **¿El usuario de conexión de las herramientas de desarrollo —en B2Impact,
+> `RSB2IMPACTQUERY`— lo utiliza algo más? ¿Informes, procesos batch, integraciones,
+> alguna aplicación, tareas programadas, cuadros de mando?**
+
+| Respuesta | Consecuencia |
+|---|---|
+| **Es exclusivo de las herramientas de desarrollo** | El paso 3.1 está prácticamente hecho: el usuario ya existe y ya no es propietario. Solo queda reapuntar sus permisos y elegir el mecanismo de redacción del §3.2. Es el camino corto y es cuestión de horas. |
+| **Lo comparten otros consumidores** | Revocarle el `SELECT` sobre las tablas de deudores **los rompe todos a la vez**. Y lo que sucede después es previsible: se restituye el permiso para recuperar el servicio y con él desaparece la protección. En ese caso hay que crear un usuario dedicado **antes** de tocar permisos, como se describe al final del §3.1. |
+
+El segundo escenario es el que conviene anticipar: una protección que se retira bajo
+presión operativa a las pocas horas de implantarse no es una protección, y deja además
+la impresión de que el problema ya está resuelto.
+
+La pregunta se plantea por entorno y por proyecto, junto con la del §2.4.
+
+### 3.1 Paso 1 — Reapuntar los permisos del usuario de consulta (imprescindible)
+
+El objetivo de este paso no es disponer de una credencial nueva: es **que la credencial
+con la que conectan las herramientas no tenga camino directo a las columnas con datos
+personales**. En B2Impact esa credencial ya existe y ya no es la del propietario (§2.4),
+de modo que el trabajo se reduce a reapuntar sus permisos.
+
+> En lo que sigue, `<USUARIO_CONSULTA>` designa el usuario de conexión de las
+> herramientas de desarrollo en el entorno de que se trate. En B2Impact es
+> `RSB2IMPACTQUERY`, sobre el esquema `RSB2IMPACT`.
+
+La forma concreta depende del mecanismo que se elija en §3.2, y son dos familias:
+
+- **Opción A (vistas redactadas):** hay que **revocar** el `SELECT` sobre las tablas
+  base y **conceder** el `SELECT` sobre las vistas.
+- **Opciones B, C y D (redacción sobre la propia tabla):** el `SELECT` sobre la tabla
+  base **se conserva** —es por donde llega el dato ya redactado— y lo que hay que
+  garantizar es que el usuario **no tenga el privilegio que elude la redacción**.
 
 **Oracle**
 
 ```sql
-CREATE USER RS_AGENTE IDENTIFIED BY "<password>";
-GRANT CREATE SESSION TO RS_AGENTE;
--- Sin GRANT SELECT sobre las tablas base con datos personales.
--- El acceso llega exclusivamente por el mecanismo de redacción que se elija en 3.2.
+-- El usuario ya existe: NO hay que crearlo.
+-- Comprobación previa: que no sea el propietario del esquema y que no arrastre
+-- privilegios que anulen cualquier redacción.
+SELECT * FROM DBA_ROLE_PRIVS WHERE GRANTEE = '<USUARIO_CONSULTA>';
+SELECT * FROM DBA_SYS_PRIVS  WHERE GRANTEE = '<USUARIO_CONSULTA>'
+   AND PRIVILEGE IN ('SELECT ANY TABLE',
+                     'EXEMPT ACCESS POLICY',
+                     'EXEMPT REDACTION POLICY');
+
+-- Con la Opción A (vistas redactadas): quitar el camino directo…
+REVOKE SELECT ON RSB2IMPACT.RDEUDORES FROM <USUARIO_CONSULTA>;
+--   …una sentencia por cada tabla base con datos personales (inventario del §6)…
+
+-- …y dejar solo el que pasa por la vista:
+GRANT SELECT ON RSB2IMPACT.V_RDEUDORES TO <USUARIO_CONSULTA>;
+
+-- Con las Opciones C o D no se revoca el SELECT de la tabla base: basta con
+-- asegurar que el usuario NO tiene EXEMPT ACCESS POLICY ni EXEMPT REDACTION POLICY.
 ```
 
 **SQL Server**
 
 ```sql
-CREATE LOGIN RS_AGENTE WITH PASSWORD = '<password>';
-CREATE USER  RS_AGENTE FOR LOGIN RS_AGENTE;
--- Sin db_owner, sin db_datareader global.
-DENY UNMASK TO RS_AGENTE;   -- necesario para que el enmascarado del paso 2 aplique
+-- Comprobación previa: que no pertenezca a db_owner. Si perteneciera, conserva
+-- UNMASK y ningún enmascarado le aplica.
+SELECT r.name AS rol
+  FROM sys.database_role_members m
+  JOIN sys.database_principals  r ON r.principal_id   = m.role_principal_id
+  JOIN sys.database_principals  u ON u.principal_id   = m.member_principal_id
+ WHERE u.name = '<USUARIO_CONSULTA>';
+-- ALTER ROLE db_owner DROP MEMBER <USUARIO_CONSULTA>;   -- solo si figura
+
+DENY UNMASK TO <USUARIO_CONSULTA>;   -- necesario para que la Opción B aplique
+
+-- Con la Opción A (vistas redactadas):
+REVOKE SELECT ON dbo.RDEUDORES   FROM <USUARIO_CONSULTA>;
+GRANT  SELECT ON dbo.V_RDEUDORES TO   <USUARIO_CONSULTA>;
 ```
 
+**Si el usuario resultase estar compartido (pregunta previa del §3), este paso cambia:** entonces sí hay
+que crear un usuario dedicado por entorno, sin privilegios administrativos y sin
+`SELECT` directo sobre las tablas con datos personales (`CREATE USER` + `GRANT CREATE
+SESSION` en Oracle; `CREATE LOGIN`/`CREATE USER` sin `db_owner` ni `db_datareader` en
+SQL Server), y entregar su credencial a Desarrollo para reapuntar el plugin. Un usuario
+dedicado sigue siendo la respuesta correcta en ese escenario, y también si se prefiere
+poder auditar por separado el acceso de las herramientas.
+
 - **Coste de licencia:** ninguno.
-- **Esfuerzo:** menos de una jornada.
+- **Esfuerzo:** menos de media jornada si el usuario es exclusivo de Desarrollo; menos
+  de una jornada si hay que crear uno dedicado.
 - **Efecto por sí solo:** ninguno hasta completar el paso 2, pero **sin este paso
   ninguna otra medida es efectiva**.
+- **Orden:** con la Opción A conviene ejecutar el `REVOKE` y el `GRANT` en la misma
+  ventana. Revocar antes de que existan las vistas deja las herramientas sin acceso a
+  esas tablas —un estado seguro, pero inoperante.
 
 ### 3.2 Paso 2 — Redacción en el motor
 
@@ -129,7 +244,7 @@ Todas ellas requieren previamente el paso 3.1. La comparativa resumida está en 
 
 Se crea una vista por cada tabla con datos personales. La vista devuelve las columnas
 no sensibles tal cual y sustituye las sensibles por un valor sin capacidad
-identificativa. El usuario `RS_AGENTE` recibe permiso **solo sobre la vista**.
+identificativa. El usuario de consulta recibe permiso **solo sobre la vista**.
 
 ```sql
 CREATE OR REPLACE VIEW V_RDEUDORES AS
@@ -144,7 +259,7 @@ SELECT
     CAST(NULL AS VARCHAR2(200))       AS DIRECCION   -- suprimida
 FROM RDEUDORES;
 
-GRANT SELECT ON V_RDEUDORES TO RS_AGENTE;
+GRANT SELECT ON V_RDEUDORES TO <USUARIO_CONSULTA>;
 ```
 
 `STANDARD_HASH` está disponible en Oracle 12c y superiores sin opciones adicionales.
@@ -228,7 +343,7 @@ BEGIN
     policy_name   => 'RED_DEUDORES',
     function_type => DBMS_REDACT.PARTIAL,
     function_parameters => 'VVVVVVVVV,VVVVVVVVV,*,1,5',
-    expression    => 'SYS_CONTEXT(''USERENV'',''SESSION_USER'') = ''RS_AGENTE''');
+    expression    => 'SYS_CONTEXT(''USERENV'',''SESSION_USER'') = ''<USUARIO_CONSULTA>''');
 END;
 /
 ```
@@ -238,7 +353,7 @@ END;
 - **Ventaja:** es la opción más completa y la de menor esfuerzo de implantación y
   mantenimiento; no requiere vistas ni cambios en la aplicación; el redactado se
   aplica por expresión, de modo que la misma tabla puede verse íntegra por la
-  aplicación de producción y redactada por `RS_AGENTE`.
+  aplicación de producción y redactada por el usuario de consulta.
 - **Inconveniente:** coste de licencia. Los usuarios con `EXEMPT REDACTION POLICY` la eluden.
 - **Nota:** Advanced Security incluye también TDE. Si ya está contratada por ese
   motivo, Data Redaction está disponible sin coste incremental — **conviene verificarlo
@@ -247,7 +362,7 @@ END;
 #### Opción E — SQL Server Always Encrypted (sin coste, alto impacto en la aplicación)
 
 Cifra la columna de extremo a extremo; la clave reside en el cliente y el motor nunca
-ve el valor en claro. Un cliente sin la clave —como sería `RS_AGENTE`— recibe solo
+ve el valor en claro. Un cliente sin la clave —como sería el usuario de consulta— recibe solo
 texto cifrado.
 
 - **Requisito:** SQL Server 2016 SP1 o superior, **todas las ediciones**. Sin coste.
@@ -287,18 +402,22 @@ Conviene descartarlo explícitamente para evitar una conclusión errónea frecue
 
 | Opción | Motor | Edición mínima | Licencia adicional | Esfuerzo DBA | Impacto en la aplicación | Correlación de filas |
 |---|---|---|---|---|---|---|
-| **A** Vistas redactadas | Oracle y SQL Server | Cualquiera | No | 3-4 jornadas | Ninguno (solo `RS_AGENTE`) | Sí |
+| **A** Vistas redactadas | Oracle y SQL Server | Cualquiera | No | 3-4 jornadas | Ninguno (solo el usuario de consulta) | Sí |
 | **B** Dynamic Data Masking | SQL Server | 2016 SP1, cualquiera | No | 1-2 jornadas | Ninguno | No |
 | **C** VPD column-masking | Oracle | **Enterprise** | No, incluida en EE | 2-3 jornadas | Ninguno | No |
 | **D** Data Redaction | Oracle | **Enterprise** | **Sí — Advanced Security** | 1-2 jornadas | Ninguno | Configurable |
 | **E** Always Encrypted | SQL Server | 2016 SP1, cualquiera | No | 5+ jornadas | **Alto — requiere cambios** | Solo determinista |
 | **F** Producto de terceros | Ambos | — | **Sí — según producto** | Proyecto | Variable | Sí |
 
-Todas las opciones exigen el paso 3.1 (usuario dedicado). Sin él, ninguna es efectiva.
+Todas las opciones exigen el paso 3.1 (reapuntar los permisos del usuario de consulta,
+o crear uno dedicado si el actual está compartido). Sin él, ninguna es efectiva.
 
 ### 3.4 Paso 3 — Registro de acceso (recomendado, no bloqueante)
 
-Auditoría de las conexiones de `RS_AGENTE` para poder acreditar qué se consultó y cuándo.
+Auditoría de las conexiones del usuario de consulta para poder acreditar qué se
+consultó y cuándo. Si ese usuario está compartido con otros consumidores (pregunta previa del §3), la
+auditoría no distingue quién hizo cada consulta: es un argumento adicional a favor de
+un usuario dedicado.
 
 | Vía | Motor | Licencia |
 |---|---|---|
@@ -318,18 +437,21 @@ disponible por TDE u otro motivo— y del presupuesto.
 
 | # | Acción | Responsable | Licencia | Esfuerzo |
 |---|---|---|---|---|
-| 1 | Crear usuario `RS_AGENTE` de solo lectura por entorno | Sistemas | Ninguna | < 1 jornada |
-| 2 | Denegar acceso directo a tablas con datos personales | Sistemas | Ninguna | incluido en 1 |
+| 1 | **Responder la pregunta previa del §3**: ¿el usuario de consulta es exclusivo de las herramientas de desarrollo? Y confirmar, entorno por entorno, que la conexión no es la del propietario del esquema (§2.4) | **Sistemas** | Ninguna | Consulta, no desarrollo |
+| 2 | Reapuntar los permisos de ese usuario: quitarle el camino directo a las tablas con datos personales y dejarle solo el del mecanismo elegido (§3.1). Si el usuario está compartido, crear antes uno dedicado | Sistemas | Ninguna | < 1/2 jornada (< 1 jornada si hay que crear usuario) |
 | 3 | **Decidir opción de redacción** entre A-F | **Sistemas** | según opción | — |
 | 4 | Implantar la opción elegida | Sistemas | según opción | 1-5 jornadas |
-| 5 | Entregar credencial de `RS_AGENTE` a Desarrollo | Sistemas | — | — |
-| 6 | Activar registro de acceso de `RS_AGENTE` | Sistemas | Ninguna (§3.4) | 1 jornada |
+| 5 | Confirmar a Desarrollo que la credencial en uso es la definitiva, o entregar la nueva si se ha creado un usuario dedicado | Sistemas | — | — |
+| 6 | Activar registro de acceso del usuario de consulta | Sistemas | Ninguna (§3.4) | 1 jornada |
 | 7 | Entregar el inventario de columnas con datos personales | **Desarrollo** | — | ver §6 |
 
-Los puntos 1 y 2 **no dependen de la decisión del punto 3** y pueden ejecutarse de
-inmediato. El punto 7 lo aporta Desarrollo: la medida provisional descrita en §4
-genera ese inventario como subproducto, de modo que Sistemas no parte de cero y
-trabaja sobre un alcance cerrado.
+El punto 1 **no depende de ninguna decisión pendiente** y puede resolverse de inmediato:
+es una consulta al alta de credenciales, no un desarrollo. El punto 2 depende
+parcialmente del punto 3 —qué se revoca y qué se concede lo determina el mecanismo
+elegido—, salvo la creación del usuario dedicado, que si procede puede acometerse ya. El
+punto 7 lo aporta Desarrollo: la medida provisional descrita en §4 genera ese inventario
+como subproducto, de modo que Sistemas no parte de cero y trabaja sobre un alcance
+cerrado.
 
 ---
 
@@ -569,16 +691,17 @@ trabaje sobre un alcance cerrado y no sobre una estimación.
 | 1 | Implantar la medida provisional en modo `audit` | Desarrollo | — |
 | 2 | Generar el inventario de §6 | Desarrollo | Fase 1 |
 | 3 | Activar modo `enforce` | Desarrollo | Fase 2 |
-| 4 | Crear usuario `RS_AGENTE` y denegar acceso directo | Sistemas | — |
+| 4 | **Responder la pregunta previa del §3** y confirmar por entorno que la conexión no es la del propietario (§2.4) | Sistemas | — |
 | 5 | **Decidir la opción de redacción** (§3.2) | Sistemas | — |
-| 6 | Implantar la opción elegida | Sistemas | Fases 2, 4 y 5 |
-| 7 | Repuntar el plugin a la credencial `RS_AGENTE` | Desarrollo | Fase 6 |
+| 6 | Implantar la opción elegida y reapuntar los permisos del usuario de consulta (§3.1) | Sistemas | Fases 2, 4 y 5 |
+| 7 | Reapuntar el plugin a la credencial definitiva, solo si la fase 4 obliga a crear un usuario dedicado | Desarrollo | Fase 6 |
 | 8 | Reducir la medida provisional a segunda capa | Desarrollo | Fase 7 |
 
 Las fases 1-3 (Desarrollo) y las fases 4-5 (Sistemas) son independientes y pueden
 avanzar en paralelo. La fase 4 no depende de la decisión de la fase 5 y **puede
-iniciarse de inmediato**: es la de mayor efecto por unidad de esfuerzo, porque sin
-ella ninguna de las opciones de §3.2 es efectiva.
+resolverse de inmediato**: es la de mayor efecto por unidad de esfuerzo, porque
+determina si el reapuntado de permisos del §3.1 basta o hay que crear antes un usuario
+dedicado, y sin ese paso ninguna de las opciones de §3.2 es efectiva.
 
 ---
 
@@ -588,23 +711,32 @@ La medida provisional reduce la exposición de forma sustancial y es lo mejor
 disponible sin intervención en base de datos, pero **actúa después de que el dato
 haya salido del motor** y es evitable por varias vías documentadas en §5.2.
 
-El control efectivo consta de dos piezas: un **usuario de solo lectura sin acceso
-directo** a las tablas con datos personales (§3.1) y un **mecanismo de redacción en el
-motor** (§3.2). Existen seis opciones para la segunda pieza, con y sin coste de
-licencia, comparadas en §3.3. Desarrollo las expone todas y **no recomienda ninguna**:
-la elección depende de las licencias contratadas y del presupuesto, información que
-Desarrollo no posee.
+El control efectivo consta de dos piezas: un **usuario de conexión que no pueda llegar
+a la columna original** de las tablas con datos personales (§3.1) y un **mecanismo de
+redacción en el motor** (§3.2). La primera pieza está a medio camino: en B2Impact la
+conexión ya usa un usuario de consulta que no es el propietario del esquema, de modo
+que basta con reapuntar sus permisos en lugar de crear uno nuevo. Lo que sigue faltando
+es que ese usuario **pierda el `SELECT` directo**: ser de solo lectura no impide
+devolver un DNI en claro. Para la segunda pieza existen seis opciones, con y sin coste
+de licencia, comparadas en §3.3. Desarrollo las expone todas y **no recomienda
+ninguna**: la elección depende de las licencias contratadas y del presupuesto,
+información que Desarrollo no posee.
 
 Se solicita a Sistemas:
 
-1. **Ejecutar de inmediato** la creación del usuario dedicado y la denegación de acceso
-   directo (§3.1). No depende de ninguna decisión pendiente, cuesta menos de una jornada
-   y sin ello ninguna otra medida es efectiva.
-2. **Decidir la opción de redacción** entre las seis de §3.2, verificando previamente si
+1. **Responder de inmediato la pregunta previa del §3** —si el usuario de consulta lo usa
+   algo más que las herramientas de desarrollo— y confirmar, entorno por entorno, lo
+   que §2.4 solo ha podido verificar en B2Impact. No depende de ninguna decisión
+   pendiente, no consume jornadas de desarrollo y determina si el §3.1 se resuelve
+   reapuntando permisos o exige crear un usuario dedicado.
+2. **Reapuntar los permisos** de ese usuario según el §3.1, de modo que pierda el acceso
+   directo a las tablas con datos personales. Menos de media jornada si el usuario es
+   exclusivo de Desarrollo; sin ello ninguna otra medida es efectiva.
+3. **Decidir la opción de redacción** entre las seis de §3.2, verificando previamente si
    ya se dispone de Oracle Enterprise Edition y de la opción Advanced Security —en cuyo
    caso la opción D estaría disponible sin coste incremental.
-3. **Fijar una fecha objetivo** para la implantación, que Desarrollo necesita para
+4. **Fijar una fecha objetivo** para la implantación, que Desarrollo necesita para
    dimensionar hasta cuándo debe sostenerse la medida provisional.
 
 Desarrollo se compromete a entregar el inventario cerrado de columnas afectadas (§6)
-antes de que Sistemas inicie el trabajo del punto 2.
+antes de que Sistemas inicie el trabajo del punto 3.
