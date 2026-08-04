@@ -31,6 +31,7 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
   - [11. Entregas a cliente: instalador y actualizador](#11-entregas-a-cliente-instalador-y-actualizador)
   - [12. Jira](#12-jira)
   - [13. Mantis](#13-mantis)
+- [Protección de datos personales en consultas a BD](#protección-de-datos-personales-en-consultas-a-bd)
 - [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
 - [Reglas clave](#reglas-clave)
 - [Requisitos y resolución de problemas](#requisitos-y-resolución-de-problemas)
@@ -314,6 +315,71 @@ Instalación en el servidor del cliente (ambos paquetes):
 > **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
 >
 > **Nota de rate**: la instancia devuelve HTTP 500 ante `PATCH` rápidos seguidos al mismo issue; `mantis-cli.ps1` intercala ~800ms + retry con backoff en `advance`/`create`/`assign` (ver `references/mantis.md`).
+
+---
+
+## Protección de datos personales en consultas a BD
+
+Los agentes consultan la BD con `db_query` (solo `SELECT`, nunca escritura). Hasta la 3.0.0 el resultado íntegro entraba en el contexto de la conversación —y de ahí a un proveedor externo— sin ningún filtro: nombres, DNI, teléfonos, cuentas y direcciones de personas en gestión de cobro. Ahora esos valores se sustituyen, **antes de salir de la herramienta**, por un seudónimo determinista (HMAC-SHA256 con una clave que vive en tu perfil local, fuera del repositorio):
+
+```
+IDDEUDOR | NOMBRE           | DNI              | SALDO
+---------+------------------+------------------+--------
+1024     | pii:3f9a2c1b7e04 | pii:7e04dd5111a6 | 1250.00
+1025     | pii:c8b17ff2a390 | pii:11a6b930c8b1 |  340.50
+1026     | pii:3f9a2c1b7e04 | pii:7e04dd5111a6 |  980.00   <- misma persona: sigue siendo detectable
+```
+
+**Arranca apagada: si no haces nada, no cambia nada.** El modo por defecto es `off` mientras `BD\<proyecto>-model.json` no declare otra cosa, así que un workspace que actualiza sigue viendo exactamente los mismos resultados que antes. Nada se activa solo.
+
+Dos cosas sí aplican siempre, también con el modo en `off`, porque no dependen de la política del workspace: `executions/history.json` se sanea al escribirlo (un DNI/NIE, IBAN o correo en la descripción de una tarea se guarda como `[PII]`), y las guardas `PreToolUse` —**si** están registradas— bloquean `sqlplus`/`sqlcmd` directos y la escritura de datos personales en ficheros. Ninguna de las dos cambia lo que devuelve una consulta.
+
+### Los tres modos
+
+| Modo | Qué hace |
+|------|----------|
+| `off` (por defecto) | Nada se evalúa, los datos salen en claro. Cada respuesta lo indica con `pii.mode = "off"`. **No protege.** |
+| `audit` | Evalúa cada columna e informa de qué se **habría** enmascarado (`pii.masked`, `pii.suspect`, `pii.predicate_warning`). ⚠️ **No protege: los datos siguen saliendo en claro.** Quien activa `audit` no puede reportar que ha activado la protección. |
+| `enforce` | Enmascarado real. `pii_policy.transform`: `hash` (seudónimo, por defecto — permite correlacionar filas) o `suppress` (literal `[PII]`, sin correlación). |
+
+Qué se considera dato personal, por precedencia: la marca `"pii"`/`"safe"` de la columna → el patrón del nombre (`TELEFON*`, `DNI*`, `*IBAN*`…) → tabla paramétrica → tipo (numérico, fecha, PK y FK salen en claro) → por defecto, el texto se enmascara. Detalle y ajustes del bloque `pii_policy` → `references/json-schema.md`.
+
+### Cómo activarla, en orden
+
+Todo lo que escribe pide **confirmación explícita**, en cualquier dirección (también al volver a `off`).
+
+1. **`/rs-pii status`** — modo actual, si las guardas están registradas y qué columnas salen hoy en claro. Solo lectura.
+2. **`/rs-pii bootstrap`** — muestrea la BD y escribe `docs/inventario-pii.md` (tabla, columna, categoría, tratamiento propuesto). No toca el modelo y **nunca reproduce un valor muestreado**. Es requisito de `enforce`, y ⛔ no se ejecuta con `enforce` ya activo: los valores llegarían enmascarados y el inventario saldría vacío o falso.
+3. **`/rs-pii audit`** — mide sin proteger. Aquí es donde se revisan `pii.masked` y `pii.suspect` en el trabajo diario y se corrigen las clasificaciones equivocadas, antes de que empiecen a molestar.
+4. **`/rs-pii enforce`** — comprueba el inventario, registra las dos guardas `PreToolUse` en tu `~/.claude/settings.json` (configuración **personal**, fuera del repo, afecta a todas tus sesiones de Claude Code), verifica el registro y **solo entonces** escribe el modo. Si el registro falla, no conmuta.
+5. **Reiniciar Claude Code.**
+
+> ⚠️ **El paso 5 no es opcional.** Claude Code lee la configuración de hooks al arrancar: las guardas registradas en una sesión **no están vivas en esa sesión**. Hasta que reinicies, `enforce` solo enmascara lo que pasa por `db_query` — el bypass por `Bash` (`sqlplus`/`sqlcmd` directos) y por `Write`/`Edit` sigue abierto. `/rs-pii status` dice si están registradas, pero eso describe el fichero, no la sesión en curso.
+
+`/rs-pii off` vuelve atrás. **No** desregistra las guardas: son configuración personal, posiblemente compartida con otros workspaces, y siguen bloqueando `sqlplus`/`sqlcmd` y la escritura de PII con o sin `enforce`.
+
+### Corregir una columna mal clasificada
+
+La clasificación va por nombre, tipo y tabla — no adivina. Las dos direcciones se corrigen en el modelo BD (`references/json-schema.md` → "Política PII"):
+
+- **Sale en claro y sí es dato personal** → `"pii": true` en la columna. Si el caso es sistemático, un patrón en `pii_policy.patterns_add`.
+- **Sale enmascarada y no lo es** → `"safe": true` en la columna. Si sobra el patrón de nombre para todo el workspace, `pii_policy.patterns_remove`.
+- **Sigue enmascarada pese a `"safe": true`** → son sus **valores** los que tienen forma de dato personal (DNI, NIE, IBAN, correo, teléfono, tarjeta). Es la red de seguridad, y **no se puede desactivar**: no existe una marca de "en claro pase lo que pase". Comprobar el contenido real antes de darlo por falso positivo → `references/troubleshooting.md`.
+
+⛔ El remedio de un enmascarado que molesta nunca es rodear el filtro.
+
+### Qué NO protege
+
+Resumen de `docs/proteccion-pii-consultas-bd.md` §5. Esta medida es **provisional**: el control definitivo (usuario de BD de solo lectura + redacción en el propio motor) está pedido a Sistemas en ese mismo documento.
+
+- **El dato sale de la base de datos.** El motor sigue emitiendo el valor en claro y el filtro actúa después. Cualquier fallo, error de configuración o ruta no prevista lo expone. El control en BD no tiene esta propiedad.
+- **Es evitable.** El bloqueo de `sqlplus`/`sqlcmd` es un **guardarraíl frente al descuido, no una frontera de seguridad**: se elude con un script intermedio o invocando el binario por otra vía.
+- **Un `WHERE` sigue infiriendo el valor.** `SELECT COUNT(*) ... WHERE DNI LIKE '1234%'` devuelve un número, que sale en claro por diseño; repitiendo la consulta se reconstruye el dato sin haber visto un solo valor enmascarado. La medida **avisa** (`pii.predicate_warning`), no bloquea — bloquear rompería el filtrado legítimo.
+- **Un seudónimo sigue siendo dato personal.** Art. 4(5) RGPD: la seudonimización reduce el riesgo, no saca el dato del ámbito de la norma. `pii:3f9a2c1b7e04` se sigue transfiriendo al proveedor externo. Si el requisito es que el dato personal **no salga en claro**, esto lo cumple; si es que **no salga**, no lo cumple.
+- **Depende de configuración local no versionada.** Las guardas viven en la configuración personal de cada desarrollador y no viajan con el repositorio: un equipo nuevo sin configurar queda desprotegido. `/rs-pii status` lo dice (`guards_missing`), pero sigue siendo una dependencia de puesto de trabajo.
+- **La vía de respaldo puede devolver datos sin filtrar.** Si `db_query` cae al hook y ahí el filtro **no se puede ni ejecutar** (falta Python o el fichero del filtro en el puesto), la consulta devuelve los datos sin enmascarar y lo señala en la respuesta. Es deliberado: dejar sin servicio la consulta empuja al cliente de BD directo, que no pasa por ningún filtro. Si el filtro sí corre y falla, no se devuelve ninguna fila.
+- **Una columna marcada `"safe"` por error no se detecta** salvo que sus valores tengan forma reconocible — nombres, apellidos y direcciones no la tienen. Solo lo ve la revisión del cambio en el control de versiones.
+- **Fuera del filtro**: los ficheros que generan el instalador y el actualizador, la exportación del modelo y los informes HTML. Se entregan al cliente por diseño y pueden contener datos reales; su control es organizativo.
 
 ---
 
