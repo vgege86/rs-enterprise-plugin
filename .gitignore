@@ -24,3 +24,6 @@ __pycache__/
 
 # Workspaces temporales de pruebas
 .tmp-ws/
+
+# Manuales Word generados (se regeneran desde README + procedimientos)
+docs/*.docx
