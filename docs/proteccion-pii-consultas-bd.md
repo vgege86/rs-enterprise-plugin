@@ -345,11 +345,11 @@ antes de convertirlo a texto. El valor se sustituye por un pseudónimo determini
 (HMAC-SHA256 con clave local, truncado):
 
 ```
-IDDEUDOR | NOMBRE        | DNI           | SALDO
----------+---------------+---------------+--------
-1024     | pii:3f9a2c1b  | pii:7e04dd51  | 1250.00
-1025     | pii:c8b17ff2  | pii:11a6b930  |  340.50
-1026     | pii:3f9a2c1b  | pii:7e04dd51  |  980.00   <- misma persona, detectable
+IDDEUDOR | NOMBRE            | DNI               | SALDO
+---------+-------------------+-------------------+--------
+1024     | pii:3f9a2c1b40de  | pii:7e04dd51a6c2  | 1250.00
+1025     | pii:c8b17ff29b31  | pii:11a6b930f4e8  |  340.50
+1026     | pii:3f9a2c1b40de  | pii:7e04dd51a6c2  |  980.00   <- misma persona, detectable
 ```
 
 La clave reside en el perfil local del desarrollador, fuera del repositorio.
@@ -496,7 +496,7 @@ que el aviso deja constancia pero no impide la reconstrucción descrita arriba.
 
 **d) El pseudónimo sigue siendo dato personal.** Conforme al art. 4(5) del RGPD, la
 seudonimización **reduce** el riesgo pero no excluye el dato del ámbito de la norma.
-`pii:3f9a2c1b` continúa siendo dato personal y continúa transfiriéndose al proveedor
+`pii:3f9a2c1b40de` continúa siendo dato personal y continúa transfiriéndose al proveedor
 externo. Si el requisito es que el dato personal **no salga en claro**, la medida lo
 cumple. Si el requisito es que **no salga**, no lo cumple: eso exige supresión total
 o el control en BD.
@@ -506,6 +506,12 @@ en la configuración personal de Claude Code de cada desarrollador, que no viaja
 repositorio. Un equipo nuevo sin configurar queda desprotegido. Se mitiga con una
 verificación de entorno que falla si no están registradas, pero sigue siendo una
 dependencia de puesto de trabajo.
+
+Con un matiz adicional: la herramienta lee esa configuración **al arrancar la sesión**, de
+modo que una guarda registrada a mitad de sesión no entra en vigor hasta reiniciarla. En esa
+ventana la verificación informa de que están registradas —lo están, en el fichero— mientras
+los bypass siguen abiertos. Por eso el procedimiento de activación exige reiniciar antes de
+dar la protección por efectiva.
 
 **f) Una columna marcada como segura por error no se detecta.** Nombres, apellidos y
 direcciones no tienen patrón reconocible. Si alguien los declara seguros, ninguna

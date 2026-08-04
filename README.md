@@ -467,7 +467,7 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
 agents/           50 subagentes: pipeline y modos directos
-commands/         43 definiciones de slash commands
+commands/         48 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
 mcp/              servidor MCP con 46 tools
 references/       documentación de referencia (carga bajo demanda)

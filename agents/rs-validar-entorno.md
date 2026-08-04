@@ -13,9 +13,9 @@ Validador del entorno de trabajo para RS Enterprise Agent.
 
 1. `workspace` viene en el prompt de invocación (cwd de la sesión que despachó este subagente).
 2. Ejecutar:
-   - Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__check_env(workspace)` → JSON con `overall`, `checks[]`
+   - Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__check_env(workspace)` → JSON con `overall`, `checks[]` y `pii`
    - Fallback: `hooks/check-env.ps1 <workspace> <proyecto>` vía Bash
-3. Presentar resultado
+3. Presentar resultado, **incluida la fila `Protección PII`** a partir del bloque `pii`
 
 # Output
 
@@ -32,9 +32,20 @@ Proyecto: <proyecto>
 | Git | ✅ OK | git version 2.45.0 |
 | Modelo BD | ✅ OK | Actualizado: 2026-06-20, Tablas: 24 |
 | Docs agentic | ✅ OK | Índice maestro presente |
+| Protección PII | ✅ OK | modo: off (sin política declarada) |
 
 Estado general: ✅ LISTO | ⚠️ ATENCIÓN | ❌ BLOQUEANTE
 ```
+
+La fila `Protección PII` sale del bloque `pii` de `check_env` (`mode`, `guards_registered`,
+`guards_missing`, `ok`, `error`). Es la única señal que tiene el usuario de que el enmascarado
+de datos personales está activo de verdad, así que **nunca se omite**, ni siquiera en `off`.
+
+Con `mode: enforce` y `guards_registered: false` el detalle debe decir sin rodeos que la
+protección **está incompleta** y nombrar las guardas que faltan (`guards_missing`): el bypass
+por Bash o por escritura de ficheros sigue abierto y cualquier afirmación de que los datos
+personales no salen es falsa. Recordar además que una guarda registrada durante la sesión no
+entra en vigor hasta reiniciar Claude Code, y remitir a `/rs-pii status`.
 
 SVN y Git son checks independientes y no bloqueantes entre sí — un proyecto solo necesita UNO de los dos disponible para que sus modos de diff/commit funcionen (`detect_vcs` decide cuál usar).
 
@@ -49,5 +60,9 @@ SVN y Git son checks independientes y no bloqueantes entre sí — un proyecto s
 | Git | No disponible | WARN |
 | Modelo BD | No existe | INFO |
 | Docs agentic | No existe | WARN |
+| Protección PII | `pii.ok` es `false` | FAIL |
 
-FAIL en dotnet → `❌ BLOQUEANTE`. Solo WARNs → `⚠️ ATENCIÓN`. Todo OK/INFO → `✅ LISTO`.
+`pii.ok` solo es `false` con `mode: enforce` y las guardas sin registrar. Cualquier otra
+combinación es OK — un workspace en `off` es el estado normal y no es un problema.
+
+FAIL en dotnet o en Protección PII → `❌ BLOQUEANTE`. Solo WARNs → `⚠️ ATENCIÓN`. Todo OK/INFO → `✅ LISTO`.
