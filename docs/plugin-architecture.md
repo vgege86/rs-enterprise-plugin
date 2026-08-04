@@ -172,7 +172,17 @@ SVN/Git vía `detect_vcs`), `rs-migracion-motor`, `rs-idiomas-standalone`, `rs-c
 `rs-stats`, `rs-validar-req`, `rs-instalador`, `rs-review`, `rs-perf`, `rs-deshacer` (los tres
 autodetectan SVN/Git vía `detect_vcs`), `rs-init`, `rs-release-notes`, `rs-cobertura`, `rs-dead-code`,
 `rs-rename`, `rs-seed`, `rs-comparar-entornos`, `rs-hotspots`, `rs-dashboard`, `rs-explicar`,
-`rs-doc-drift`, `rs-test`, `rs-format`, `rs-runbook`, `rs-actualizador`.
+`rs-doc-drift`, `rs-test`, `rs-format`, `rs-runbook`, `rs-actualizador`, `rs-word`.
+
+`rs-word` (v3.2.0, haiku) cierra el ciclo documental: convierte `.md` del `agentic_manual` a un
+`.docx` sobre la plantilla corporativa `.dotx` **del workspace del cliente** (nunca versionada en el
+plugin — es material de marca). Cuarto miembro de la familia `render_*` (`render_erd`,
+`render_dashboard`, `render_help`): hook + tool, genera fichero y **no** carga el contenido en
+contexto. Depende de **Microsoft Word por COM** y no tiene fallback (el plugin no lleva pandoc ni
+python-docx), por lo que `check-env.ps1` lo reporta como check informativo. Los estilos se resuelven
+por **ID built-in** (`wdStyleHeading1 = -2`...), no por nombre local, para no romper con Word en otro
+idioma. `rs-runbook` lo ofrece como paso final opcional tras persistir el runbook (`strip_marks`
+retira las marcas `✅`/`👤`, que solo tienen sentido en el `.md`).
 
 `rs-runbook` (v2.27.0, sonnet) es el único modo directo que **entrevista al usuario** como parte de
 su proceso: documenta procedimientos de operación, cuyo conocimiento (reglas de la operación,
@@ -288,7 +298,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**46 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**47 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -338,7 +348,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD |
-| `references/mcp.md` | Catálogo completo de las 46 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 47 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |

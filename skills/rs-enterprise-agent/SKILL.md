@@ -181,6 +181,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
 | Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde history.json y lo abre; versión visual de /rs-stats) |
 | Guía de usuario ⚡ | `/rs-help`, "guía del plugin", "manual de usuario", "cómo se usa el plugin" | `rs-help` (renderiza el README a un HTML navegable con formato y lo abre; no carga el HTML en contexto) |
+| Documentación a Word ⚡ | `/rs-word`, "pasa la documentación a Word", "genera el Word de los runbooks", "documento con la plantilla" | `rs-word` (convierte `.md` del agentic_manual a `.docx` sobre la plantilla `.dotx` del workspace; **requiere Microsoft Word**, sin fallback) |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |
 | Notas de versión 🔷 | `/rs-release-notes`, "genera notas de versión", "changelog funcional de X" | `detect_vcs` → `rs-release-notes` (agrupa commits SVN/Git en notas funcionales) |
 | Seguridad 🟣 | `/rs-security`, "revisa seguridad de X.sln" | `rs-seguridad` |

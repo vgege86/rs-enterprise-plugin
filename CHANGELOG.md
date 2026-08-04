@@ -1,5 +1,60 @@
 # RS Enterprise Agent — Changelog
 
+## 3.2.0 — 2026-08-04
+
+### `/rs-word`: la documentación del `agentic_manual` sale a Word con la plantilla del cliente
+
+El manual agentic vive en Markdown, pero lo que se entrega a operación y a negocio es un documento
+formal con la plantilla corporativa. Ese paso se hacía a mano. Ahora es una tool.
+
+**`hooks/render-word.ps1`** (nuevo) convierte uno o varios `.md` a un `.docx` sobre una plantilla
+`.dotx` **del workspace del cliente** — ⛔ la plantilla no se versiona en el plugin: es material de
+marca. Si no se pasa `-Template`, autodetecta el primer `*.dotx` de `<workspace>\docs`.
+
+Sobre la plantilla hace: portada (`-Title`/`-Objeto`), historial de cambios (`-Autor`/`-Version`),
+borrado del contenido de ejemplo y actualización del índice. Cada `.md` es un capítulo; su `#` pasa
+a Título 1 y el resto de niveles baja en consecuencia. Convierte tablas Markdown a tablas Word con
+cabecera repetida entre páginas, bloques ` ``` ` a párrafos monoespaciados, y `**negrita**` /
+`` `código` `` a formato real (Find con comodines, patrón `[!x]@` para no comerse varias ocurrencias
+de la misma línea).
+
+Cuatro cosas que costaron un fallo real y quedan fijadas en el código:
+
+- `Documents.Add(tpl, $false, 0, $true)` — el 4.º argumento (Visible del **documento**) debe ser
+  `$true`. Con `$false` no hay ventana de documento, `$word.Selection` es `null` y no se puede
+  escribir una línea. La aplicación sigue oculta por `$word.Visible = $false`.
+- Si la plantilla ya trae un campo `TOC`, sus párrafos son **resultado de campo**: rango de solo
+  lectura. Borrarlos o insertar otro TOC da "No se puede modificar el rango". Solo se hace
+  `TablesOfContents.Item(1).Update()` al final.
+- Los estilos se resuelven por **ID built-in** (`wdStyleHeading1 = -2`, `Title = -63`,
+  `Subtitle = -75`), no por nombre local: con nombres en español el hook se rompe contra una
+  instalación de Word en otro idioma. La portada también se localiza por estilo, no por el texto
+  literal del placeholder.
+- El `.ps1` va en **UTF-8 con BOM**, como `check-env.ps1`/`db-query.ps1`. Sin BOM, Windows
+  PowerShell 5.1 lo lee como ANSI y los acentos dentro de literales lo tumban en tiempo de parseo.
+
+**Tool `render_word`** en `mcp/rs-workspace-server.py` (46 → **47 tools**), fallback 1:1 del hook,
+junto a `render_erd`/`render_dashboard`/`render_help`: devuelve `{path, pages, tables, warnings}` y
+**no** carga el documento en contexto.
+
+**Modo directo `/rs-word`** (`agents/rs-word.md` + `commands/rs-word.md`, ⚡ haiku): resuelve qué
+`.md` entran y en qué orden — y **pregunta** en vez de convertir el manual entero por iniciativa
+propia.
+
+**`agents/rs-runbook.md`** gana una Fase 5 opcional: tras persistir el runbook, ofrece generarlo en
+Word con `strip_marks=true`, que retira las marcas de procedencia `✅`/`👤` (en celda de tabla que
+quede vacía escribe "Código"/"Operación", para no dejar huecos). El `.md` las conserva; el
+entregable no las necesita. Las secciones `PENDIENTE DE CONFIRMAR` **sí** se mantienen: un
+entregable que oculta sus huecos es peor que uno que los enseña. Se ofrece, no se ejecuta solo — el
+`.md` es el artefacto canónico y el Word envejece en cuanto el runbook cambia.
+
+**`hooks/check-env.ps1`** añade el check *Microsoft Word* (informativo): sin Word por COM la
+conversión no es posible y **no hay alternativa** — el plugin no usa pandoc ni python-docx.
+
+Limitación conocida y documentada en la cabecera del hook: el formateo inline se aplica con `Find`
+sobre todo el documento, así que un bloque de código con `**` o backticks sueltos puede verse
+reformateado.
+
 ## 3.1.0 — 2026-08-04
 
 ### Un modelo BD declarado y ausente ya no devuelve las filas en claro

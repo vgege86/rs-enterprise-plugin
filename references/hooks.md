@@ -84,6 +84,7 @@ Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `mode
 | `hooks/render-erd.ps1` | `<workspace> [-Proyecto <nombre>]` | Genera ERD HTML y lo abre en navegador → `{path, table_count}` |
 | `hooks/render-dashboard.ps1` | `<workspace>` | Genera dashboard HTML de estadísticas (executions/history.json) y lo abre → `{path, opened}`. Fallback 1:1 de `render_dashboard` |
 | `hooks/render-help.ps1` | `<workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y lo abre → `{path, opened}`. Fallback 1:1 de `render_help` |
+| `hooks/render-word.ps1` | `<workspace> -Sources <a.md;carpeta;...> [-Template <x.dotx>] [-Output <y.docx>] [-Title <t>] [-Objeto <o>] [-Autor <a>] [-Version <v>] [-StripMarks] [-Open]` | Convierte Markdown a Word `.docx` sobre una plantilla `.dotx` (Word COM) → `{path, pages, tables, sources, template, warnings}`. Fallback 1:1 de `render_word` |
 | `hooks/generate-sql.ps1` | `<workspace> [-Proyecto <nombre>] [-Motor ORACLE\|SQLSERVER]` | Genera DDL SQL → `C:\AIS\<proyecto-lowercase>\scripts\<proyecto>-ddl-<motor>.sql` |
 | `hooks/export-dmd.ps1` | `<workspace> [-Proyecto <nombre>]` | Exporta a Oracle Data Modeler `.dmd` |
 

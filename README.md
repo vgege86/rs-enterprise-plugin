@@ -3,11 +3,11 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **44 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
+2. **45 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.1.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.2.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -152,9 +152,9 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-44 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+45 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 47 comandos: los 44 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+> El catálogo de abajo lista 48 comandos: los 45 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
 
 ### 1. Pipeline principal
 
@@ -274,6 +274,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
 | `/rs-help` ⚡ | Renderiza **esta guía** (README) a un HTML navegable con formato (índice, tablas, tema claro/oscuro) y lo abre en el navegador. Ideal para pasar a usuarios. |
 | `/rs-cifrar` ⚡ | Cifra en reposo (DPAPI, cuenta de Windows) los secretos en texto plano: password de BD (`.rs-databases.json`) y tokens Jira/Mantis (`~/.claude`). Idempotente, no imprime secretos, retrocompatible (los valores sin cifrar siguen funcionando). |
+| `/rs-word <ficheros\|carpeta>` ⚡ | Convierte documentación Markdown del `agentic_manual` a un **Word `.docx`** sobre la plantilla corporativa `.dotx` del workspace (portada, historial de cambios, índice y estilos de la plantilla). Requiere Microsoft Word instalado. Ej: `/rs-word docs\agentic_manual\funcional\OPERACION` |
 
 ---
 
@@ -391,7 +392,7 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **46 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **47 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
@@ -468,10 +469,10 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .claude-plugin/   marketplace.json + plugin.json (manifiesto, versión, hooks)
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
-agents/           50 subagentes: pipeline y modos directos
-commands/         48 definiciones de slash commands
+agents/           51 subagentes: pipeline y modos directos
+commands/         49 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 46 tools
+mcp/              servidor MCP con 47 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

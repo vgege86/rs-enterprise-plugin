@@ -2,7 +2,7 @@
 name: rs-runbook
 description: Redacta el runbook operativo de un proceso de una solución uCollect/RS — procedimiento paso a paso, precondiciones, reglas de negocio críticas, verificación y errores conocidos. Usar para /rs-runbook. Extrae del código lo verificable y ENTREVISTA al usuario lo que no se deduce del código (reglas de operación, incidencias vividas); persiste a docs/agentic_manual/funcional/OPERACION/.
 model: sonnet
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__find_doc_section, Read, Write, Edit, Grep, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__find_doc_section, mcp__plugin_rs-enterprise-agent_rs-workspace__render_word, Read, Write, Edit, Grep, Glob
 ---
 
 # Rol
@@ -165,6 +165,24 @@ Tipo: Batch | Online | Manual · Proyecto AIS: <proyecto> · Motor BD: <motor>
 
 Secciones sin contenido real: dejarlas con `⚠️ PENDIENTE DE CONFIRMAR`, no rellenarlas de relleno
 plausible.
+
+# Fase 5 — Entregable Word (opcional, tras persistir el `.md`)
+
+El runbook lo consume operación, que a menudo lo quiere como documento formal. Una vez persistido
+el `.md`, **ofrecer** generar el Word sobre la plantilla corporativa del cliente:
+
+`mcp__plugin_rs-enterprise-agent_rs-workspace__render_word(workspace, sources=<ruta del .md>,
+strip_marks=true, title=..., objeto=...)`
+
+- `strip_marks=true` **siempre** aquí: retira las marcas ✅/👤 (en celda de tabla que quede vacía
+  escribe "Código"/"Operación"). El `.md` las conserva; el entregable no las necesita.
+- La plantilla `.dotx` se autodetecta en `<workspace>\docs`. ⛔ Nunca se copia al plugin.
+- Requiere Microsoft Word (COM). Si no está, decirlo tal cual: no hay fallback.
+- ⛔ **Ofrecer, no ejecutar por iniciativa propia**: el `.md` es el artefacto canónico; el Word es
+  una copia que envejece en cuanto el runbook cambia.
+
+Las secciones `PENDIENTE DE CONFIRMAR` **se mantienen** en el Word. Un entregable que oculta sus
+huecos es peor que uno que los enseña.
 
 # Output
 
