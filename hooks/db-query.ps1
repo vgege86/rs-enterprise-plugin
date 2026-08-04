@@ -290,7 +290,12 @@ EXIT;
 
         # UTF8 sin BOM a propósito: Set-Content -Encoding UTF8 (PS 5.1) antepone el BOM, sqlplus lo
         # lee como parte del primer comando y el primer SET falla con SP2-0734.
-        sqlplus -S "$sqlplusConn" "@$tempSql" > $tempOut 2>&1
+        # Out-File -Encoding UTF8 explicito en vez de "> $tempOut": el operador > usa el
+        # encoding por defecto de Out-File, que es UTF-16LE en Windows PowerShell 5.1 y
+        # UTF-8 en PowerShell 7. La lectura de abajo funcionaba en los dos por la
+        # deteccion de BOM de Get-Content, no porque coincidieran: el fichero por el que
+        # pasan TODAS las filas de la consulta no debe depender de eso.
+        sqlplus -S "$sqlplusConn" "@$tempSql" 2>&1 | Out-File -FilePath $tempOut -Encoding UTF8
         $exitCode = $LASTEXITCODE
         # @() en todas las colecciones: con una sola línea/columna PowerShell colapsa a escalar y
         # $lines[0] / $headers[$i] devuelven un [char], que ConvertTo-Json rechaza como clave.

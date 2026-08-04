@@ -232,3 +232,31 @@ def test_cli_modelo_corrupto_es_error_aunque_venga_del_convenio(tmp_path):
     proc = _ejecutar_cli([str(tmp_path), str(roto), "--convenio"], _ENTRADA)
     assert proc.returncode != 0
     assert proc.stdout == ""
+
+
+# --- Codificacion: PowerShell -> Python -> PowerShell sin perder un solo caracter ---
+
+# Vocales acentuadas y ene (dentro de cp1252) mas una letra griega (FUERA de cp1252, que
+# es lo que provocaba el UnicodeEncodeError). En escapes \u para que el valor no dependa
+# de como este guardado ESTE fichero.
+_VALOR_ACENTOS = "José Muñoz Ángel Ω"
+
+
+def test_la_salida_es_utf8_aunque_la_locale_del_proceso_no_lo_sea(tmp_path):
+    # La stdout de este CLI es un PIPE, no una consola, asi que Python la codificaba con el
+    # encoding por defecto de la plataforma: en un Windows con locale espanola, cp1252.
+    # hooks/db-query.ps1 la descodifica como UTF-8 ([Console]::OutputEncoding), asi que los
+    # acentos volvian destrozados; y un caracter fuera de cp1252 reventaba con
+    # UnicodeEncodeError, que sale por la rama de fallo interno -> consulta sin filas.
+    # PYTHONIOENCODING reproduce exactamente esa situacion de forma portable.
+    import os
+    modelo = tmp_path / "Proyecto-model.json"
+    modelo.write_text(json.dumps({"pii_policy": {"mode": "off"}}), encoding="utf-8")
+    entrada = json.dumps({"columns": ["NOMBRE"], "rows": [[_VALOR_ACENTOS]],
+                          "sql": "SELECT NOMBRE FROM RDEUDORES"}, ensure_ascii=False)
+
+    entorno = dict(os.environ, PYTHONIOENCODING="cp1252")
+    proc = _ejecutar_cli([str(tmp_path), str(modelo)], entrada, entorno)
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["rows"][0][0] == _VALOR_ACENTOS

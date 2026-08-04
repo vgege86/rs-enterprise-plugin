@@ -12,14 +12,21 @@
     Salida 2 = bloquear, 0 = permitir.
 #>
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+# Solo por Repair-RsTextoUtf8/Read-RsStdinUtf8: esta guarda no usa los patrones de forma.
+. (Join-Path $PSScriptRoot "lib-pii.ps1")
 
 try {
-    # Claude Code invoca el hook como proceso real con el JSON del evento por stdin real
-    # ([Console]::In). En un test Pester, "'json' | & script.ps1" no toca esa stream -- va
-    # por el pipeline de objetos de PowerShell ($input) dentro del mismo proceso. Se admite
-    # cualquiera de las dos vias para que el hook sea el mismo en produccion y en test.
-    $textoEvento = [string]::Join("`n", @($input))
-    if (-not $textoEvento) { $textoEvento = [Console]::In.ReadToEnd() }
+    # Claude Code invoca el hook como proceso real con el JSON del evento por stdin real.
+    # En un test Pester, "'json' | & script.ps1" no toca esa stream -- va por el pipeline de
+    # objetos de PowerShell ($input) dentro del mismo proceso. Se admite cualquiera de las
+    # dos vias para que el hook sea el mismo en produccion y en test.
+    #
+    # Las dos vias pasan por UTF-8 explicito: Read-RsStdinUtf8 lee el handle por bytes, y
+    # Repair-RsTextoUtf8 deshace la descodificacion en pagina de codigos OEM que hace
+    # PowerShell cuando la stdin del proceso llega por $input (que es lo que ocurre con
+    # "powershell -File", la forma en que Claude Code lanza este hook). Ver lib-pii.ps1.
+    $textoEvento = Repair-RsTextoUtf8 ([string]::Join("`n", @($input)))
+    if (-not $textoEvento) { $textoEvento = Read-RsStdinUtf8 }
     $evento  = $textoEvento | ConvertFrom-Json
     $comando = "$($evento.tool_input.command)"
 } catch {

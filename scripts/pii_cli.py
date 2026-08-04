@@ -41,6 +41,25 @@ from pathlib import Path
 
 _RAIZ = Path(__file__).resolve().parent
 
+# stdout/stderr SIEMPRE en UTF-8, pase lo que pase con la locale del proceso.
+#
+# El llamante es hooks/db-query.ps1, que fija [Console]::OutputEncoding = UTF8 y por tanto
+# DESCODIFICA como UTF-8 lo que salga de aqui. Pero la salida de este proceso es un pipe,
+# no una consola, asi que Python la codificaba con el encoding por defecto de la
+# plataforma: en un Windows con locale espanola, cp1252. Un valor con acentos volvia
+# destrozado ("Munoz" -> mojibake) y un caracter fuera de cp1252 reventaba con
+# UnicodeEncodeError -- que sale por la rama de fallo interno, o sea consulta sin filas.
+# El mismo motivo vale para stderr: los diagnosticos nombran el fichero de modelo, y ese
+# nombre puede llevar acentos.
+#
+# ⛔ La stdin se lee aparte como utf-8-sig (ver main()): PowerShell 5.1 antepone un BOM a
+# todo lo que canaliza hacia un comando nativo. No tocar eso.
+for _flujo in (sys.stdout, sys.stderr):
+    try:
+        _flujo.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001 - flujo ya redirigido/envuelto: se deja como este
+        pass
+
 E_USO = 2       # invocacion o entrada JSON invalida
 E_MODELO = 3    # modelo BD configurado pero inutilizable (no existe, ilegible, corrupto)
 E_INTERNO = 10  # fallo interno del enmascarado (bug, modelo con forma inesperada)

@@ -314,8 +314,25 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
   ]
 }
 '@ | Set-Content (Join-Path $docs5 ".rs-databases.json") -Encoding UTF8
-    }
 
+        # Workspace con modelo declarado en modo off: sirve para el viaje de ida y vuelta
+        # de codificacion (los valores tienen que volver intactos, sin enmascarar).
+        $script:ws6 = Join-Path $TestDrive "trunk-acentos"
+        $docs6      = Join-Path $script:ws6 "docs"
+        $bd6        = Join-Path $script:ws6 "BD"
+        New-Item -ItemType Directory -Path $docs6 -Force | Out-Null
+        New-Item -ItemType Directory -Path $bd6 -Force | Out-Null
+        @'
+{
+  "proyecto": "Acentos",
+  "conexiones": [
+    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Acentos-model.json" }
+  ]
+}
+'@ | Set-Content (Join-Path $docs6 ".rs-databases.json") -Encoding UTF8
+        '{ "pii_policy": { "mode": "off" }, "tables": {} }' |
+            Set-Content (Join-Path $bd6 "Acentos-model.json") -Encoding UTF8
+    }
 
     It "un modelo DECLARADO que no existe no devuelve filas (no es un workspace sin politica)" {
         # La tool MCP devolvia aqui TODAS las filas en claro etiquetadas mode="off",
@@ -378,6 +395,31 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
         $out.pii.mode      | Should -Be "error"
         $out.pii.error     | Should -Not -BeNullOrEmpty
         ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
+    }
+
+    It "un valor con acentos sobrevive intacto al viaje PowerShell -> Python -> PowerShell" {
+        # La stdout de pii_cli es un pipe, asi que Python la codificaba con el encoding por
+        # defecto de la plataforma (cp1252 en un Windows con locale espanola) mientras este
+        # hook la descodifica como UTF-8. Los acentos volvian destrozados y un caracter
+        # fuera de cp1252 reventaba el CLI. El valor se compone por codigo de caracter para
+        # que la prueba no dependa de como este guardado ESTE fichero.
+        $valor = "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " +
+                 [char]0x00C1 + "ngel " + [char]0x03A9
+        # El cuerpo del Mock corre en otro ambito, asi que compone el valor por su cuenta
+        # en vez de capturar $valor: son la misma cadena por construccion.
+        Mock -CommandName sqlplus -MockWith {
+            $global:LASTEXITCODE = 0
+            "IDDEUDOR,NOMBRE"
+            "1024," + [char]0x22 + "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " +
+                      [char]0x00C1 + "ngel " + [char]0x03A9 + [char]0x22
+        }
+
+        $out = & $script:hook3 -Workspace $script:ws6 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
+               ConvertFrom-Json
+
+        $out.success    | Should -Be $true
+        $out.pii.mode   | Should -Be "off"
+        $out.rows[0][1] | Should -Be $valor
     }
 
     It "enmascara las filas usando el modelo de la conexion seleccionada" {
@@ -503,6 +545,73 @@ Describe "pii-guard-bash.ps1" {
         $mensaje = [string]$salida
         $mensaje | Should -Not -Match "contrasena"
         $mensaje | Should -Match "sqlplus"
+    }
+}
+
+Describe "Repair-RsTextoUtf8 (codificacion de la stdin de las guardas)" {
+    <#
+        Claude Code lanza las guardas con "powershell -File" y les pasa el evento en UTF-8
+        por stdin. Con -File, PowerShell engancha esa stdin al pipeline y @($input) la
+        descodifica con [Console]::InputEncoding -- la pagina OEM en un Windows con locale
+        espanola. Una ruta con acentos llegaba destrozada al mensaje de bloqueo. Fijar
+        [Console]::InputEncoding al principio del script NO sirve: compite con el hilo que
+        ya esta leyendo la stdin y unas veces gana y otras no (medido).
+
+        La pagina se pasa explicita para que la prueba no dependa de la consola de la
+        maquina que ejecute la suite.
+    #>
+    BeforeAll {
+        . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+        $script:oem  = [System.Text.Encoding]::GetEncoding(850)
+        $script:utf8 = New-Object System.Text.UTF8Encoding($false)
+        # "Jose Munoz" con e acentuada y ene, compuesto por codigo de caracter para que no
+        # dependa de como este guardado ESTE fichero.
+        $script:bueno = "C:\x\Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz.md"
+        # Lo que ve el script: los bytes UTF-8 descodificados como si fueran OEM.
+        $script:roto  = $script:oem.GetString($script:utf8.GetBytes($script:bueno))
+    }
+
+    It "el caso que reproduce el defecto no es ya el texto correcto" {
+        # Guarda contra un falso verde: si la construccion de $roto dejara de producir
+        # mojibake, las dos comprobaciones de abajo pasarian sin probar nada.
+        $script:roto | Should -Not -Be $script:bueno
+    }
+
+    It "recupera el texto original de una stdin descodificada en la pagina OEM" {
+        Repair-RsTextoUtf8 $script:roto -Origen $script:oem | Should -Be $script:bueno
+    }
+
+    It "no toca un texto que ya esta bien (es idempotente)" {
+        # Los bytes OEM de un texto ya correcto no forman UTF-8 valido, asi que el viaje
+        # de vuelta lanza y se devuelve el original. Sin esta propiedad, la funcion
+        # destrozaria justo los eventos que llegan bien.
+        Repair-RsTextoUtf8 $script:bueno -Origen $script:oem | Should -Be $script:bueno
+        Repair-RsTextoUtf8 (Repair-RsTextoUtf8 $script:roto -Origen $script:oem) -Origen $script:oem |
+            Should -Be $script:bueno
+    }
+
+    It "no toca un texto ASCII ni una cadena vacia" {
+        Repair-RsTextoUtf8 '{"tool_input":{"command":"dotnet build"}}' -Origen $script:oem |
+            Should -Be '{"tool_input":{"command":"dotnet build"}}'
+        Repair-RsTextoUtf8 "" -Origen $script:oem | Should -Be ""
+    }
+
+    It "la guarda de escritura nombra la ruta con acentos intacta (proceso real, stdin real)" {
+        # Camino de produccion completo: proceso hijo con el evento por stdin, que es donde
+        # $input entra en juego. Con la consola en UTF-8 esta prueba es un no-op benigno;
+        # con una pagina OEM es la que fija el arreglo.
+        $g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1"
+        $evento = @{ tool_input = @{ file_path = $script:bueno; content = "ana.lopez@example.com" } } |
+                  ConvertTo-Json -Compress
+        $previo = $OutputEncoding
+        try {
+            $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+            $salida = $evento | pwsh -NoProfile -File $g 2>&1 | Out-String
+        } finally {
+            $OutputEncoding = $previo
+        }
+        $salida | Should -Match "BLOQUEADO"
+        $salida | Should -Match ([regex]::Escape("Jos" + [char]0x00E9))
     }
 }
 

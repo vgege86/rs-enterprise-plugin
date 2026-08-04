@@ -27,11 +27,14 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 . (Join-Path $PSScriptRoot "lib-pii.ps1")
 
 try {
-    # Misma dualidad que pii-guard-bash.ps1: stdin real ([Console]::In) cuando Claude Code
-    # lanza el hook como proceso, $input cuando un test Pester lo invoca via pipe dentro
-    # del mismo proceso ("'json' | & script.ps1" no llega a [Console]::In).
-    $textoEvento = [string]::Join("`n", @($input))
-    if (-not $textoEvento) { $textoEvento = [Console]::In.ReadToEnd() }
+    # Misma dualidad que pii-guard-bash.ps1: stdin real cuando Claude Code lanza el hook
+    # como proceso, $input cuando un test Pester lo invoca via pipe dentro del mismo
+    # proceso ("'json' | & script.ps1" no llega a la stdin del proceso). Read-RsStdinUtf8
+    # descodifica esa stdin como UTF-8 explicitamente y Repair-RsTextoUtf8 deshace la
+    # descodificacion en pagina OEM que hace PowerShell cuando la stdin llega por $input
+    # (ver lib-pii.ps1): sin eso, una ruta con acentos salia destrozada en el bloqueo.
+    $textoEvento = Repair-RsTextoUtf8 ([string]::Join("`n", @($input)))
+    if (-not $textoEvento) { $textoEvento = Read-RsStdinUtf8 }
     $evento    = $textoEvento | ConvertFrom-Json
     $ruta      = "$($evento.tool_input.file_path)"
     $contenido = "$($evento.tool_input.content)$($evento.tool_input.new_string)"

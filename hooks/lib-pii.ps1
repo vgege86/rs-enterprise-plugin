@@ -22,6 +22,71 @@
     abajo.
 #>
 
+function Repair-RsTextoUtf8 {
+    <# Recupera el texto UTF-8 original de un evento que PowerShell ya ha descodificado
+       con la pagina de codigos equivocada. Idempotente: si el texto ya esta bien, lo
+       devuelve tal cual.
+
+       Por que hace falta. Claude Code lanza las dos guardas PreToolUse con
+       "powershell -File" y les pasa el JSON del evento en UTF-8 por stdin. Con -File,
+       PowerShell engancha esa stdin al pipeline del script, y @($input) la descodifica
+       con [Console]::InputEncoding: en un Windows con locale espanola, la pagina OEM
+       (cp850). Una ruta o un contenido con acentos llegaba destrozado ("Jose" con e
+       acentuada -> mojibake) al mensaje de bloqueo. Los patrones de DNI/NIE/IBAN/correo
+       son ASCII y una descodificacion de un solo byte preserva los bytes ASCII, asi que
+       NO se dejaba de bloquear nada: lo que salia mal era el texto que lee el usuario.
+
+       Por que no se arregla fijando [Console]::InputEncoding a UTF-8 al principio del
+       script: PowerShell lee la stdin en otro hilo desde el arranque, asi que la
+       asignacion compite con esa lectura. Medido: unas veces gana y otras no. Un arreglo
+       que sale bien la mayoria de las veces es peor que ninguno, porque nadie vuelve a
+       mirarlo. Tampoco sirve leer el handle crudo ([Console]::OpenStandardInput) por
+       delante: con -File PowerShell ya se ha quedado la stdin y esa lectura da vacio.
+
+       Lo que se hace es deshacer la descodificacion: re-codificar con la MISMA pagina que
+       la produjo y volver a descodificar como UTF-8 estricto. Las paginas OEM son mapeos
+       completos de un byte, asi que ese viaje es exacto. El UTF-8 estricto es lo que hace
+       la funcion segura en los dos sentidos: si el texto ya era correcto, sus bytes en la
+       pagina OEM no forman UTF-8 valido, GetString lanza y se devuelve el original.
+
+       -Origen es la pagina con la que se descodifico, por defecto la que usa PowerShell
+       para la stdin. Se puede pasar para probar la funcion sin depender de la consola de
+       la maquina que ejecute la suite. #>
+    param(
+        [AllowEmptyString()][string]$Texto,
+        [System.Text.Encoding]$Origen = $null
+    )
+
+    if (-not $Texto) { return $Texto }
+    # Todo ASCII: no hay nada que recuperar y no tiene sentido arriesgar el viaje.
+    if ($Texto -notmatch '[^\x00-\x7F]') { return $Texto }
+    if (-not $Origen) { $Origen = [Console]::InputEncoding }
+    try {
+        $bytes = $Origen.GetBytes($Texto)
+        # $true final = throwOnInvalidBytes: sin el, GetString mete U+FFFD y devolveria
+        # basura como si fuera una recuperacion buena.
+        $utf8Estricto = New-Object System.Text.UTF8Encoding($false, $true)
+        return $utf8Estricto.GetString($bytes)
+    } catch {
+        return $Texto
+    }
+}
+
+function Read-RsStdinUtf8 {
+    <# Lee la stdin del PROCESO entera y la descodifica como UTF-8 explicitamente.
+
+       Camino de respaldo para cuando $input viene vacio (p.ej. "pwsh -Command"): ahi
+       PowerShell no ha consumido la stdin y se puede leer el handle. Se descodifica sin
+       depender de [Console]::InputEncoding por si Set-RsStdinUtf8 no pudo fijarla. El
+       $true final del StreamReader es detectEncodingFromByteOrderMarks: si el emisor
+       antepone un BOM (PowerShell 5.1 lo hace al canalizar hacia un comando nativo) no
+       acaba dentro del texto rompiendo ConvertFrom-Json. #>
+    $flujo  = [Console]::OpenStandardInput()
+    $lector = New-Object System.IO.StreamReader($flujo, (New-Object System.Text.UTF8Encoding($false)), $true)
+    try   { return $lector.ReadToEnd() }
+    finally { $lector.Dispose() }
+}
+
 $script:RsPiiPatronDni    = '\b\d{8}[A-HJ-NP-TV-Z]\b'
 $script:RsPiiPatronNie    = '\b[XYZ]\d{7}[A-HJ-NP-TV-Z]\b'
 $script:RsPiiPatronIban   = '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
