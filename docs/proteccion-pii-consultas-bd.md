@@ -431,6 +431,18 @@ golpe los diez agentes que consultan datos:
 | `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege.** |
 | `enforce` | Enmascarado activo. |
 
+**El modo se lee de la configuración de la solución, y no poder leerla no equivale a `off`.**
+Si esa configuración declara dónde vive la política y ese fichero no está, o está y no se puede
+interpretar, la consulta **no se ejecuta y no devuelve ninguna fila**: responde con un error que
+nombra el fichero que falta e indica cómo regenerarlo. Se aplica por igual a las dos vías de
+consulta del §5.2g. La alternativa —tratarlo como "no hay política"— haría que una solución
+configurada en `enforce` con el fichero perdido devolviese los datos en claro y se anunciase
+como una solución sin política declarada, indistinguible de una que nunca configuró nada.
+
+Una solución que **nunca** ha declarado política sí conserva el comportamiento anterior
+(`off`, datos en claro): esa es la situación ordinaria mientras el despliegue está en curso, y
+distinguir las dos es justamente lo que evita que un fichero perdido pase por una decisión.
+
 ---
 
 ## 5. Límites de la medida provisional
@@ -509,6 +521,11 @@ empujaría al desarrollador a usar el cliente de base de datos directamente, que
 por ningún filtro y es peor. Es el único punto de la medida donde un componente capaz de
 enmascarar decide no hacerlo. Si el filtro **sí se ejecuta** y falla —modelo corrupto,
 política ilegible, error interno— la consulta **no devuelve ninguna fila**.
+
+Las dos vías aplican la misma regla ante una política declarada que no se puede cargar: la
+consulta falla y no devuelve filas (§4.4). Hasta la versión 3.1.0 la vía principal no lo hacía
+—devolvía los datos en claro etiquetados como "sin política"—, que era la forma más silenciosa
+que podía tomar el fallo descrito en el apartado (a).
 
 ### 5.3 Fuera del alcance técnico
 

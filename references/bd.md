@@ -18,8 +18,9 @@ siempre un bloque `pii`. **Ese bloque hay que leerlo y trasladar al usuario lo q
 nunca ignorarlo en silencio.** Tabla completa de campos y de qué decir en cada caso:
 `references/mcp.md` → "El bloque `pii` de `db_query`". En corto:
 
-- `pii.error` / `pii.model_error` → el filtro **no** se aplicó (o los datos vienen sin
-  enmascarar). Avisar siempre.
+- `pii.error` / `pii.model_error` → el filtro **no** se aplicó. Avisar siempre. Con
+  `model_error` la consulta viene además con `success: false` y cero filas: hay un modelo BD
+  declarado que no se puede usar y el mensaje dice cómo generarlo (`/rs-init`, `/rs-erd`).
 - `pii.suspect` → columnas en claro con valores con forma de dato personal. Nombrarlas.
 - `pii.predicate_warning` → se está filtrando por una columna con datos personales; el valor
   se puede inferir aunque la salida vaya enmascarada. Avisar.

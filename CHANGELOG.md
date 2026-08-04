@@ -1,5 +1,68 @@
 # RS Enterprise Agent — Changelog
 
+## 3.1.0 — 2026-08-04
+
+### Un modelo BD declarado y ausente ya no devuelve las filas en claro
+
+Si una conexión de `docs/.rs-databases.json` **declara** su modelo (campo `"model"`) y ese
+fichero no existe, la tool MCP `db_query` cargaba un modelo vacío, concluía `pii.mode = "off"`
+y devolvía el resultado íntegro **en claro**, etiquetado como workspace sin política —
+indistinguible de uno que nunca configuró nada. El hook `hooks/db-query.ps1` ya fallaba cerrado
+ahí, así que los dos caminos discrepaban justo en el que es principal.
+
+Ahora los dos aplican la misma regla:
+
+| Situación | Comportamiento |
+|---|---|
+| Modelo **declarado** y el fichero no existe | `success: false`, cero filas, y el mensaje dice qué fichero falta y cómo generarlo (`/rs-init` en un workspace nuevo, `/rs-erd` para sincronizarlo desde la BD) |
+| Modelo del **convenio** (`BD\<proyecto>-model.json`) y el fichero no existe | Sin cambios: la consulta corre, `pii.mode = "off"`, datos en claro |
+| El fichero existe pero no se puede usar (ilegible, JSON inválido, raíz que no es objeto) | `success: false`, cero filas, venga de donde venga la ruta |
+
+`Get-RsModelPath` devuelve **siempre** una ruta, así que `model_path` no distinguía las dos
+primeras filas. Esa distinción la publica ahora quien ya resuelve la ruta:
+`Test-RsModelDeclarado` (`hooks/lib-dbconfig.ps1`) → `hooks/get-config.ps1` la emite como
+`model_declarado`, por conexión y en los campos planos. La tool MCP la lee de la config y el
+hook se la pasa a `scripts/pii_cli.py` con `--convenio`. Sin esa información se asume
+**declarado**: la imprecisión degrada hacia más enmascarado, nunca hacia menos.
+
+En la tool MCP el modelo se carga **antes** de tocar la BD: si la política no se puede aplicar,
+la consulta ni siquiera se ejecuta.
+
+**Qué cambia para un workspace que actualiza.** Nada, salvo que ya tenga un modelo declarado y
+perdido —en cuyo caso estaba enviando datos personales en claro sin saberlo—. Un workspace que
+nunca declaró modelo sigue exactamente igual que en 3.0.0.
+
+`get_table_schema`, `search_model` y `get_model_index` leen el mismo `model_path` y **no**
+cambian: siguen devolviendo su propio "Modelo BD no encontrado".
+
+### `db_query` (hook) ya no puede devolver `pii = null`
+
+En `hooks/db-query.ps1`, el parseo de la respuesta de `pii_cli` quedaba fuera del `try/catch`
+que envuelve la invocación. Un CLI que saliera con código 0 pero emitiera algo no parseable
+dejaba la respuesta con `ok = true`, columnas y filas vacías y `pii = null`. No se escapaba
+ninguna fila, pero once definiciones de agente tienen instrucción de leer ese bloque. Ahora una
+salida no parseable —o un JSON válido sin bloque `pii`— se trata como el resto de fallos del
+filtro que ya corrió: sin filas y con `pii.error` explicando el motivo.
+
+### Codificación UTF-8 explícita en todo el camino de protección de datos personales
+
+- `scripts/pii_cli.py` escribía `stdout` con la codificación por defecto del proceso. Como su
+  salida es un *pipe* y no una consola, en un Windows con configuración regional española eso
+  es cp1252, mientras el hook la descodifica como UTF-8: los acentos volvían destrozados y un
+  carácter fuera de cp1252 mataba el filtro con `UnicodeEncodeError` **después** de emitir JSON
+  a medias (que es justo el caso del apartado anterior). `stdout` y `stderr` pasan a UTF-8.
+- Las guardas `pii-guard-bash.ps1` / `pii-guard-write.ps1` reciben el evento en UTF-8 por
+  `stdin`, pero PowerShell lo descodifica con la página de códigos OEM: la ruta y el contenido
+  con acentos salían destrozados en el mensaje de bloqueo. No se dejaba de bloquear nada (los
+  patrones son ASCII), pero el texto que lee el usuario estaba mal. `Repair-RsTextoUtf8`
+  (`hooks/lib-pii.ps1`) deshace esa descodificación y es idempotente sobre un texto ya correcto.
+- `hooks/db-query.ps1` volcaba la salida de `sqlplus` con `>`, cuya codificación por defecto es
+  UTF-16LE en Windows PowerShell 5.1 y UTF-8 en PowerShell 7; se leía de vuelta como UTF-8 y
+  funcionaba por la detección de BOM, no porque coincidieran. Ahora es explícita.
+
+El fichero `.sql` que lee `sqlplus` sigue escribiéndose en **UTF-8 sin BOM** a propósito, y la
+`stdin` de `pii_cli` sigue leyéndose como `utf-8-sig`. Ninguna de las dos cosas cambia.
+
 ## 3.0.0 — 2026-08-03
 
 ### Protección de datos personales en las consultas a BD

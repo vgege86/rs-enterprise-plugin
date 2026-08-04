@@ -68,7 +68,7 @@ promete (`docs/proteccion-pii-consultas-bd.md` §4.3 y §5.2c).
 | Campo | Qué significa y qué hay que hacer |
 |---|---|
 | `pii.error` | El filtro no pudo aplicarse. En el camino de hook puede significar que los datos vienen **sin enmascarar** (fallo abierto), o que no vienen filas. **Avisar siempre, literal** |
-| `pii.model_error` | Hay una política declarada pero el modelo BD no se puede usar (JSON corrupto, raíz que no es objeto): **la política NO se está aplicando**. Avisar y pedir revisar el modelo |
+| `pii.model_error` | El modelo BD declarado en `.rs-databases.json` no se puede usar: no existe, es ilegible, el JSON está corrupto o su raíz no es un objeto. La consulta sale con `success: false` y **cero filas** — no se devuelve nada sin política. Trasladar el mensaje literal: dice qué fichero falta y cómo generarlo (`/rs-init` en un workspace nuevo, `/rs-erd` para sincronizarlo desde la BD) |
 | `pii.suspect` | Columnas que salían en claro y cuyos **valores** tienen forma de dato personal (DNI, IBAN, correo, teléfono, tarjeta). La lista de patrones está incompleta. Nombrar las columnas y sugerir `/rs-pii bootstrap` |
 | `pii.predicate_warning` | Columnas con datos personales usadas como **filtro** en el `WHERE`. Aunque la salida vaya enmascarada, el valor se puede inferir repitiendo la consulta (§5.2c). Avisar de que esa consulta interroga un dato personal |
 | `pii.mode` | `off` = sin protección, `audit` = **los datos salen en claro**, `enforce` = enmascarado activo. No decir "protegido" con `off` ni con `audit` |
