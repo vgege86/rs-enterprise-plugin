@@ -72,7 +72,7 @@ de cada consulta, incluidas columnas con nombres, DNI, teléfonos y cuentas. Ese
 se transmite a un proveedor externo. No había ningún filtro entre la BD y el envío.
 
 Ahora los valores de las columnas con datos personales se sustituyen por un seudónimo
-determinista (`pii:3f9a2c1b`) calculado con HMAC-SHA256 y una clave que vive en el perfil
+determinista (`pii:3f9a2c1b40de`) calculado con HMAC-SHA256 y una clave que vive en el perfil
 local del usuario, fuera del repositorio. El mismo valor produce siempre el mismo
 seudónimo, de modo que se conserva la capacidad de detectar duplicados y correlacionar
 filas sin exponer el dato.
