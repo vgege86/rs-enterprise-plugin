@@ -207,8 +207,9 @@ $settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
 # apunta cada entrada existe de verdad (una entrada que apunte a una ruta muerta NO protege:
 # el hook falla, pero no con codigo 2, asi que el bypass queda abierto en silencio) y detectar
 # que la guarda viva cuelga de otra copia del plugin.
-$guardas   = Test-RsPiiGuards -SettingsPath $settingsUsuario -HooksDir $PSScriptRoot
-$guardasOk = $guardas.ok
+$manifiesto = Join-Path $PSScriptRoot "..\.claude-plugin\plugin.json"
+$guardas    = Test-RsPiiGuards -SettingsPath $settingsUsuario -HooksDir $PSScriptRoot -ManifestPath $manifiesto
+$guardasOk  = $guardas.ok
 
 $piiEstado = @{
     mode              = $piiModo
@@ -216,6 +217,8 @@ $piiEstado = @{
     guards_missing    = @($guardas.missing)
     guards_stale      = @($guardas.stale)
     guards_foreign    = @($guardas.foreign)
+    guards_legacy     = @($guardas.legacy)
+    guards_source     = $guardas.source
     guards_active     = ($piiModo -in @("audit", "enforce"))
     ok                = ($piiModo -ne "enforce") -or $guardasOk
 }
@@ -244,14 +247,22 @@ if (@($guardas.stale).Count -gt 0) {
                                    "Volver a ejecutar /rs-pii enforce la reescribe con la ruta actual."
 }
 if (@($guardas.foreign).Count -gt 0) {
-    $piiEstado.guards_foreign_note = "Hay guardas que protegen desde OTRA copia del plugin: esa copia no se actualiza con /plugin marketplace update. " +
-                                     "Volver a ejecutar /rs-pii enforce las repunta a la copia en uso."
+    $piiEstado.guards_foreign_note = "Hay guardas que protegen desde OTRA copia del plugin: esa copia no se actualiza con /plugin marketplace update."
+}
+# Restos de cuando /rs-pii enforce las registraba a mano. Desde 3.4.0 las declara el propio
+# plugin, asi que estas entradas sobran: si su ruta sigue viva el hook corre DUPLICADO, y si
+# esta muerta -- lo habitual, porque la ruta del cache lleva la version -- falla en cada
+# llamada a Bash/Write. cleanup-preplugin.ps1 las retira solo al arrancar la sesion.
+if (@($guardas.legacy).Count -gt 0) {
+    $piiEstado.guards_legacy_note = "Hay guardas registradas a mano en ${settingsUsuario} que ya sobran: desde 3.4.0 las declara el propio plugin. " +
+                                    "Se retiran solas al arrancar una sesion nueva (scripts/cleanup-preplugin.ps1, con copia previa); " +
+                                    "no hay que hacer nada."
 }
 # Se comprueba el FICHERO, no la sesion en curso: Claude Code captura la configuracion de
 # hooks al arrancar, asi que unas guardas registradas a mitad de sesion NO estan activas
 # hasta reiniciar. Este aviso viaja siempre para que ningun consumidor lea
 # guards_registered = true como "protegido ahora mismo".
-$piiEstado.guards_note = "guards_registered describe el contenido de settings.json, no la sesion en curso: unas guardas registradas durante esta sesion no estan activas hasta reiniciar Claude Code."
+$piiEstado.guards_note = "guards_registered describe la INSTALACION (plugin.json declara las dos guardas y sus .ps1 existen), no la sesion en curso: Claude Code resuelve los hooks al arrancar, asi que un plugin recien instalado o actualizado no las tiene vivas hasta reiniciar. guards_active es otra cosa: dice si bloquean en ESTE workspace, y eso lo decide pii_policy.mode, que las guardas leen en cada invocacion."
 
 # Output JSON estructurado para consumo del agente
 $output = @{

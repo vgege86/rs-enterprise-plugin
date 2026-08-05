@@ -22,10 +22,13 @@ personales en las consultas a BD, genera el inventario de columnas afectadas y c
 # Contexto de ejecución
 
 Invocación directa. `status` y `bootstrap` son de **solo lectura** (`bootstrap` nunca escribe en el
-modelo). `audit`/`enforce`/`off` escriben: `pii_policy.mode` en el modelo BD siempre, y `enforce`
-además añade dos entradas a la configuración **personal** de Claude Code del usuario
-(`~/.claude/settings.json`, fuera del repositorio) — **solo tras confirmación explícita** en todos los
-casos, en cualquier dirección (también al volver a `off`).
+modelo). `audit`/`enforce`/`off` escriben una sola cosa: `pii_policy.mode` en el modelo BD, **solo
+tras confirmación explícita**, en cualquier dirección (también al volver a `off`).
+
+⛔ Este agente **no toca `~/.claude/settings.json`**. Desde 3.4.0 las dos guardas `PreToolUse` las
+declara el plugin en `.claude-plugin/plugin.json`; registrarlas a mano hoy solo consigue duplicar el
+hook. Antes se hacía, y la ruta cableada que eso exigía es justo lo que se rompía en cada
+actualización del plugin (la ruta del caché lleva la versión).
 
 # Subcomandos
 
@@ -67,22 +70,24 @@ modelo.
 
 1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_active`,
    `guards_missing`, `guards_stale`, `guards_foreign`, `ok`, `error`.
-2. Informar el modo actual y si las guardas `PreToolUse` están registradas. Si falta alguna, decir
-   **cuál** (`guards_missing`). Recordar que `guards_registered` describe el fichero
-   `~/.claude/settings.json`, no la sesión en curso (ver el aviso de `enforce`).
+2. Informar el modo actual y si las dos guardas `PreToolUse` están disponibles. Si falta alguna, decir
+   **cuál** (`guards_missing`). `guards_source` dice de dónde sale cada una: `plugin` es lo normal
+   desde 3.4.0; `settings` es un resto manual. Y describe la instalación, no la sesión en curso: los
+   hooks se resuelven al arrancar Claude Code.
+   - Si `guards_legacy` no está vacío → hay entradas manuales en `~/.claude/settings.json` que ya
+     sobran. No hay que hacer nada: `cleanup-preplugin.ps1` las retira al arrancar la próxima sesión,
+     con copia previa. Mencionarlo, no pedir acción.
    - **Registradas ≠ actuando.** `guards_active` dice si bloquean **en este workspace**: desde 3.3.0
      las guardas siguen a `pii_policy.mode`, así que en `off` están registradas y no bloquean nada —
      que es el estado normal en desarrollo, no un problema. Informar de las dos cosas por separado y
      no presentar `guards_registered: true` como "aquí está bloqueando".
-   - Si `guards_stale` no está vacío → **decirlo aunque el modo sea `off`**: hay una entrada
-     registrada que **no protege** porque el `.ps1` al que apunta no existe. `guards_registered` ya
-     es `false` por ese motivo (una guarda registrada y rota cuenta como ausente, no como presente).
-     Causa habitual: el plugin cambió de ruta y `settings.json` la lleva cableada en absoluto.
-     Solución: `/rs-pii enforce`, que la reescribe con la ruta actual. Usar el texto de
-     `guards_stale` tal cual — lleva el motivo y la ruta muerta.
+   - Si `guards_stale` no está vacío → **decirlo aunque el modo sea `off`**: hay una guarda que
+     **no protege** porque el `.ps1` al que apunta no existe. `guards_registered` ya es `false` por
+     ese motivo (una guarda declarada y rota cuenta como ausente, no como presente). Si viene del
+     plugin, la instalación está incompleta: reinstalar. Si viene de un resto manual, se retira sola
+     (`guards_legacy`). Usar el texto de `guards_stale` tal cual — lleva el motivo y la ruta muerta.
    - Si `guards_foreign` no está vacío → la guarda **sí** protege, pero desde otra copia del plugin,
-     que no se actualiza con `/plugin marketplace update`. Es un aviso, no un fallo; se corrige
-     también con `/rs-pii enforce`.
+     que no se actualiza con `/plugin marketplace update`. Es un aviso, no un fallo.
    - Si `mode = enforce` y `ok = false` → usar el `error` de `check_env` tal cual: la protección es
      **incompleta**, el bypass por Bash/Write sigue abierto. No suavizar este mensaje.
    - Si `mode = audit` → recordar explícitamente: **los datos siguen saliendo en claro, `audit` no
@@ -160,68 +165,36 @@ Pone `pii_policy.mode = "audit"` en el modelo BD.
 
 ## `enforce`
 
-El enmascarado solo es real si las dos guardas `PreToolUse` están registradas. Orden estricto —
-verificar inventario → registrar guardas → verificar el registro → **solo entonces** escribir el modo.
-Si falla el registro, **no conmutar**: un workspace que cree estar protegido sin estarlo es peor que
-uno que sabe que está en `off`.
+El enmascarado solo es real si las dos guardas `PreToolUse` están disponibles. Orden estricto —
+verificar inventario → verificar las guardas → **solo entonces** escribir el modo. Si las guardas no
+están, **no conmutar**: un workspace que cree estar protegido sin estarlo es peor que uno que sabe
+que está en `off`.
 
-⛔ **Las guardas registradas en esta sesión no están activas en esta sesión.** Claude Code captura la
-configuración de hooks al arrancar; lo que se escribe en `~/.claude/settings.json` a mitad de sesión
-no entra en vigor hasta **reiniciar Claude Code**. `check_env` comprueba el *fichero*, no la sesión en
-curso: `guards_registered = true` significa "escritas", no "vivas" (por eso devuelve también
-`guards_note`). En consecuencia, si este subcomando ha tenido que **registrar** alguna de las dos
-guardas, no puede decir que la protección está activa — los dos bypass (Bash y Write/Edit) siguen
-abiertos durante el resto de esta sesión. Debe decirlo así, sin suavizarlo, y pedir el reinicio.
+⛔ **Este subcomando ya NO escribe en `~/.claude/settings.json`.** Desde 3.4.0 las dos guardas las
+declara el propio plugin en `.claude-plugin/plugin.json`, con `${CLAUDE_PLUGIN_ROOT}`, así que se
+instalan y se actualizan con él. Si algún procedimiento antiguo pide registrarlas a mano, está
+obsoleto: hacerlo ahora duplica el hook. Las entradas manuales que queden de antes las retira sola
+`scripts/cleanup-preplugin.ps1` al arrancar la sesión.
 
 1. **Inventario.** `Glob` de `docs/inventario-pii.md`. Si no existe → detener: "ejecuta
-   `/rs-pii bootstrap` primero". No continuar sin él.
-2. **Confirmación explícita.** Explicar qué se va a hacer: escribir `pii_policy.mode = "enforce"` en
-   el modelo BD **y** añadir dos entradas a `hooks.PreToolUse` en `~/.claude/settings.json` — fuera del
-   repositorio, configuración **personal** del usuario, que puede tener contenido de otros proyectos y
-   afecta a todas sus sesiones de Claude Code, no solo a este workspace. Mostrar el bloque exacto que
-   se va a añadir (paso 3) antes de tocar el fichero. Esperar confirmación explícita antes de seguir.
-3. **Registrar las guardas** (solo tras confirmación):
-   - Resolver `<home>`: `Bash echo "$USERPROFILE"` (nunca asumir la ruta). El fichero es
-     `<home>\.claude\settings.json`.
-   - `Read` el fichero si existe. ⛔ **Nunca sobrescribirlo entero** — mismo cuidado que `rs-init` con
-     los ficheros que ya existen: preservar TODO lo que ya haya (otros hooks, otras claves) y solo
-     añadir lo necesario:
-     - Si no existe `hooks` → añadirla junto al resto de claves existentes del fichero.
-     - Si existe `hooks` pero no `PreToolUse` → añadir la clave `PreToolUse` dentro de `hooks`,
-       preservando `hooks.Stop`/`hooks.UserPromptSubmit`/etc. si los hay.
-     - Si ya existe `PreToolUse` → añadir las dos entradas nuevas a la lista existente, sin tocar las
-       que ya haya. Si alguna de las dos ya está registrada (p.ej. reinstalación), no duplicarla.
-     - Si una de las dos ya está registrada pero apunta a **otra ruta** —es lo que reportan
-       `pii.guards_stale` (fichero inexistente) y `pii.guards_foreign` (otra copia del plugin)—,
-       **sustituir esa entrada**, no añadir una segunda. Dos entradas de la misma guarda no protegen
-       más: la muerta seguirá fallando en cada llamada y la lista se va llenando de restos de
-       instalaciones anteriores.
-   - Cada entrada, con `<plugin_root>` resuelto y **verificado** (SKILL.md "Raíz del plugin" — ⛔ nunca
-     `${CLAUDE_PLUGIN_ROOT}` en este fichero: esa variable solo se expande en
-     `.claude-plugin/plugin.json`/`.mcp.json`, en cualquier otro sitio llega literal):
-     ```json
-     { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"<plugin_root>\\hooks\\pii-guard-bash.ps1\"", "timeout": 10, "statusMessage": "RS: guarda PII (bash)..." } ] },
-     { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"<plugin_root>\\hooks\\pii-guard-write.ps1\"", "timeout": 10, "statusMessage": "RS: guarda PII (escritura)..." } ] }
-     ```
-   - `Edit` (o `Write` si el fichero no existía) con el resultado completo: todo lo que ya había más
-     estas dos entradas.
-4. **Verificar de verdad.** `check_env(workspace)` → `pii.guards_registered` debe ser `true`. Si no lo
-   es, **no continuar**: informar el fallo usando `pii.guards_missing` (dice cuál de las dos falta, y
-   si está registrada pero rota, por qué) y dejar el modo del modelo como estaba. Esa comprobación
-   incluye que el `.ps1` **exista**: una entrada bien formada que apunte a una ruta muerta no cuenta
-   como registrada, porque el hook falla sin llegar a bloquear nada.
-5. **Solo si el paso 4 confirma `guards_registered = true`**, escribir `pii_policy.mode = "enforce"` en
-   el modelo (ver abajo) y confirmar con un último `check_env` que `pii.ok = true`.
-6. **Cerrar diciendo la verdad sobre esta sesión.** Si en el paso 3 se ha escrito alguna entrada nueva
-   en `settings.json`, terminar con un aviso literal, no opcional:
-
-   > ⚠️ Las guardas se han registrado, pero **no están activas en esta sesión**: Claude Code lee la
-   > configuración de hooks al arrancar. Hasta que reinicies Claude Code, `enforce` solo enmascara lo
-   > que pase por `db_query` — el bypass por `Bash` (`sqlplus`/`sqlcmd` directos) y por `Write`/`Edit`
-   > sigue abierto. **Reinicia antes de apoyarte en esta protección.**
-
-   Si las dos guardas ya estaban registradas de antes (nada que escribir en el paso 3), no aplica: ya
-   venían cargadas del arranque. Decirlo también, para que se entienda por qué no se pide reinicio.
+   `/rs-pii bootstrap` primero". No continuar sin él. ⛔ Este gate no es negociable y no se salta
+   "porque el usuario tiene prisa": sin inventario nadie sabe qué columnas se van a enmascarar, y
+   `enforce` deja de poder revisarse.
+2. **Verificar las guardas.** `check_env(workspace)` → `pii.guards_registered` debe ser `true`. Si no
+   lo es, **detener** e informar con `pii.guards_missing`: significa que el plugin está mal instalado
+   (falta alguno de los dos `.ps1`), no que haya que registrar nada a mano. La comprobación incluye
+   que el fichero **exista**: una guarda declarada que apunte a una ruta muerta no cuenta, porque el
+   hook falla sin llegar a bloquear.
+3. **Confirmación explícita.** Explicar qué se va a hacer —escribir `pii_policy.mode = "enforce"` en
+   el modelo BD— y qué implica: a partir de ahí `db_query` devuelve seudónimos en este workspace, y
+   las dos guardas empiezan a bloquear **aquí** (`sqlplus`/`sqlcmd` directos y la escritura de datos
+   personales en ficheros). En los demás workspaces no cambia nada. Esperar confirmación.
+4. **Solo tras confirmación**, escribir el modo (ver abajo) y confirmar con un último `check_env` que
+   `pii.ok = true` y `pii.guards_active = true`.
+5. **Cerrar diciendo la verdad sobre esta sesión.** El cambio de modo **sí** es inmediato: las guardas
+   leen `pii_policy.mode` en cada invocación, no al arrancar. Lo que no es inmediato es la instalación
+   de las guardas: si `check_env` reporta `guards_legacy` o el plugin se acaba de actualizar, avisar de
+   que los hooks se resuelven al **arrancar** Claude Code y pedir reinicio antes de apoyarse en ellas.
 
 ## `off`
 
@@ -287,14 +260,16 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 - ⛔ Nunca clasificar columnas a mano reproduciendo las reglas del §4.2: usar siempre
   `scripts/pii_cli.py --clasificar`. Un segundo clasificador escrito en prompt deriva del real y
   produce un inventario que no coincide con lo que el plugin enmascara.
-- ⛔ Nunca sobrescribir `~/.claude/settings.json` entero — solo añadir a `hooks.PreToolUse`,
-  preservando todo lo demás que contenga.
-- Ante `enforce` sin guardas registradas, el mensaje debe ser inequívoco: la frase "los datos
+- ⛔ Nunca escribir en `~/.claude/settings.json`. Las guardas las declara el plugin; una entrada
+  manual duplica el hook y arrastra una ruta que muere en la siguiente actualización.
+- ⛔ Nunca conmutar a `enforce` sin `docs/inventario-pii.md`. Ese gate no se salta por prisa: sin
+  inventario nadie sabe qué columnas se enmascaran, y la decisión deja de poder revisarse.
+- Ante `enforce` sin guardas disponibles, el mensaje debe ser inequívoco: la frase "los datos
   personales no salen" sería falsa. No decir "protegido" sin que `check_env` lo confirme con
   `pii.ok = true`.
-- ⛔ Nunca declarar la protección activa en la misma sesión en que se registraron las guardas —
-  Claude Code no las carga hasta reiniciar. `guards_registered = true` significa "escritas en el
-  fichero", no "vivas en esta sesión".
+- ⛔ Nunca declarar las guardas activas en la misma sesión en que se instaló o actualizó el plugin —
+  Claude Code resuelve los hooks al arrancar. El **modo** sí es inmediato (se lee en cada
+  invocación); la instalación de las guardas, no.
 - No prometer nada que `docs/proteccion-pii-consultas-bd.md` §5 desmienta.
 
 # Output

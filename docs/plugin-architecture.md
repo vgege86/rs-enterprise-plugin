@@ -259,16 +259,17 @@ reproduce un valor muestreado, ni en la respuesta ni en el fichero); `audit`/`en
 escriben `pii_policy.mode` en el modelo BD. `enforce` no conmuta el modo sin antes registrar las
 dos guardas `PreToolUse` (`hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1`) en
 `~/.claude/settings.json` y confirmar el registro con `check_env` — un workspace que crea estar
-protegido sin estarlo es peor que uno que sabe que está en `off`. La verificación de `check_env` es
-estructural (parsea `settings.json` y exige entradas reales bajo `hooks.PreToolUse` con matcher
-plausible, vía `Test-RsPiiGuards` de `hooks/lib-pii.ps1`) **y de existencia**: el `.ps1` al que
-apunta cada entrada tiene que estar ahí. Registrada ≠ efectiva — `settings.json` guarda la ruta
-cableada en absoluto (ahí `${CLAUDE_PLUGIN_ROOT}` no se expande, §5), así que un plugin que cambia
-de sitio deja entradas que se lanzan, fallan y **no bloquean**, porque el código de error no es 2.
-Esas salen en `pii.guards_stale` y cuentan como ausentes; `pii.guards_foreign` marca aparte las que
-sí protegen pero desde otra copia del plugin (el escenario de la v2.11.0). Comprueba además el
-**fichero, no la sesión**: Claude Code captura los hooks al arrancar, así que `enforce` cierra
-pidiendo el reinicio en vez de declarar la protección activa.
+protegido sin estarlo es peor que uno que sabe que está en `off`. **Desde 3.4.0 las dos guardas las
+declara `plugin.json`** con `${CLAUDE_PLUGIN_ROOT}`, como los otros tres hooks: `/rs-pii enforce` ya
+no escribe en `~/.claude/settings.json`. Antes sí, y eso obligaba a cablear la ruta en absoluto —ahí
+esa variable no se expande (§5)— mientras el caché de plugins lleva la **versión** en la ruta: cada
+actualización dejaba las dos entradas apuntando a un directorio inexistente, y como el código de
+error de un `.ps1` que no se encuentra no es 2, **fallaban abiertas sin avisar**. Los restos manuales
+salen en `pii.guards_legacy` y los retira `cleanup-preplugin.ps1` al arrancar, con copia previa.
+La verificación de `check_env` (`Test-RsPiiGuards`, `hooks/lib-pii.ps1`) es estructural **y de
+existencia**: el `.ps1` declarado tiene que estar ahí; si no, sale en `pii.guards_stale` y cuenta
+como ausente. `pii.guards_foreign` marca las que protegen desde otra copia del plugin (v2.11.0).
+Comprueba la **instalación, no la sesión**: Claude Code resuelve los hooks al arrancar.
 
 **Registradas ≠ actuando** (3.3.0). Las guardas siguen al modo del workspace de cada operación
 (`Get-RsPiiEstadoGuarda`, `hooks/lib-pii.ps1`): en `off` no bloquean, en `audit`/`enforce` sí, fuera

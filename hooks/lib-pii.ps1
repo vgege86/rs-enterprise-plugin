@@ -301,13 +301,69 @@ function Test-RsPiiGuardRuta {
     return @{ efectiva = $true; motivo = ""; ruta = $Ruta }
 }
 
-function Test-RsPiiGuards {
-    <# Comprueba que las dos guardas PII estan registradas como entradas de
-       hooks.PreToolUse en el settings.json indicado Y que el .ps1 al que apuntan existe.
+function Get-RsPiiGuardsManifiesto {
+    <# Las dos guardas declaradas por el propio plugin en .claude-plugin/plugin.json.
+       Devuelve @{ bash = @{efectiva; ruta; motivo}; write = ... }.
 
-       Devuelve @{ bash; write; ok; missing; stale; foreign } — listas de descripciones.
+       Esta es la fuente de verdad desde 3.4.0. Antes se registraban a mano en
+       ~/.claude/settings.json, donde ${CLAUDE_PLUGIN_ROOT} NO se expande: /rs-pii enforce
+       tenia que cablear la ruta absoluta, y el cache de plugins de Claude Code lleva la
+       VERSION en la ruta
+       (~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/hooks/...). O sea que cada
+       actualizacion del plugin dejaba las dos entradas apuntando a un directorio que ya no
+       existia y las guardas morian, fallando abiertas, en silencio. En el manifiesto la
+       variable si se expande y apunta a la version en curso, sea cual sea. #>
+    param([AllowEmptyString()][string]$ManifestPath)
+
+    $res = @{
+        bash  = @{ efectiva = $false; ruta = ""; motivo = "el plugin no declara la guarda" }
+        write = @{ efectiva = $false; ruta = ""; motivo = "el plugin no declara la guarda" }
+    }
+    if (-not $ManifestPath -or -not (Test-Path -LiteralPath $ManifestPath)) { return $res }
+
+    # ${CLAUDE_PLUGIN_ROOT} = la carpeta que contiene .claude-plugin/
+    $raizPlugin = ""
+    try { $raizPlugin = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($ManifestPath))) } catch { }
+
+    try {
+        $cfg = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($entrada in @($cfg.hooks.PreToolUse)) {
+            if (-not $entrada) { continue }
+            $matcher = "$($entrada.matcher)"
+            $dispara = @{
+                bash  = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Bash")
+                write = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Write|Edit")
+            }
+            foreach ($h in @($entrada.hooks)) {
+                $cmd = "$($h.command)"
+                if (-not $cmd) { continue }
+                foreach ($clave in @("bash", "write")) {
+                    if ($res[$clave].efectiva -or -not $dispara[$clave]) { continue }
+                    $script = "pii-guard-$clave.ps1"
+                    if ($cmd -notmatch [regex]::Escape("pii-guard-$clave")) { continue }
+                    $ruta = (Get-RsPiiGuardRuta -Comando $cmd -Script $script).Replace('${CLAUDE_PLUGIN_ROOT}', $raizPlugin)
+                    $v = Test-RsPiiGuardRuta $ruta
+                    $res[$clave].ruta = $v.ruta
+                    if ($v.efectiva) { $res[$clave].efectiva = $true; $res[$clave].motivo = "" }
+                    else { $res[$clave].motivo = "el plugin la declara pero $($v.motivo)" }
+                }
+            }
+        }
+    } catch { }
+    return $res
+}
+
+function Test-RsPiiGuards {
+    <# Comprueba que las dos guardas PII estan disponibles y que el .ps1 al que apuntan
+       existe. Fuente preferente: el manifiesto del plugin (-ManifestPath). El settings.json
+       personal se sigue mirando para detectar RESTOS de la epoca en que se registraban a
+       mano: siguen disparando, y ademas suelen estar rotos (ver Get-RsPiiGuardsManifiesto).
+
+       Devuelve @{ bash; write; ok; missing; stale; foreign; legacy; source }.
        bash/write son "efectiva", no "mencionada": una entrada bien formada que apunte a
        un fichero inexistente cuenta como NO registrada, y sale ademas en `stale`.
+       source dice de donde sale cada una: "plugin", "settings" o "".
+       legacy lista las entradas manuales de settings.json que ya sobran.
 
        Antes era un -match sobre el TEXTO del fichero: "pii-guard-bash" mencionado en un
        comentario, en una clave desactivada, o registrado bajo PostToolUse con un matcher
@@ -335,20 +391,39 @@ function Test-RsPiiGuards {
        reinicio y no declarar la proteccion activa en la misma sesion que las registro. #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$SettingsPath,
-        [AllowEmptyString()][string]$HooksDir = ""
+        [AllowEmptyString()][string]$HooksDir = "",
+        [AllowEmptyString()][string]$ManifestPath = ""
     )
 
     $guardas = [ordered]@{
-        bash  = @{ script = "pii-guard-bash.ps1";  desc = "pii-guard-bash (PreToolUse, matcher Bash)";        efectiva = $false; rota = "" }
-        write = @{ script = "pii-guard-write.ps1"; desc = "pii-guard-write (PreToolUse, matcher Write|Edit)"; efectiva = $false; rota = "" }
+        bash  = @{ script = "pii-guard-bash.ps1";  desc = "pii-guard-bash (PreToolUse, matcher Bash)";        efectiva = $false; rota = ""; source = "" }
+        write = @{ script = "pii-guard-write.ps1"; desc = "pii-guard-write (PreToolUse, matcher Write|Edit)"; efectiva = $false; rota = ""; source = "" }
     }
     $foreign = @()
+    $legacy  = @()
 
     $hooksDirNorm = ""
     if ($HooksDir) {
         try { $hooksDirNorm = [System.IO.Path]::GetFullPath($HooksDir).TrimEnd('\', '/') } catch { }
     }
 
+    # 1) El manifiesto del plugin, que es la fuente desde 3.4.0.
+    if ($ManifestPath) {
+        $delPlugin = Get-RsPiiGuardsManifiesto $ManifestPath
+        foreach ($clave in @("bash", "write")) {
+            if ($delPlugin[$clave].efectiva) {
+                $guardas[$clave].efectiva = $true
+                $guardas[$clave].source   = "plugin"
+            } elseif ($delPlugin[$clave].ruta) {
+                # Declarada y rota: el repo del plugin esta incompleto. Mismo trato que una
+                # entrada rota de settings.json -- no protege y hay que decirlo.
+                $guardas[$clave].rota = "$($guardas[$clave].script) declarada en plugin.json pero no protege — $($delPlugin[$clave].motivo)"
+            }
+        }
+    }
+
+    # 2) Restos manuales en el settings.json personal. Siguen disparando, asi que si el
+    #    plugin no la declarara todavia protegerian; pero ya sobran y se listan en `legacy`.
     if ($SettingsPath -and (Test-Path $SettingsPath)) {
         try {
             # Sin -AsHashtable: no existe en PowerShell 5.1, donde corren los hooks.
@@ -367,13 +442,20 @@ function Test-RsPiiGuards {
                     if (-not $cmd) { continue }
                     foreach ($clave in @("bash", "write")) {
                         $g = $guardas[$clave]
-                        if ($g.efectiva) { continue }
                         if (-not $dispara[$clave]) { continue }
                         if ($cmd -notmatch [regex]::Escape($g.script.Replace(".ps1", ""))) { continue }
 
                         $veredicto = Test-RsPiiGuardRuta (Get-RsPiiGuardRuta -Comando $cmd -Script $g.script)
+                        # Toda entrada manual sobra ya: el plugin declara las dos guardas. Se
+                        # listan vivas y rotas por igual -- las rotas fallan en cada llamada,
+                        # y las vivas duplican el hook, que es el fallo de la v2.11.0.
+                        $estadoLegacy = if ($veredicto.efectiva) { "viva" } else { $veredicto.motivo }
+                        $legacy += "$($g.script) registrada a mano en settings.json ($estadoLegacy): $($veredicto.ruta)"
+
+                        if ($g.efectiva) { continue }
                         if ($veredicto.efectiva) {
                             $g.efectiva = $true
+                            $g.source   = "settings"
                             $g.rota     = ""
                             if ($hooksDirNorm) {
                                 $dir = ""
@@ -411,5 +493,7 @@ function Test-RsPiiGuards {
         missing = @($missing)
         stale   = @($stale)
         foreign = @($foreign)
+        legacy  = @($legacy)
+        source  = @{ bash = $guardas.bash.source; write = $guardas.write.source }
     }
 }

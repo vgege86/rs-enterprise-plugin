@@ -65,6 +65,15 @@ if (Test-Path $claudeJson) {
 # todo el fichero da falsos positivos: hay rutas legítimas al árbol fuente en `permissions` y en
 # `extraKnownMarketplaces`.
 $dupHooks = $false
+# Guardas PII registradas a mano por /rs-pii enforce antes de la 3.4.0. Desde esa versión las
+# declara .claude-plugin/plugin.json, así que estas entradas sobran — y no son inofensivas: el
+# caché de plugins lleva la VERSIÓN en la ruta
+# (~/.claude/plugins/cache/<marketplace>/<plugin>/<versión>/hooks/...) y settings.json guarda esa
+# ruta en absoluto, porque ahí ${CLAUDE_PLUGIN_ROOT} no se expande. Cada actualización del plugin
+# las deja apuntando a un directorio que ya no existe: el hook falla en cada Bash y cada Write, y
+# como su código de salida no es 2 no bloquea nada — falla ABIERTA, en silencio. Si por lo que sea
+# la ruta sigue viva, entonces el hook corre DUPLICADO con el del plugin. Las dos formas sobran.
+$piiHooks = $false
 if (Test-Path $settings) {
     try {
         $sj = Get-Content $settings -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -72,7 +81,9 @@ if (Test-Path $settings) {
             foreach ($evt in $sj.hooks.PSObject.Properties.Name) {
                 foreach ($entry in @($sj.hooks.$evt)) {
                     foreach ($h in @($entry.hooks)) {
-                        if ("$($h.command)" -match '(?i)\.claude\\rs-skill-full') { $dupHooks = $true }
+                        $cmd = "$($h.command)"
+                        if ($cmd -match '(?i)\.claude\\rs-skill-full')   { $dupHooks = $true }
+                        if ($cmd -match '(?i)pii-guard-(bash|write)\.ps1') { $piiHooks = $true }
                     }
                 }
             }
@@ -80,7 +91,7 @@ if (Test-Path $settings) {
     } catch { }
 }
 
-if ($shadowFiles.Count -eq 0 -and $shadowDirs.Count -eq 0 -and -not $mcpManual -and -not $dupHooks) {
+if ($shadowFiles.Count -eq 0 -and $shadowDirs.Count -eq 0 -and -not $mcpManual -and -not $dupHooks -and -not $piiHooks) {
     if (-not $WhatIf) { Set-Content -Path $marker -Value (Get-Date -Format s) -Encoding UTF8 }
     if (-not $Quiet) { Write-Output "Sin restos pre-plugin. Nada que limpiar." }
     exit 0
@@ -195,8 +206,20 @@ if ($mcpManual) {
     }
 }
 
-if ($dupHooks) {
-    $acciones += "quitar hooks duplicados de settings.json (ya los declara plugin.json)"
+if ($dupHooks -or $piiHooks) {
+    # Un solo barrido para las dos familias de resto: el hook de la copia vendorizada y las
+    # guardas PII registradas a mano. Las dos las declara hoy plugin.json.
+    $patrones = @()
+    if ($dupHooks) {
+        $patrones += '(?i)\.claude\\rs-skill-full'
+        $acciones += "quitar hooks duplicados de settings.json (ya los declara plugin.json)"
+    }
+    if ($piiHooks) {
+        $patrones += '(?i)pii-guard-(bash|write)\.ps1'
+        $acciones += "quitar las guardas PII registradas a mano en settings.json (desde 3.4.0 las declara plugin.json, y su ruta lleva la version del plugin: al actualizar apuntaban a un directorio inexistente y dejaban de proteger sin avisar)"
+    }
+    $sobra = [regex]::new(($patrones -join "|"))
+
     if (-not $WhatIf) {
         Backup-File $settings "settings.json.bak"
         $s = Get-Content $settings -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -205,7 +228,7 @@ if ($dupHooks) {
             foreach ($evt in $s.hooks.PSObject.Properties.Name) {
                 $keep = @()
                 foreach ($entry in @($s.hooks.$evt)) {
-                    $subs = @($entry.hooks | Where-Object { "$($_.command)" -notmatch '(?i)\.claude\\rs-skill-full' })
+                    $subs = @($entry.hooks | Where-Object { -not $sobra.IsMatch("$($_.command)") })
                     if ($subs.Count -gt 0) { $entry.hooks = $subs; $keep += $entry }
                 }
                 if ($keep.Count -gt 0) { $nuevos[$evt] = $keep }

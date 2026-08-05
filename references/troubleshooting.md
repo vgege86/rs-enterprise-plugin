@@ -124,21 +124,21 @@ Solución:
 
 ---
 
-## check_env dice guards_stale: una guarda registrada que no protege
+## check_env dice guards_stale: una guarda declarada que no protege
 
 Causas:
 
-- la entrada de `hooks.PreToolUse` existe y está bien formada, pero el `.ps1` al que apunta **no está en esa ruta**. Claude Code lanza el hook, `powershell` sale con error — y ese código **no es 2**, el único que bloquea —, así que el bypass queda abierto sin que nada lo delate
-- el motivo casi siempre es que el plugin cambió de sitio (reinstalación, otra ruta de caché, otro perfil, un checkout movido): `~/.claude/settings.json` lleva la ruta **cableada en absoluto**, porque ahí `${CLAUDE_PLUGIN_ROOT}` no se expande — solo lo hace en `.claude-plugin/plugin.json` y `.mcp.json`
-- si alguien escribió `${CLAUDE_PLUGIN_ROOT}` a mano en `settings.json`, llega literal y la guarda nunca ha protegido
+- la entrada existe y está bien formada, pero el `.ps1` al que apunta **no está en esa ruta**. Claude Code lanza el hook, `powershell` sale con error — y ese código **no es 2**, el único que bloquea —, así que el bypass queda abierto sin que nada lo delate
+- si viene del **plugin** (`guards_source` = `plugin`): la instalación está incompleta, falta alguno de los dos `.ps1`. Reinstalar el plugin
+- si viene de un **resto manual** en `~/.claude/settings.json` (`guards_legacy` no vacío): es la forma antigua de registrarlas, anterior a 3.4.0. Ahí la ruta iba **cableada en absoluto** —`${CLAUDE_PLUGIN_ROOT}` solo se expande en `.claude-plugin/plugin.json` y `.mcp.json`— y la ruta del caché de plugins lleva la **versión** dentro, así que cada actualización del plugin la dejaba muerta
 
 ---
 
 Solución:
 
-- **`/rs-pii enforce`**: reescribe la entrada con la ruta actual (sustituyéndola, no añadiendo una segunda) y **reiniciar** después, como cualquier cambio de hooks
-- se avisa en **cualquier modo**, también en `off`: las guardas no dependen de `pii_policy.mode`, así que una guarda rota deja ese bypass abierto siempre. Con `enforce` sale además como `pii.ok = false`
-- `guards_foreign` es distinto y **no** es un fallo: la guarda protege, pero desde otra copia del plugin que no se actualiza con `/plugin marketplace update`. Se repunta igual, con `/rs-pii enforce`
+- desde 3.4.0 **no hay que registrar nada a mano**: las guardas las declara el plugin y se actualizan con él. Los restos los retira `scripts/cleanup-preplugin.ps1` al arrancar una sesión nueva, con copia previa en `~/.claude/_backup-preplugin-<fecha>/`
+- se avisa en **cualquier modo**, también en `off`: `guards_stale` describe la instalación, no si bloquea aquí (eso es `guards_active`). Con `enforce` sale además como `pii.ok = false`
+- `guards_foreign` es distinto y **no** es un fallo: la guarda protege, pero desde otra copia del plugin que no se actualiza con `/plugin marketplace update`
 
 ---
 

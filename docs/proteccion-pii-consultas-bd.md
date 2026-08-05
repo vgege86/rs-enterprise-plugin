@@ -641,33 +641,35 @@ externo. Si el requisito es que el dato personal **no salga en claro**, la medid
 cumple. Si el requisito es que **no salga**, no lo cumple: eso exige supresión total
 o el control en BD.
 
-**e) Depende de configuración local no versionada.** Parte de las guardas se registran
-en la configuración personal de Claude Code de cada desarrollador, que no viaja con el
-repositorio. Un equipo nuevo sin configurar queda desprotegido. Se mitiga con una
-verificación de entorno que falla si no están registradas, pero sigue siendo una
-dependencia de puesto de trabajo.
+**e) Depende de que la herramienta esté instalada, no de configuración personal.**
+*(Resuelto en la versión 3.4.0; se conserva el apartado porque describe una limitación real
+durante la fase inicial y explica una decisión de diseño.)*
 
-Conviene distinguir dos cosas que se confunden: **estar registradas** es del puesto de
-trabajo, **actuar** es del workspace. Una guarda registrada no bloquea nada en un workspace
-en `off` (§4.4), y eso es lo pretendido; lo que este apartado señala es lo contrario — un
-workspace en `enforce` en un puesto donde nadie las registró no tiene quien las aplique.
+Durante las primeras versiones las guardas se registraban **a mano en la configuración
+personal** de cada desarrollador, que no viaja con el repositorio. Eso traía tres problemas,
+y el tercero era grave:
 
-Con un matiz adicional: la herramienta lee esa configuración **al arrancar la sesión**, de
-modo que una guarda registrada a mitad de sesión no entra en vigor hasta reiniciarla. En esa
-ventana la verificación informa de que están registradas —lo están, en el fichero— mientras
-los bypass siguen abiertos. Por eso el procedimiento de activación exige reiniciar antes de
-dar la protección por efectiva.
+- Un puesto nuevo quedaba desprotegido en silencio hasta que alguien las registrara.
+- Al ser configuración personal, aplicaban a **todos** los proyectos de esa persona, tuvieran
+  o no que ver con estas soluciones.
+- Y guardaban la **ruta absoluta** del script de cada guarda. El almacén local de la
+  herramienta organiza cada versión en su propia carpeta, de modo que **cada actualización
+  del plugin dejaba esas rutas apuntando a una carpeta que ya no existía**: la guarda se
+  lanzaba, fallaba, y no bloqueaba nada, porque el código de error de un script que no se
+  encuentra no es el que interrumpe la operación. Fallaba abierta, sin ninguna señal. Se
+  comprobó sobre una instalación real: la ruta registrada apuntaba a la versión anterior.
 
-Y un segundo matiz, del mismo origen: esa configuración guarda la **ruta absoluta** del script
-de cada guarda, porque la variable que resuelve la raíz del plugin solo se sustituye en los
-manifiestos del propio plugin, no en la configuración personal. Si el plugin cambia de sitio
-—una reinstalación, otra ruta de caché, otro perfil— la entrada sigue ahí pero apunta a un
-fichero que ya no existe: la guarda se lanza, falla, y **no bloquea nada**, porque el código de
-error de un script que no se encuentra no es el que interrumpe la operación. Desde la versión
-3.2.2 la verificación de entorno comprueba que el fichero existe y reporta esas guardas como
-**no registradas**, con el motivo y la ruta; antes las contaba como presentes, de modo que el
-sistema podía declararse protegido con los dos bypass abiertos sin que nadie hubiera hecho nada
-mal. El aviso se emite en cualquier modo, porque las guardas no dependen del modo del workspace.
+Desde 3.4.0 las guardas las declara el **propio plugin**, con una variable que se resuelve a
+la versión en curso. Se instalan, se actualizan y se retiran con él; no hay ruta que
+envejezca, ni configuración personal que tocar, ni puesto que quede a medias. Las entradas
+manuales que quedaran de antes se retiran solas al arrancar una sesión, con copia previa.
+
+Queda una dependencia, menor y ordinaria: **si el plugin no está instalado, no hay guardas**.
+Y una ventana: la herramienta resuelve los hooks al arrancar, así que un plugin recién
+instalado o actualizado no las tiene vivas hasta reiniciar. La verificación de entorno
+distingue las dos caras — si están **disponibles** (instalación) y si **bloquean aquí**
+(modo del workspace, §4.4) — y comprueba además que el fichero de cada guarda exista, para no
+poder declarar protegido lo que no lo está.
 
 **f) Una columna marcada como segura por error no se detecta.** Nombres, apellidos y
 direcciones no tienen patrón reconocible. Si alguien los declara seguros, ninguna

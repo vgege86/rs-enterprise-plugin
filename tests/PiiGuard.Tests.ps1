@@ -1188,6 +1188,86 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
         }
     }
 
+    Context "-ManifestPath: desde 3.4.0 la fuente es el plugin, no el settings personal" {
+        <#
+            Las guardas se registraban a mano en ~/.claude/settings.json, donde
+            ${CLAUDE_PLUGIN_ROOT} NO se expande: habia que cablear la ruta absoluta. Y el cache
+            de plugins lleva la VERSION en la ruta
+            (~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/hooks/...), asi que CADA
+            actualizacion del plugin dejaba las dos entradas apuntando a un directorio
+            inexistente: las guardas morian fallando abiertas, en silencio. Declaradas en
+            plugin.json la variable si se expande y apunta siempre a la version en curso.
+        #>
+        BeforeAll {
+            function New-PluginPrueba {
+                param([string]$Nombre, [switch]$SinGuardas, [switch]$SinFicheros)
+                $root = Join-Path $TestDrive $Nombre
+                $pre = if ($SinGuardas) { "" } else { @'
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-bash.ps1\"" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-write.ps1\"" } ] }
+    ],
+'@ }
+                $man = Join-Path $root ".claude-plugin/plugin.json"
+                New-Item -ItemType File -Path $man -Force | Out-Null
+                Set-Content -LiteralPath $man -Encoding UTF8 -Value ('{ "name": "x", "hooks": {' + $pre + ' "Stop": [] } }')
+                if (-not $SinFicheros) {
+                    foreach ($n in @("pii-guard-bash.ps1", "pii-guard-write.ps1")) {
+                        $p = Join-Path $root "hooks/$n"
+                        New-Item -ItemType File -Path $p -Force | Out-Null
+                        Set-Content -LiteralPath $p -Value "exit 0" -Encoding UTF8
+                    }
+                }
+                return $man
+            }
+        }
+
+        It "declaradas en plugin.json con los .ps1 en su sitio -> ok, y la fuente es el plugin" {
+            $r = Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-ok")
+            $r.ok           | Should -BeTrue
+            $r.source.bash  | Should -Be "plugin"
+            $r.source.write | Should -Be "plugin"
+            @($r.legacy).Count | Should -Be 0
+        }
+
+        It "un manifiesto que no las declara no cuenta" {
+            (Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-vacio" -SinGuardas)).ok | Should -BeFalse
+        }
+
+        It "declaradas pero sin los .ps1 -> no ok (instalacion incompleta), y lo dice" {
+            $r = Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-roto" -SinFicheros)
+            $r.ok | Should -BeFalse
+            ($r.stale -join " ") | Should -Match "plugin.json"
+        }
+
+        It "un resto manual muerto no impide que el plugin proteja, y se lista para retirarlo" {
+            # El caso real: ruta del cache con la version dentro, muerta tras actualizar.
+            $man = New-PluginPrueba "plug-con-resto"
+            $viejo = (Join-Path $TestDrive "cache/rs-enterprise-agent/3.2.1/hooks/pii-guard-bash.ps1").Replace('\', '\\')
+            $s = Join-Path $TestDrive "settings-resto.json"
+            Set-Content -LiteralPath $s -Encoding UTF8 -Value ('{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"' + $viejo + '\"" } ] }
+] } }')
+            $r = Test-RsPiiGuards -SettingsPath $s -ManifestPath $man
+            $r.ok              | Should -BeTrue
+            $r.source.bash     | Should -Be "plugin"
+            @($r.legacy).Count | Should -Be 1
+            ($r.legacy -join " ") | Should -Match "3\.2\.1"
+            # Ya no es 'stale': la guarda SI esta, solo que la aporta el plugin.
+            @($r.stale).Count  | Should -Be 0
+        }
+
+        It "un resto manual VIVO tambien se lista: duplicaria el hook" {
+            $man = New-PluginPrueba "plug-dup"
+            $vivo = (Join-Path $TestDrive "plug-dup/hooks/pii-guard-write.ps1").Replace('\', '\\')
+            $s = Join-Path $TestDrive "settings-dup.json"
+            Set-Content -LiteralPath $s -Encoding UTF8 -Value ('{ "hooks": { "PreToolUse": [
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"' + $vivo + '\"" } ] }
+] } }')
+            ((Test-RsPiiGuards -SettingsPath $s -ManifestPath $man).legacy -join " ") | Should -Match "viva"
+        }
+    }
+
     Context "-HooksDir: de que copia del plugin cuelga la guarda viva" {
         It "avisa cuando la guarda protege desde otra copia, sin invalidar el registro" {
             # El escenario de la v2.11.0: una copia vendorizada sigue protegiendo (por eso
@@ -1212,5 +1292,85 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
             $r.ok | Should -Be $true
             @($r.foreign).Count | Should -Be 0
         }
+    }
+}
+
+Describe "cleanup-preplugin.ps1 retira las guardas PII registradas a mano" {
+    <#
+        Desde 3.4.0 las declara plugin.json. Las entradas manuales que quedan de antes no son
+        inofensivas: si su ruta sigue viva el hook corre DUPLICADO, y si esta muerta -- lo
+        habitual, porque la ruta del cache lleva la version del plugin -- falla en cada Bash y
+        cada Write sin bloquear nada. Y /plugin marketplace update no toca ~/.claude, asi que
+        la limpieza tiene que llegar por el hook SessionStart del propio plugin.
+    #>
+    BeforeAll {
+        $script:cleanup = Join-Path $PSScriptRoot ".." "scripts" "cleanup-preplugin.ps1"
+
+        function New-HomeConGuardas {
+            param([string]$Nombre)
+            $hogar = Join-Path $TestDrive $Nombre
+            $p = Join-Path $hogar ".claude/settings.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            # Replica de un settings.json real: las dos guardas con la ruta del cache (que
+            # lleva la version), mas configuracion ajena que NO se debe tocar.
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value @'
+{
+  "permissions": { "allow": ["Bash(dotnet build:*)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\Users\\X\\.claude\\plugins\\cache\\rs-enterprise-agent\\rs-enterprise-agent\\3.2.1\\hooks\\pii-guard-bash.ps1\"" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\Users\\X\\.claude\\plugins\\cache\\rs-enterprise-agent\\rs-enterprise-agent\\3.2.1\\hooks\\pii-guard-write.ps1\"" } ] }
+    ],
+    "Stop": [ { "hooks": [ { "type": "command", "command": "powershell -File C:\\otro\\hook.ps1" } ] } ]
+  }
+}
+'@
+            return $hogar
+        }
+
+        function Invoke-Cleanup {
+            param([string]$Hogar, [switch]$WhatIf)
+            $previo = $env:USERPROFILE
+            try {
+                $env:USERPROFILE = $Hogar
+                if ($WhatIf) { & $script:cleanup -WhatIf | Out-String }
+                else         { & $script:cleanup | Out-String }
+            } finally { $env:USERPROFILE = $previo }
+        }
+    }
+
+    It "las detecta y dice que las va a quitar" {
+        $h = New-HomeConGuardas "home-detecta"
+        (Invoke-Cleanup -Hogar $h -WhatIf) | Should -Match "guardas PII registradas a mano"
+    }
+
+    It "-WhatIf no toca el fichero" {
+        $h = New-HomeConGuardas "home-whatif"
+        $null = Invoke-Cleanup -Hogar $h -WhatIf
+        (Get-Content (Join-Path $h ".claude/settings.json") -Raw) | Should -Match "pii-guard-bash"
+    }
+
+    It "las retira, conserva lo ajeno y deja copia previa" {
+        $h = New-HomeConGuardas "home-retira"
+        $null = Invoke-Cleanup -Hogar $h
+        $s = Get-Content (Join-Path $h ".claude/settings.json") -Raw
+
+        $s | Should -Not -Match "pii-guard"
+        # Lo que NO es suyo se queda como estaba: permisos y el hook de otro proyecto. Se
+        # comprueba sobre el objeto, no sobre el texto: en el JSON las barras van escapadas
+        # (C:\\otro\\hook.ps1) y un -Match sobre el crudo daria un falso rojo.
+        $cfg = $s | ConvertFrom-Json
+        $cfg.permissions.allow | Should -Contain "Bash(dotnet build:*)"
+        "$($cfg.hooks.Stop[0].hooks[0].command)" | Should -Be "powershell -File C:\otro\hook.ps1"
+        # PreToolUse se queda vacio y por tanto desaparece, en vez de dejar una lista huerfana.
+        $cfg.hooks.PSObject.Properties.Name | Should -Not -Contain "PreToolUse"
+        # Nada se borra sin copia.
+        @(Get-ChildItem (Join-Path $h ".claude") -Filter "_backup-preplugin-*" -Directory).Count | Should -BeGreaterThan 0
+    }
+
+    It "es idempotente: una segunda pasada no encuentra nada" {
+        $h = New-HomeConGuardas "home-idempotente"
+        $null = Invoke-Cleanup -Hogar $h
+        (Invoke-Cleanup -Hogar $h) | Should -Match "Nada que limpiar"
     }
 }

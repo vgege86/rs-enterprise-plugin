@@ -1,11 +1,35 @@
 {
   "name": "rs-enterprise-agent",
   "description": "Agente C# senior para soluciones uCollect/RS. Usar SIEMPRE que el mensaje mencione un fichero .sln o una solución RS (RSProc*, AgendaWeb, AISServiceManager...), aunque el patrón no sea exacto: \"Solucion.sln - cambio a realizar\" dispara el pipeline completo (planificación, análisis, validación, testing, build). También para auditoría, impacto, ERD/modelo BD, scripts de idiomas, commits (SVN o Git, autodetectado) o documentación sobre una solución.",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "author": {
     "name": "RS"
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-bash.ps1\"",
+            "timeout": 10,
+            "statusMessage": "RS: guarda PII (bash)..."
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-write.ps1\"",
+            "timeout": 10,
+            "statusMessage": "RS: guarda PII (escritura)..."
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

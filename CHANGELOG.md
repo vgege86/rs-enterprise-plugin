@@ -1,5 +1,50 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.0 — 2026-08-05
+
+### Las guardas PII las declara el plugin: cada actualización las mataba en silencio
+
+Se registraban a mano en `~/.claude/settings.json` desde `/rs-pii enforce`. Ahí
+`${CLAUDE_PLUGIN_ROOT}` **no se expande** —solo lo hace en `.claude-plugin/plugin.json` y
+`.mcp.json`—, así que había que cablear la ruta absoluta. Y el caché de plugins de Claude Code
+organiza cada versión en su propia carpeta:
+
+```
+~/.claude/plugins/cache/rs-enterprise-agent/rs-enterprise-agent/3.2.1/hooks/pii-guard-bash.ps1
+                                                                 ^^^^^
+```
+
+**Cada `/plugin marketplace update` dejaba las dos entradas apuntando a un directorio que ya no
+existe.** Claude Code lanza el hook, `powershell` sale con error, y ese código **no es 2** —el único
+que bloquea—, así que las dos guardas fallaban **abiertas**, sin ninguna señal. Hasta la 3.2.2
+`check_env` seguía respondiendo `guards_registered: true`. No es un caso raro que exija mover el
+plugin de sitio: le pasa a todo el mundo, en cada actualización, por construcción. Verificado sobre
+una instalación real.
+
+`.claude-plugin/plugin.json` declara ahora las dos guardas en `hooks.PreToolUse`, junto a los tres
+hooks que ya tenía, con `${CLAUDE_PLUGIN_ROOT}` — que ahí sí se expande, y a la versión en curso. Se
+instalan, se actualizan y se retiran con el plugin. Esto era inviable antes de la 3.3.0, cuando las
+guardas bloqueaban siempre: declararlas en el manifiesto habría encendido un bloqueo de alcance de
+máquina para todo el equipo. Como ahora siguen al modo del workspace, no enciende nada a nadie que
+no lo haya pedido.
+
+**`/rs-pii enforce` deja de escribir en `~/.claude/settings.json`.** Su procedimiento se reduce a:
+inventario → verificar que las guardas están → confirmar → escribir el modo. Desaparece el paso de
+editar a mano el fichero personal del usuario, que era la operación más frágil del agente.
+
+**Los restos se retiran solos.** `scripts/cleanup-preplugin.ps1` —que ya corre en `SessionStart` por
+esto mismo: `/plugin marketplace update` no toca `~/.claude`, y un hook del propio `plugin.json` es
+el único vector que llega— detecta las entradas manuales y las quita, con copia previa en
+`~/.claude/_backup-preplugin-<fecha>/`. Se lleva tanto las muertas (fallan en cada `Bash` y cada
+`Write`) como las vivas (duplicarían el hook del plugin, que es el fallo de la v2.11.0), y **no toca
+nada más** del fichero: permisos, hooks de otros proyectos y demás claves se conservan; si
+`PreToolUse` se queda vacío, se elimina la clave en vez de dejar una lista huérfana.
+
+`Test-RsPiiGuards` cambia de fuente de verdad: `-ManifestPath` (el `plugin.json`) manda, y
+`settings.json` se mira solo para listar los restos. `check_env` gana `pii.guards_legacy` y
+`pii.guards_source` (`plugin` | `settings`), y `guards_note` deja de hablar de `settings.json`:
+`guards_registered` describe la **instalación**, `guards_active` si bloquea **en este workspace**.
+
 ## 3.3.0 — 2026-08-05
 
 ### Las guardas PII siguen al modo del workspace
