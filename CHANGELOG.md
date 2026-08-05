@@ -1,5 +1,60 @@
 # RS Enterprise Agent — Changelog
 
+## 3.5.1 — 2026-08-05
+
+### La suite entera fallaba con Windows PowerShell 5.1, que es el intérprete de los hooks
+
+140 tests en rojo al ejecutarla con `powershell`, y ninguno era un fallo real. **132 de los 140
+tenían una única causa**, repetida 35 veces con la misma forma:
+
+```powershell
+Join-Path $PSScriptRoot ".." "hooks" "lib-crypto.ps1"    # 3 posicionales
+```
+
+El tercer argumento posicional de `Join-Path` es `-AdditionalChildPath`, que existe **desde
+PowerShell 6**. En 5.1 no encaja en ningún parámetro y la llamada falla. Como falla en *ejecución* y
+no al parsear, el gate de la 3.4.6 no podía verlo. Ahora se escribe `Join-Path $base "a/b/c"`: la
+barra vale igual en Windows y en Linux, así que sirve para los dos intérpretes y para el CI.
+
+Esto importa más de lo que parece para un fichero de test. Los hooks los lanza `plugin.json` con
+`powershell -File`, es decir 5.1: una suite que solo corre en PowerShell 7 no está probando el
+intérprete en el que el plugin se ejecuta de verdad. Y quien la ejecutara en local con `powershell`
+se encontraba 140 fallos que parecían de código y no lo eran.
+
+Los 8 restantes eran tres cosas distintas, y una de ellas tampoco era lo que parecía: los 5 de
+`log-execution.ps1 saneado de PII` fallaban por **el mismo `Join-Path`**, en una forma
+(`Join-Path $ws "executions" "history.json"`) que no encajaba en la primera pasada de sustitución.
+Los cazó el gate nuevo, no la revisión a ojo.
+
+Quedan 3 saltados bajo 5.1, con `-Skip` explícito y el motivo escrito al lado, porque son
+diferencias reales entre intérpretes y no defectos: dos usan la unidad ficticia `X:\` y el
+`Join-Path` de 5.1 **valida que la unidad exista** mientras que el de 7 no; el tercero lanza un
+`pwsh` hijo desde 5.1 y acaba midiendo el encoding de ese puente en vez del de la guarda. Bajo
+PowerShell 7 los tres corren.
+
+### `$IsWindows` no existe en Windows PowerShell 5.1, y las guardas estaban al revés
+
+`$IsWindows` es una variable de PowerShell Core. En 5.1 vale `$null`, así que
+`-Skip:(-not $IsWindows)` evaluaba `-not $null` = `$true`: los tests marcados «solo Windows» —el
+roundtrip DPAPI de `lib-crypto` y los de `render-word`, que necesitan Word por COM— **se saltaban
+precisamente al ejecutarlos en Windows**, y con el único intérprete donde esas dos cosas están
+disponibles de verdad.
+
+La comprobación correcta es contra `$false` explícito: `$null` (5.1, que solo existe en Windows) y
+`$true` ejecutan; solo el `$false` de PS Core fuera de Windows salta. Con eso, bajo 5.1 `Crypto`
+pasa de 3 a 6 tests y `RenderWord` de 0 a 12 — cobertura que se creía tener y no se estaba
+ejecutando.
+
+### Un gate más, del mismo tipo que el del BOM
+
+`tests/Encoding.Tests.ps1` comprueba ahora también que ningún `.ps1` del repo use `Join-Path` con
+tres o más posicionales. Va ahí y no en el parser por la razón de siempre: **el parser no lo caza**,
+porque es un error de ejecución. Es el mismo patrón que el BOM en la 3.4.6 — una convención que solo
+vive en la cabeza de quien la escribió se rompe; una que falla en la suite, no.
+
+Resultado: **510 passed / 0 failed / 3 skipped** con Windows PowerShell 5.1 y **513 / 0 / 0** con
+PowerShell 7.
+
 ## 3.5.0 — 2026-08-05
 
 ### `Ejecutar-Scripts.ps1` no servía en un cliente con wallet, y era el único lanzador

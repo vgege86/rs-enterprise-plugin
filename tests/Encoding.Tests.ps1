@@ -68,5 +68,23 @@ Describe "Codificación de los scripts PowerShell del repo" {
             $detalle = if ($errores) { ($errores | ForEach-Object { "L$($_.Extent.StartLineNumber): $($_.Message)" }) -join ' | ' } else { '' }
             $errores.Count | Should -Be 0 -Because "el parser reportó: $detalle"
         }
+
+        It "no usa Join-Path con tres o más argumentos posicionales" {
+            # -AdditionalChildPath es de PowerShell 6+. En Windows PowerShell 5.1 -el interprete
+            # con el que plugin.json y runner.ps1 lanzan los hooks- el tercer argumento no encaja
+            # en ningun parametro y la llamada falla en EJECUCION, no al parsear: por eso el
+            # parser no lo caza y hace falta esta comprobacion aparte. Llevo 30 apariciones en la
+            # suite dando 132 fallos que parecian de codigo (ver CHANGELOG 3.5.1).
+            # Forma correcta: Join-Path $base "a/b/c" -- la barra vale en Windows y en Linux.
+            $lineas = [System.IO.File]::ReadAllLines($Ruta)
+            $malas = @()
+            for ($i = 0; $i -lt $lineas.Count; $i++) {
+                # Join-Path seguido de dos o mas literales entrecomillados = 3+ posicionales.
+                if ($lineas[$i] -match 'Join-Path\s+[^\r\n|;)]*?"[^"]*"\s+"') {
+                    $malas += "L$($i + 1): $($lineas[$i].Trim())"
+                }
+            }
+            $malas.Count | Should -Be 0 -Because "no funcionan en PowerShell 5.1: $($malas -join ' | ')"
+        }
     }
 }

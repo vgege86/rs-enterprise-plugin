@@ -1,6 +1,6 @@
 ﻿Describe "lib-mantis credenciales" {
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-mantis.ps1")
         $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Path $script:tmp | Out-Null
     }
@@ -34,7 +34,7 @@
 }
 
 Describe "lib-mantis New-MantisRequest" {
-    BeforeAll { . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1") }
+    BeforeAll { . (Join-Path $PSScriptRoot "../hooks/lib-mantis.ps1") }
 
     It "compone la url con base /api/rest/index.php" {
         $r = New-MantisRequest "https://x/mantis" "GET" "/projects"
@@ -57,7 +57,7 @@ Describe "lib-mantis New-MantisRequest" {
 
 Describe "lib-mantis Get-MantisAdvancePath" {
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-mantis.ps1")
         $script:chain = @('new', 'acknowledged', 'assigned', 'confirmed')
     }
 
@@ -108,9 +108,9 @@ Describe "lib-mantis Get-MantisAdvancePath" {
 # (HTTP 500), pasos intermedios saltados y la rama "ya en el estado destino" inalcanzable.
 Describe "lib-mantis Get-MantisAdvancePath contrato de consumo" {
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-mantis.ps1")
         $script:chain = @('new', 'acknowledged', 'assigned', 'confirmed')
-        $script:cliSrc = Get-Content -Raw (Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1")
+        $script:cliSrc = Get-Content -Raw (Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1")
     }
 
     It "cada elemento es un string suelto, no un array anidado" {
@@ -156,7 +156,7 @@ Describe "lib-mantis Get-MantisAdvancePath contrato de consumo" {
 
 Describe "mantis-cli.ps1 guardas (pre-red)" {
     BeforeAll {
-        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+        $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1"
     }
 
     It "existe el hook" { Test-Path $script:cli | Should -BeTrue }
@@ -181,7 +181,7 @@ Describe "mantis-cli.ps1 guardas (pre-red)" {
 }
 
 Describe "mantis-cli create validación" {
-    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1" }
 
     It "create sin -Summary → success:false antes de tocar red" {
         $out = & $script:cli -Command "create" -Project 12 -Category "General" -Description "x" -CredPath "X:\no-existe.json" | ConvertFrom-Json
@@ -191,7 +191,7 @@ Describe "mantis-cli create validación" {
 }
 
 Describe "mantis-cli transition/comment validación" {
-    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1" }
 
     It "transition sin -Status → success:false" {
         $out = & $script:cli -Command "transition" -Id 42 -CredPath "X:\no-existe.json" | ConvertFrom-Json
@@ -207,7 +207,7 @@ Describe "mantis-cli transition/comment validación" {
 
 Describe "mantis-cli fallo de red" {
     BeforeAll {
-        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+        $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1"
         $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-net-" + [guid]::NewGuid() + ".json")
         $script:dummyToken = "DUMMY-TOKEN-XYZ"
         @{ baseUrl = "http://127.0.0.1:1"; token = $script:dummyToken } | ConvertTo-Json | Set-Content -Path $script:tmp -Encoding UTF8
@@ -247,7 +247,7 @@ Describe "mantis-cli fallo de red" {
 }
 
 Describe "mantis-cli attach/download validación" {
-    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1" }
 
     It "attach con fichero inexistente → success:false" {
         $out = & $script:cli -Command "attach" -Id 42 -Files "X:\no-existe.sql" -CredPath "X:\no-existe.json" | ConvertFrom-Json
@@ -262,7 +262,7 @@ Describe "mantis-cli attach/download validación" {
 }
 
 Describe "mantis-cli advance validación" {
-    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1" }
 
     It "advance sin -Chain → success:false" {
         $out = & $script:cli -Command "advance" -Id 42 -To "assigned" -CredPath "X:\no-existe.json" | ConvertFrom-Json
@@ -277,7 +277,7 @@ Describe "mantis-cli advance validación" {
 }
 
 Describe "mantis-cli assign validación" {
-    BeforeAll { $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1" }
+    BeforeAll { $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1" }
 
     It "assign sin -Handler → success:false (guarda pura, sin red)" {
         $out = & $script:cli -Command "assign" -Id 42 -CredPath "X:\no-existe.json" | ConvertFrom-Json
@@ -293,7 +293,7 @@ Describe "mantis-cli assign validación" {
 
 Describe "mantis-cli advance fallo de red" {
     BeforeAll {
-        $script:cli = Join-Path $PSScriptRoot ".." "hooks" "mantis-cli.ps1"
+        $script:cli = Join-Path $PSScriptRoot "../hooks/mantis-cli.ps1"
         $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-advance-net-" + [guid]::NewGuid() + ".json")
         $script:dummyToken = "DUMMY-TOKEN-ADVANCE"
         @{ baseUrl = "http://127.0.0.1:1"; token = $script:dummyToken } | ConvertTo-Json | Set-Content -Path $script:tmp -Encoding UTF8

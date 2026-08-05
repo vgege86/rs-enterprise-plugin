@@ -34,7 +34,7 @@ BeforeAll {
 
 Describe "pii_cli.py" {
     BeforeAll {
-        $script:cli   = Join-Path $PSScriptRoot ".." "scripts" "pii_cli.py"
+        $script:cli   = Join-Path $PSScriptRoot "../scripts/pii_cli.py"
         $script:ws    = Join-Path $TestDrive "trunk"
         $bd           = Join-Path $script:ws "BD"
         New-Item -ItemType Directory -Path $bd -Force | Out-Null
@@ -226,7 +226,7 @@ Describe "db-query.ps1 camino sin filas" {
         (ej. un DNI) intacto.
     #>
     BeforeAll {
-        $script:hook = Join-Path $PSScriptRoot ".." "hooks" "db-query.ps1"
+        $script:hook = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
 
         # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
         # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
@@ -286,7 +286,7 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
         de fallo (abierto vs cerrado).
     #>
     BeforeAll {
-        $script:hook3 = Join-Path $PSScriptRoot ".." "hooks" "db-query.ps1"
+        $script:hook3 = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
 
         # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
         # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
@@ -545,7 +545,7 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
 
 Describe "pii-guard-bash.ps1" {
     BeforeAll {
-        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1"
+        $script:g     = Join-Path $PSScriptRoot "../hooks/pii-guard-bash.ps1"
         $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "bash-enforce") "enforce"
         $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "bash-off") "off"
         $script:fuera = Join-Path $TestDrive "bash-otro-repo"
@@ -648,7 +648,7 @@ Describe "Repair-RsTextoUtf8 (codificacion de la stdin de las guardas)" {
         maquina que ejecute la suite.
     #>
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-pii.ps1")
         $script:oem  = [System.Text.Encoding]::GetEncoding(850)
         $script:utf8 = New-Object System.Text.UTF8Encoding($false)
         # "Jose Munoz" con e acentuada y ene, compuesto por codigo de caracter para que no
@@ -686,11 +686,15 @@ Describe "Repair-RsTextoUtf8 (codificacion de la stdin de las guardas)" {
         Repair-RsTextoUtf8 "" -Origen $script:oem | Should -Be ""
     }
 
-    It "la guarda de escritura nombra la ruta con acentos intacta (proceso real, stdin real)" {
+    # Lanzado desde Windows PowerShell 5.1, el `pwsh` hijo devuelve sus mensajes por el flujo de
+    # error con el prefijo y el coloreado de PS Core, y el 2>&1 los trae ya decodificados con la
+    # pagina de la consola: la asercion sobre el acento mide el encoding del puente 5.1->pwsh, no
+    # el de la guarda. Bajo pwsh (CI y ejecucion normal) el camino es el real y el test corre.
+    It "la guarda de escritura nombra la ruta con acentos intacta (proceso real, stdin real)" -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
         # Camino de produccion completo: proceso hijo con el evento por stdin, que es donde
         # $input entra en juego. Con la consola en UTF-8 esta prueba es un no-op benigno;
         # con una pagina OEM es la que fija el arreglo.
-        $g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1"
+        $g = Join-Path $PSScriptRoot "../hooks/pii-guard-write.ps1"
         $evento = @{ tool_input = @{ file_path = $script:bueno; content = "ana.lopez@example.com" } } |
                   ConvertTo-Json -Compress
         $previo = $OutputEncoding
@@ -716,7 +720,7 @@ Describe "pii-guard-write.ps1" {
         repo (convencion Actualizador\<ENTORNO>_<AAAAMMDD>) dispara la guarda.
     #>
     BeforeAll {
-        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1"
+        $script:g     = Join-Path $PSScriptRoot "../hooks/pii-guard-write.ps1"
         $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "write-enforce") "enforce"
         $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "write-off") "off"
         $script:fuera = Join-Path $TestDrive "write-otro-repo"
@@ -840,7 +844,7 @@ Describe "log-execution.ps1 saneado de PII" {
         objeto plano, asi que leer "el ultimo task" en un fichero compartido seria
         fragil).
     #>
-    BeforeAll { $script:hookLog = Join-Path $PSScriptRoot ".." "hooks" "log-execution.ps1" }
+    BeforeAll { $script:hookLog = Join-Path $PSScriptRoot "../hooks/log-execution.ps1" }
 
     It "no persiste un DNI en el campo task" {
         $ws = Join-Path $TestDrive "wslog"
@@ -848,7 +852,7 @@ Describe "log-execution.ps1 saneado de PII" {
 
         & $script:hookLog $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success | Out-Null
 
-        $historia = Get-Content (Join-Path $ws "executions" "history.json") -Raw
+        $historia = Get-Content (Join-Path $ws "executions/history.json") -Raw
         $historia | Should -Not -Match "12345678Z"
         $historia | Should -Match "\[PII\]"
     }
@@ -862,7 +866,7 @@ Describe "log-execution.ps1 saneado de PII" {
 
         & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -873,7 +877,7 @@ Describe "log-execution.ps1 saneado de PII" {
 
         & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -885,7 +889,7 @@ Describe "log-execution.ps1 saneado de PII" {
 
         & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -898,7 +902,7 @@ Describe "log-execution.ps1 saneado de PII" {
 
         & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions" "history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 }
@@ -907,7 +911,7 @@ Describe "check-env.ps1 verificacion de guardas" {
     It "informa del estado de las guardas PII" {
         $ws  = Join-Path $TestDrive "wsenv"
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
-        $out = & (Join-Path $PSScriptRoot ".." "hooks" "check-env.ps1") $ws "ProyectoPrueba" | ConvertFrom-Json
+        $out = & (Join-Path $PSScriptRoot "../hooks/check-env.ps1") $ws "ProyectoPrueba" | ConvertFrom-Json
         $out.pii | Should -Not -BeNullOrEmpty
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_registered"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_missing"
@@ -929,7 +933,7 @@ Describe "Get-RsPiiEstadoGuarda (las guardas siguen al modo del workspace)" {
         declarado y ausente convertiria un workspace protegido en uno sin proteccion, en
         silencio -- que es el mismo fallo que ya arreglo la 3.2.2 por otra via.
     #>
-    BeforeAll { . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1") }
+    BeforeAll { . (Join-Path $PSScriptRoot "../hooks/lib-pii.ps1") }
 
     It "modo off -> inactiva" {
         (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-off") "off")).activa | Should -BeFalse
@@ -1046,7 +1050,7 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
         ficheros reales -- con las rutas inventadas de antes ya no medirian lo que creen.
     #>
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-pii.ps1")
 
         $script:HooksReales = Join-Path $TestDrive "plugin\hooks"
         $script:HooksOtros  = Join-Path $TestDrive "copia-vieja\hooks"
@@ -1320,7 +1324,7 @@ Describe "cleanup-preplugin.ps1 retira las guardas PII registradas a mano" {
         la limpieza tiene que llegar por el hook SessionStart del propio plugin.
     #>
     BeforeAll {
-        $script:cleanup = Join-Path $PSScriptRoot ".." "scripts" "cleanup-preplugin.ps1"
+        $script:cleanup = Join-Path $PSScriptRoot "../scripts/cleanup-preplugin.ps1"
 
         function New-HomeConGuardas {
             param([string]$Nombre)

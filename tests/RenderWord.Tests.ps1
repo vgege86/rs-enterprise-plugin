@@ -19,7 +19,10 @@
 #>
 
 function Test-RsWordDisponible {
-    if (-not $IsWindows) { return $false }
+    # $IsWindows no existe en Windows PowerShell 5.1 (es de PS Core): alli vale $null y un
+    # `-not $IsWindows` descartaba Word justo en el interprete de los hooks. Solo el $false
+    # explicito de PS Core fuera de Windows significa "aqui no hay Word".
+    if ($IsWindows -eq $false) { return $false }
     try {
         $w = New-Object -ComObject Word.Application
         $w.Quit()
@@ -32,7 +35,7 @@ $hayWord = Test-RsWordDisponible
 Describe "render-word: un solo origen con -Title" -Skip:(-not $hayWord) {
 
     BeforeAll {
-        $script:hook = Join-Path $PSScriptRoot ".." "hooks" "render-word.ps1"
+        $script:hook = Join-Path $PSScriptRoot "../hooks/render-word.ps1"
         $script:tmp  = Join-Path ([IO.Path]::GetTempPath()) ("rsword-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Path $script:tmp | Out-Null
 
@@ -200,7 +203,7 @@ codigo linea dos
 Describe "render-word: varios orígenes y plantilla sin estilos de tabla" -Skip:(-not $hayWord) {
 
     BeforeAll {
-        $script:hook = Join-Path $PSScriptRoot ".." "hooks" "render-word.ps1"
+        $script:hook = Join-Path $PSScriptRoot "../hooks/render-word.ps1"
         $script:tmp2 = Join-Path ([IO.Path]::GetTempPath()) ("rsword2-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Path $script:tmp2 | Out-Null
 

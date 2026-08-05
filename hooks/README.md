@@ -136,6 +136,41 @@ UTF-8 estricto + parseo). Es el gate; esta sección solo explica el porqué.
 Invoke-Pester tests/Encoding.Tests.ps1
 ```
 
+## `Join-Path` con dos argumentos, nunca tres (obligatoria)
+
+El tercer posicional de `Join-Path` es `-AdditionalChildPath`, que **existe desde PowerShell 6**. En
+5.1 no encaja en ningún parámetro y la llamada falla:
+
+```powershell
+Join-Path $base ".." "hooks" "x.ps1"   # ⛔ solo PS 7
+Join-Path $base "../hooks/x.ps1"       # ✅ 5.1 y 7, Windows y Linux
+```
+
+La barra `/` funciona como separador en los dos sistemas, así que es la forma portable. Este fallo
+es de **ejecución, no de sintaxis**: el parser no lo detecta, por eso lo comprueba
+`tests/Encoding.Tests.ps1` aparte. Llevaba 35 apariciones en la suite dando 132 fallos que parecían
+de código (CHANGELOG 3.5.1).
+
+## `$IsWindows` no existe en 5.1
+
+Es variable de PowerShell Core; en 5.1 vale `$null`. Un `-not $IsWindows` da `$true` y **salta el
+bloque justo en Windows**. Comprobar siempre contra el `$false` explícito:
+
+```powershell
+if (-not $IsWindows) { ... }        # ⛔ se cumple en 5.1-Windows
+if ($IsWindows -eq $false) { ... }  # ✅ solo PS Core fuera de Windows
+```
+
+## Ejecutar la suite
+
+Con los dos intérpretes, porque prueban cosas distintas: `powershell` es el que lanza los hooks en
+producción, `pwsh` es el del CI.
+
+```powershell
+powershell -NoProfile -Command "Invoke-Pester tests"   # 5.1: 3 skipped documentados
+pwsh       -NoProfile -Command "Invoke-Pester tests"   # 7:   todo en verde
+```
+
 Comprobación rápida de todos los hooks bajo 5.1, sin Pester:
 
 ```powershell

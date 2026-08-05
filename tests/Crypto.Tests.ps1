@@ -15,7 +15,7 @@
 
 Describe "lib-crypto: detección y passthrough (sin DPAPI)" {
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-crypto.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-crypto.ps1")
     }
 
     It "Test-RsEncrypted detecta el prefijo enc:" {
@@ -34,11 +34,15 @@ Describe "lib-crypto: detección y passthrough (sin DPAPI)" {
     }
 }
 
-Describe "lib-crypto: roundtrip DPAPI real (solo Windows)" -Skip:(-not $IsWindows) {
+# $IsWindows NO existe en Windows PowerShell 5.1 (es de PS Core): alli vale $null, y un
+# `-not $IsWindows` daba $true, saltando estos tests precisamente en el interprete con el que
+# corren los hooks. Comparar contra $false distingue los tres casos: $null (5.1, siempre Windows)
+# y $true -> ejecutar; solo el $false explicito de PS Core fuera de Windows salta.
+Describe "lib-crypto: roundtrip DPAPI real (solo Windows)" -Skip:($IsWindows -eq $false) {
     # DPAPI CurrentUser: solo la misma cuenta en la misma maquina descifra. Fuera de Windows no
     # existe la API -> el bloque entero se salta, no falla.
     BeforeAll {
-        . (Join-Path $PSScriptRoot ".." "hooks" "lib-crypto.ps1")
+        . (Join-Path $PSScriptRoot "../hooks/lib-crypto.ps1")
         # Valor INVENTADO, sin ningun valor real. Lleva acentos y un simbolo no ASCII a proposito:
         # el formato esta documentado como CryptProtectData sobre bytes UTF-8, y un desajuste de
         # codificacion entre quien cifra y quien descifra es justo la divergencia a cazar.

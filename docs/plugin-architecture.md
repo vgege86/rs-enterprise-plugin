@@ -363,6 +363,20 @@ está en `hooks/README.md` § Convención de codificación y en CHANGELOG 3.4.6.
 reescribir un `.ps1` entero: editores y herramientas de escritura automática guardan sin BOM por
 defecto.
 
+⛔ **El intérprete de referencia es Windows PowerShell 5.1**, el que usa `plugin.json` con
+`powershell -File`. Todo lo que se escriba aquí —hooks y también los tests que los ejercitan— tiene
+que funcionar en 5.1, no solo en `pwsh`. Dos trampas ya pagadas, ambas verificadas hoy por
+`tests/Encoding.Tests.ps1` y detalladas en `hooks/README.md`:
+
+- `Join-Path` admite **dos** argumentos posicionales; el tercero (`-AdditionalChildPath`) es de
+  PowerShell 6+. Usar `Join-Path $base "a/b/c"`, que vale en Windows y en Linux.
+- `$IsWindows` **no existe en 5.1** (vale `$null`), así que `-not $IsWindows` se cumple en Windows.
+  Comparar contra `$false` explícito.
+
+Los dos fallan en **ejecución, no al parsear**, así que el parser no los caza y hacen falta
+comprobaciones aparte. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
+producción, `pwsh` porque es el del CI.
+
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
 usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,
