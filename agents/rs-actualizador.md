@@ -181,8 +181,25 @@ Para cada ID de tarea del delta, descargar los adjuntos `.sql` a `<destino>\scri
 - Si el MCP/credenciales no están disponibles → no bloquear: listar las tareas y sus adjuntos
   esperados en el readme y avisar.
 
-Renombrar con prefijo de orden: `01-<TAREA>-<nombre>.sql`, `02-...`. El orden importa (se ejecutan
-alfabéticamente); si hay dependencias entre scripts, preguntar el orden al usuario.
+Renombrar con prefijo de orden: `01-<TAREA>-<nombre>.sql`, `02-...`. El orden importa; si hay
+dependencias entre scripts, preguntar el orden al usuario.
+
+Después escribir `<destino>\scripts\scripts.json` declarando ese orden explícitamente — formato en
+`assets\instalacion\scripts.json.tpl`. Cuando existe, **manda sobre el descubrimiento alfabético**
+de `Ejecutar-Scripts.ps1`, así que el orden acordado con el usuario queda fijado en el paquete y no
+depende de que nadie renombre un fichero en destino:
+
+```json
+{ "scripts": [
+    { "ruta": "01-<TAREA>-<nombre>.sql" },
+    { "ruta": "02-<TAREA>-<nombre>.sql" },
+    { "ruta": "99-RVERSIONES-<ENTORNO>.sql", "entorno": "<ENTORNO>" }
+] }
+```
+
+⛔ Declarar **solo** ficheros que existan en `scripts\`: un obligatorio ausente aborta la ejecución
+en el cliente antes de conectar (deliberado — una entrega incompleta no se empieza a medias). Un
+`.sql` que viaje sin declarar se avisa y **no se ejecuta**.
 
 ⛔ **Aviso obligatorio al usuario** (aunque haya bajado scripts): *"Valida los scripts de `scripts\`
 y añade los que falten — un actualizador sin su script deja la BD del cliente incoherente"*, con la

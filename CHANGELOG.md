@@ -1,5 +1,92 @@
 # RS Enterprise Agent — Changelog
 
+## 3.5.0 — 2026-08-05
+
+### `Ejecutar-Scripts.ps1` no servía en un cliente con wallet, y era el único lanzador
+
+Construía siempre `sqlplus -L -S "$usuario/$Password@$conexion"`. Eso exige usuario y contraseña, no
+contempla la autenticación externa, y mete la contraseña en `argv`, donde queda visible en la lista
+de procesos de la máquina del cliente. En una instalación con Oracle Wallet no había forma de usarlo.
+
+La plantilla se ha reescrito partiendo de un lanzador ya validado contra una base de datos real con
+wallet. **No es una reescritura desde cero**: lo que traía dentro son cicatrices de fallos pagados en
+producción, y el trabajo ha consistido en no volver a pagarlos.
+
+Doble modo de conexión. Con autenticación externa, el alias viaja como **un único argumento
+literal** `/@alias`, sin componer ni trocear ninguna cadena; con usuario, `sqlplus /nolog` y el
+`CONNECT` dentro de un fichero temporal. En SQL Server, que tenía el mismo defecto con `sqlcmd -P`,
+la contraseña pasa por `SQLCMDPASSWORD` y se añade autenticación integrada (`-E`). En ningún motor
+queda ya una contraseña en la línea de comandos.
+
+Validador de alias **antes** de conectar: un descriptor `(DESCRIPTION=...)` o un EZConnect
+`host:puerto/servicio` se rechazan con un mensaje que explica el porqué. El wallet indexa la
+credencial por el texto exacto del alias, y cualquier troceo por `/` o `@` rompe un descriptor TCPS
+y produce un ORA-12154 que parece un problema de red y no lo es.
+
+Pre-vuelo antes de tocar la BD: `sqlplus`/`sqlcmd` en el PATH, `TNS_ADMIN`, `sqlnet.ora`,
+`WALLET_LOCATION`, `SQLNET.WALLET_OVERRIDE`, `cwallet.sso`, el alias en `tnsnames.ora`, y una
+conexión real que reporta usuario, `CURRENT_SCHEMA`, BD y protocolo. Se conserva `-Schema` para el
+`ALTER SESSION SET CURRENT_SCHEMA`: el usuario del wallet muchas veces no es el dueño de las tablas.
+
+La cabecera de sqlplus lleva `WHENEVER SQLERROR`/`OSERROR EXIT FAILURE` —sin ellos sqlplus devuelve
+0 aunque el script falle y la instalación se da por buena—, `SET DEFINE OFF` para que un `&` dentro
+de un texto no sea una variable de sustitución, y `SET SQLBLANKLINES ON` para que un literal con
+líneas en blanco no se corte en SP2-0042 ni entre truncado. Los ficheros temporales se escriben
+**sin BOM**: con BOM, sqlplus se come la primera sentencia.
+
+Tres fallos concretos que la plantilla ya trae resueltos, cada uno con su test:
+
+- **`WALLET_LOCATION` con `?` de `ORACLE_HOME`.** `sqlnet.ora` admite `DIRECTORY = ?/network/admin`.
+  En Windows `?` es un carácter ilegal en rutas, así que `Test-Path` no devuelve `$false`: lanza
+  `ArgumentException` y abortaba el pre-vuelo entero. Ahora se quitan las comillas, se expande `?`
+  con `$env:ORACLE_HOME` si está, y si la ruta sigue sin ser comprobable se avisa y se continúa.
+- **`NLS_LANG` se pisaba incondicionalmente.** La precedencia correcta es `-NlsLang` > `%NLS_LANG%`
+  del entorno > `AMERICAN_AMERICA.AL32UTF8`. Y si el valor final no es UTF-8 se avisa y se pide
+  confirmación: los `.sql` se generan en UTF-8 y con otro `NLS_LANG` los acentos entran corruptos
+  **sin error de Oracle**, así que el fallo se descubre al consultar, no al cargar.
+- **SP2-0306 por contraseña vacía.** La contraseña solo se pedía si no había `-Simular`, pero
+  `-Simular` sí conecta de verdad: el `CONNECT` salía como `usuario/@alias`. Ahora se pide también
+  al simular, y los `SP2-xxxx` se diagnostican aparte de los `ORA-*` — son sintaxis del `CONNECT`,
+  no wallet ni red ni credenciales, y el bloque de pistas ORA solo despistaba.
+
+Se ha **sustituido** el lanzador en vez de añadir un segundo: `hooks/instalacion-paquete.ps1` ya lo
+copiaba literal desde `assets/instalacion/` para los dos modos, así que el punto de unificación
+existía. Dos lanzadores habrían significado arreglar el wallet en uno y no en el otro. Lo que **no**
+se ha hecho es adoptar el fichero de referencia tal cual: era Oracle-only y el del plugin soporta
+SQL Server, así que es una fusión —capa de conexión y pre-vuelo del primero, descubrimiento de
+scripts, `rutas.json` y SQL Server del segundo—.
+
+### El orden de los scripts de un actualizador ya no depende de renombrar ficheros
+
+`scripts.json` opcional junto a los `.sql`. Si existe, **manda** sobre el descubrimiento por
+carpetas: declara qué se ejecuta, en qué orden, qué es opcional, qué depende del entorno y qué es
+purga (solo con `-Recargar`). Si no existe, se mantiene la convención de siempre —raíz, `Inserts\`,
+`PorEntorno\99-RVERSIONES-<Entorno>.sql`—, así que los paquetes ya entregados siguen funcionando sin
+regenerarlos.
+
+Se eligió el manifiesto y no una plantilla con placeholders porque el `.ps1` **ya** era un fichero
+fijo copiado literal: introducir sustitución de texto habría convertido en código generado algo que
+no lo era, con el riesgo de romper la sintaxis al sustituir. Con manifiesto, el `.ps1` se testea una
+vez y no cambia nunca.
+
+Qué pasa si lo declarado no cuadra con el disco: un script obligatorio ausente es **error antes de
+conectar** —una entrega incompleta no se empieza, es preferible no tocar la BD a dejarla a medias—;
+uno marcado `opcional` solo avisa; y un `.sql` que viaja pero **no** está declarado se avisa y no se
+ejecuta, porque lanzar SQL no declarado contra la base de datos de un cliente es peor que omitirlo.
+
+Lo genera `/rs-actualizador`, que es quien tiene orden significativo y ya preguntaba al usuario por
+las dependencias entre scripts. `/rs-instalador` no lo genera: su orden es estructural y la
+convención le basta. Los dos flujos consumen el mismo lanzador, pero no se les ha forzado el mismo
+manifiesto.
+
+### Cobertura
+
+`tests/EjecutarScripts.Tests.ps1` — 37 tests. El `.ps1` acepta `-DotSourceOnly`, que devuelve el
+control tras definir las funciones puras y antes de tocar nada, de modo que los caminos de decisión
+se ejercitan sin base de datos delante: validador de alias, precedencia de `NLS_LANG`, expansión de
+`?` en `WALLET_LOCATION`, elección de modo de autenticación, temporal sin BOM, y la resolución del
+manifiesto contra sus casos límite.
+
 ## 3.4.6 — 2026-08-05
 
 ### Tres hooks llegaron a la 3.4.5 sin BOM y no parseaban

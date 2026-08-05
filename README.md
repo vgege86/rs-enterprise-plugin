@@ -291,9 +291,14 @@ usuario final pueda llegar a leerla. El actualizador genera el insert para la BD
 para nuestra BD de control; ninguno se ejecuta solo. Detalle: `references/actualizador.md`.
 
 Instalación en el servidor del cliente (ambos paquetes):
-1. `Ejecutar-Scripts.ps1 -Entorno <E>` — SQL en orden, fail-fast, pide confirmación y password.
-   Tres tandas: los `.sql` de la carpeta, luego `Inserts\` (paramétricas) y por último la fila base
+1. `Ejecutar-Scripts.ps1 -Entorno <E>` — SQL en orden, fail-fast, con pre-vuelo y confirmación.
+   El orden lo fija `scripts.json` si el paquete lo trae; si no, la convención de tres tandas: los
+   `.sql` de la carpeta, luego `Inserts\` (paramétricas) y por último la fila base
    `PorEntorno\99-RVERSIONES-<E>.sql`, **solo la del entorno indicado**.
+   Conecta con **wallet Oracle / autenticación integrada** o con usuario y contraseña, según
+   `bd.autenticacion` de `rutas.json`. La contraseña nunca viaja por la línea de comandos.
+   Flags: `-Simular` (conecta y lista, no escribe), `-Recargar` (purga opt-in), `-SinConfirmar`,
+   `-Schema`, `-NlsLang`.
 2. `Instalar.ps1 -Entorno <E>` — backup ZIP de cada carpeta destino y copia (rutas en `rutas.json`).
 3. Parámetros de configuración a mano, según `readme.txt`.
 

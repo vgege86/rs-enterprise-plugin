@@ -65,7 +65,7 @@ Estructura:
   "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 },
   "entornos": {
     "DESA": { "backup": "", "modulos": { "AgendaWeb": "", "Exes": "", "ServiceManager": "", "Modulos": "" },
-              "bd": { "motor": "ORACLE", "conexion": "", "usuario": "" } },
+              "bd": { "motor": "ORACLE", "conexion": "", "usuario": "", "autenticacion": "usuario", "tnsAdmin": "", "schema": "" } },
     "TEST": { }, "PROD": { }
   }
 }
@@ -74,6 +74,15 @@ Estructura:
 `entornos` (opcional pero recomendado) alimenta el `rutas.json` que viaja al cliente: rutas de
 instalación por módulo, ruta de backup y datos de conexión **sin password**. Si falta, el paquete
 sale con `rutas.json` de plantilla y hay que rellenarlo a mano antes de entregarlo.
+
+En el bloque `bd`, `autenticacion` decide cómo conecta `Ejecutar-Scripts.ps1` en el cliente:
+`wallet`/`externa`/`integrada` → autenticación externa (Oracle: `sqlplus /@alias`; SQL Server:
+`sqlcmd -E`), `usuario` → usuario y contraseña. Si se omite, se deduce de si hay `usuario`, así que
+los JSON de proyecto anteriores siguen valiendo. ⛔ Con wallet, `conexion` es el **alias exacto** de
+`tnsnames.ora`, nunca un descriptor ni `host:puerto/servicio`: el wallet indexa la credencial por el
+texto del alias y el troceo por `/` y `@` produce un ORA-12154 que parece de red y no lo es —
+`Ejecutar-Scripts.ps1` lo rechaza antes de conectar. `tnsAdmin` es la carpeta del wallet y `schema`
+el `CURRENT_SCHEMA`, para cuando el usuario de conexión no es el dueño de las tablas.
 
 `parametricas.max_paralelo` (opcional, default `8`): nº de tablas cuyos inserts se generan en
 paralelo — es también el nº de conexiones BD simultáneas. Bajar si el Oracle del cliente tiene pocas

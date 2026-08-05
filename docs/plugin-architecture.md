@@ -247,6 +247,14 @@ vale para el SQL que depende del entorno: la **fila base de `RVERSIONES`** de un
 la genera el hook (`Scripts/PorEntorno/99-RVERSIONES-<E>.sql`, una por entorno), no el modelo.
 Convenciones de entrega: `references/actualizador.md`.
 
+⛔ `Ejecutar-Scripts.ps1` es **un único lanzador para los dos modos** y **no es código generado**: el
+hook lo copia literal. Lo que varía entre entregas es la lista de scripts, y viaja aparte — en
+`scripts.json` si el paquete lo trae (lo escribe `/rs-actualizador`), y si no por convención de
+carpetas. Esa es la razón de que no haya sustitución de placeholders: el `.ps1` se testea una vez
+(`tests/EjecutarScripts.Tests.ps1`, vía `-DotSourceOnly`) y no cambia por cliente. Cualquier arreglo
+en la capa de conexión —wallet, pre-vuelo, `NLS_LANG`, diagnóstico `SP2-xxxx` vs `ORA-*`— se hace
+aquí y llega a los dos flujos; un segundo lanzador volvería a partir eso en dos.
+
 `rs-analisis` (análisis estático de un diff) y `rs-validacion-bd` (validación código↔BD) son las
 versiones **standalone** de lo que en el pipeline hacen el validator y el planner respectivamente —
 comparten reglas vía reference (`references/bd.md`), no duplican lógica. `rs-esquema` es consulta

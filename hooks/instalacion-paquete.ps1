@@ -72,7 +72,7 @@ foreach ($p in $cfgPaths) {
 
 if ($entornosCfg) {
     [ordered]@{
-        _comentario = "Rutas de instalacion y backup en el servidor del cliente. Sin contrasenas: Ejecutar-Scripts.ps1 las pide por consola."
+        _comentario = "Rutas de instalacion y backup en el servidor del cliente. Sin contrasenas: Ejecutar-Scripts.ps1 las pide por consola y nunca las pasa por la linea de comandos. Para autenticacion externa (wallet Oracle / integrada SQL Server), en el bloque bd: autenticacion=wallet, usuario vacio, conexion = ALIAS de tnsnames.ora y tnsAdmin = carpeta del wallet."
         proyecto    = $proyecto
         entornos    = $entornosCfg
     } | ConvertTo-Json -Depth 6 | Set-Content $rutasOut -Encoding UTF8
