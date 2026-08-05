@@ -227,6 +227,14 @@ Describe "db-query.ps1 camino sin filas" {
     #>
     BeforeAll {
         $script:hook = Join-Path $PSScriptRoot ".." "hooks" "db-query.ps1"
+
+        # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
+        # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
+        # test cae. Un stub vacio le da algo que sustituir, de modo que estos casos -- que son
+        # los que cubren los caminos PII de db-query.ps1, lo mas delicado del repo -- corren
+        # tambien donde no hay sqlplus (el runner de CI). Donde si lo hay, el Mock lo sustituye
+        # igual, asi que no cambia nada.
+        function sqlplus { }
         $script:ws2  = Join-Path $TestDrive "trunk-sinfilas"
         $docs2       = Join-Path $script:ws2 "docs"
         New-Item -ItemType Directory -Path $docs2 -Force | Out-Null
@@ -279,6 +287,14 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
     #>
     BeforeAll {
         $script:hook3 = Join-Path $PSScriptRoot ".." "hooks" "db-query.ps1"
+
+        # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
+        # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
+        # test cae. Un stub vacio le da algo que sustituir, de modo que estos casos -- que son
+        # los que cubren los caminos PII de db-query.ps1, lo mas delicado del repo -- corren
+        # tambien donde no hay sqlplus (el runner de CI). Donde si lo hay, el Mock lo sustituye
+        # igual, asi que no cambia nada.
+        function sqlplus { }
 
         # Workspace con politica enforce y un modelo cuyo NOMBRE no casaria "*-model.json":
         # fija de paso que la resolucion va por el campo "model" de la conexion, no por glob.

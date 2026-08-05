@@ -1,5 +1,23 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.5 — 2026-08-05
+
+### Los 10 tests que cubren los caminos PII de `db-query.ps1` no llegaban a ejecutarse
+
+Mockean `sqlplus` para poder ejercitar el hook sin base de datos. Pero **Pester no puede mockear un
+comando que no existe en la sesión**: sin cliente Oracle instalado, `Mock -CommandName sqlplus`
+aborta con `Could not find Command sqlplus` y el test cae antes de probar nada. En el runner de CI
+no hay Oracle, así que esos 10 llevaban en rojo desde que se escribieron — y son justo los que
+cubren lo más delicado del repo: el camino sin filas, el fallo cerrado cuando `pii_cli` falla, el
+modelo declarado y ausente, el viaje de los acentos y el saneado del eco de SQL.
+
+Un `function sqlplus { }` en el `BeforeAll` de los dos `Describe` le da a Pester algo que sustituir.
+Donde sí hay cliente Oracle el `Mock` lo reemplaza igual, así que no cambia nada.
+
+**No se han saltado con `-Skip`**, que era la salida fácil y la que usa el repo para Word y DPAPI:
+esos dependen de algo que de verdad no se puede simular, mientras que aquí el mock ya estaba escrito
+y solo le faltaba poder engancharse.
+
 ## 3.4.4 — 2026-08-05
 
 ### `check-env.ps1` se caía a media ejecución si `USERPROFILE` no estaba
