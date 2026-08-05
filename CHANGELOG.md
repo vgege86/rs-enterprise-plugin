@@ -1,5 +1,21 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.4 — 2026-08-05
+
+### `check-env.ps1` se caía a media ejecución si `USERPROFILE` no estaba
+
+Tres `Join-Path $env:USERPROFILE` sin respaldo. En Windows —donde corre el plugin— esa variable
+siempre está, así que en uso real no se notaba; fuera de Windows es nula, `Join-Path` lanza
+*argument is null* y **el resto del check no llega a ejecutarse**. Ahora hay un `$perfilUsuario`
+con respaldo a `HOME`.
+
+Lo destapó el CI: el runner es Linux y el único test que ejecuta este hook de punta a punta
+llevaba en rojo por esto, desde antes de todo este trabajo.
+
+Con esto **la suite de protección de datos personales queda entera en verde**: 129 → 130 tests
+pasando. Los fallos que quedan en el CI están en `Crypto.Tests.ps1`, `DbQuery.Tests.ps1` y
+`Mantis.Tests.ps1`, ninguno tocado en esta serie de cambios.
+
 ## 3.4.3 — 2026-08-05
 
 ### La suite invocaba las guardas de una forma en la que no pueden funcionar

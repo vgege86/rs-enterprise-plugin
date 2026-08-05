@@ -137,7 +137,12 @@ if ($null -ne $wordProgId) {
 # Check 7: Coherencia de instalación — copias fuera del plugin que sombrean al pipeline.
 # Una instalación manual antigua en ~/.claude deja agentes/comandos/hooks que ganan al plugin
 # y hacen correr etapas obsoletas sin avisar (el planner viejo no emite PLAN/STAGES → sin Gate A).
-$claudeHome = Join-Path $env:USERPROFILE ".claude"
+# El perfil del usuario, con respaldo. En Windows -- donde corre el plugin -- USERPROFILE
+# siempre esta; fuera de el es nulo y Join-Path revienta con "argument is null", tumbando
+# el resto del check a media ejecucion. Lo destapo el CI: el runner es Linux y el unico test
+# que ejecuta este hook de punta a punta llevaba en rojo por esto.
+$perfilUsuario = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { "." }
+$claudeHome = Join-Path $perfilUsuario ".claude"
 $sombras = @()
 foreach ($p in @(
     @{ Path = (Join-Path $claudeHome "agents");         Glob = "rs-*.md"; Que = "agentes" },
@@ -155,7 +160,7 @@ foreach ($d in @("rs-skill-full", "hooks\rs", "hooks\scripts")) {
 
 # El MCP 'rs-workspace' debe servirse del plugin, no de una copia suelta
 $mcpDetalle = ""
-$claudeJson = Join-Path $env:USERPROFILE ".claude.json"
+$claudeJson = Join-Path $perfilUsuario ".claude.json"
 if (Test-Path $claudeJson) {
     try {
         $cj = Get-Content $claudeJson -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -202,7 +207,7 @@ $piiDiscrepa = ($piiModoRapido -notin @("ausente", $piiModo))
 # Comprobacion ESTRUCTURAL (lib-pii.ps1, ya dot-sourceada arriba), no un -match sobre el texto
 # del fichero: hay que verificar que las dos guardas son entradas reales de hooks.PreToolUse con
 # un matcher que dispare, no que la cadena aparezca en cualquier sitio del JSON.
-$settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
+$settingsUsuario = Join-Path $perfilUsuario ".claude\settings.json"
 # -HooksDir: el hooks\ de ESTE plugin. Sirve para dos cosas -- verificar que el .ps1 al que
 # apunta cada entrada existe de verdad (una entrada que apunte a una ruta muerta NO protege:
 # el hook falla, pero no con codigo 2, asi que el bypass queda abierto en silencio) y detectar
