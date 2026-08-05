@@ -1,9 +1,10 @@
 # Protección de datos personales en consultas a BD desde herramientas de IA
 
-**Fecha:** 2026-08-05 (rev. 1.2 — §5.2e: la guarda registrada con la ruta rota)
+**Fecha:** 2026-08-05 (rev. 1.3 — inventario entregado y medida en `enforce` en la 1.ª solución)
 **Ámbito:** Soluciones uCollect/RS consultadas mediante el plugin `rs-enterprise-agent`
 **Destinatario:** Departamento de Sistemas / Administración de Bases de Datos
-**Estado:** Petición de control definitivo + medida provisional en curso
+**Estado:** Medida provisional **activa** en la primera solución (inventario entregado);
+petición de control definitivo pendiente de decisión de Sistemas
 
 ---
 
@@ -13,12 +14,20 @@ Las herramientas de desarrollo asistido por IA que usamos ejecutan consultas `SE
 contra las bases de datos de las soluciones uCollect/RS y **envían el resultado íntegro
 a un proveedor externo** (Anthropic) como parte del contexto de la conversación.
 
-Hoy eso incluye, sin ningún filtro, columnas con datos personales: nombres, DNI,
-teléfonos, direcciones, correos y números de cuenta de personas deudoras.
+Sin ningún filtro por medio, eso incluye columnas con datos personales: nombres, DNI,
+teléfonos, direcciones, correos y números de cuenta de personas deudoras. Es la situación de
+partida, y sigue siendo la de toda solución donde la medida provisional no esté activa.
 
 Este documento pide a Sistemas el control que resuelve el problema de raíz —
 **que la base de datos no emita esos datos** — y describe la medida provisional que
-Desarrollo implantará mientras tanto, junto con lo que esa medida **no** puede proteger.
+Desarrollo **ya ha implantado** mientras tanto, junto con lo que esa medida **no** puede
+proteger.
+
+**Estado a fecha de esta revisión.** La medida provisional está **activa en la primera
+solución**, con el inventario de columnas afectadas ya generado y entregado (§6). Todo lo que
+esta petición hacía depender de Desarrollo está hecho para esa solución; lo que falta para el
+control definitivo son decisiones de Sistemas (§7). En el resto de soluciones el despliegue
+sigue pendiente.
 
 En §3 se presentan **todas** las opciones técnicas disponibles, con y sin coste de
 licencia, en igualdad de condiciones. Desarrollo no tiene visibilidad sobre las
@@ -64,7 +73,10 @@ Agente IA  ──SELECT──▶  Oracle / SQL Server
                    Proveedor externo (Anthropic)
 ```
 
-No existe ningún punto intermedio que inspeccione o filtre los valores.
+Así es el camino **sin** la medida provisional, y es el que sigue vigente en las soluciones
+donde todavía no está activa: ningún punto intermedio inspecciona ni filtra los valores. Donde
+la medida sí está activa (§6), se interpone entre el resultado y el contexto — con los límites
+del §5, que no son menores: el dato **ya ha salido del motor**.
 
 ### 2.2 Alcance real
 
@@ -443,7 +455,7 @@ disponible por TDE u otro motivo— y del presupuesto.
 | 4 | Implantar la opción elegida | Sistemas | según opción | 1-5 jornadas |
 | 5 | Confirmar a Desarrollo que la credencial en uso es la definitiva, o entregar la nueva si se ha creado un usuario dedicado | Sistemas | — | — |
 | 6 | Activar registro de acceso del usuario de consulta | Sistemas | Ninguna (§3.4) | 1 jornada |
-| 7 | Entregar el inventario de columnas con datos personales | **Desarrollo** | — | ver §6 |
+| 7 | Entregar el inventario de columnas con datos personales | **Desarrollo** | — | ✅ hecho para la 1.ª solución (§6); pendiente en el resto |
 
 El punto 1 **no depende de ninguna decisión pendiente** y puede resolverse de inmediato:
 es una consulta al alta de credenciales, no un desarrollo. El punto 2 depende
@@ -457,8 +469,8 @@ cerrado.
 
 ## 4. Medida provisional (Desarrollo)
 
-Mientras no exista el control en BD, el plugin filtrará los resultados antes de que
-entren en el contexto de la conversación.
+Mientras no exista el control en BD, el plugin filtra los resultados antes de que
+entren en el contexto de la conversación. Está implantado y activo en la primera solución.
 
 ### 4.1 Funcionamiento
 
@@ -704,40 +716,59 @@ que podía tomar el fallo descrito en el apartado (a).
 
 ## 6. Inventario de columnas afectadas
 
-Pendiente de generar. Se obtendrá ejecutando la medida provisional en modo `audit`
-sobre cada solución, lo que produce la lista de tablas y columnas con datos personales
-en el formato que Sistemas necesita para implantar la opción que elija en §3.2,
-cualquiera que sea.
+**Generado para la primera solución**, y pendiente para el resto. Se obtiene ejecutando la
+medida provisional en modo `audit` sobre cada solución, lo que produce la lista de tablas y
+columnas con datos personales en el formato que Sistemas necesita para implantar la opción
+que elija en §3.2, cualquiera que sea.
 
-Formato previsto:
+| Solución | Estado | Fichero |
+|---|---|---|
+| ⚠️ *(pendiente de nombrar la solución antes de enviar este documento)* | **Generado** — la medida está en `enforce` | `docs/inventario-pii.md` de su workspace |
+| Resto de soluciones | Pendiente | — |
+
+Formato del fichero:
 
 | Solución | Tabla | Columna | Tipo | Categoría | Tratamiento propuesto |
 |---|---|---|---|---|---|
 | | | | | Identificativo / Contacto / Financiero | Pseudónimo / Supresión |
 
-**Se entregará antes de solicitar el trabajo del paso 3.2**, para que Sistemas
-trabaje sobre un alcance cerrado y no sobre una estimación.
+Cada inventario se genera **muestreando valores reales**, de modo que recoge también las
+columnas que el nombre no delata (§4.3). Ningún valor muestreado se reproduce en el fichero:
+solo tabla, columna, categoría detectada y número de coincidencias.
+
+El inventario de una solución **se entrega antes de solicitar el trabajo del paso 3.2 sobre
+esa solución**, para que Sistemas trabaje sobre un alcance cerrado y no sobre una estimación.
+Para la primera solución esa condición ya está cumplida.
 
 ---
 
 ## 7. Plan propuesto
 
-| Fase | Acción | Responsable | Dependencia |
-|---|---|---|---|
-| 1 | Implantar la medida provisional en modo `audit` | Desarrollo | — |
-| 2 | Generar el inventario de §6 | Desarrollo | Fase 1 |
-| 3 | Activar modo `enforce` | Desarrollo | Fase 2 |
-| 4 | **Responder la pregunta previa del §3** y confirmar por entorno que la conexión no es la del propietario (§2.4) | Sistemas | — |
-| 5 | **Decidir la opción de redacción** (§3.2) | Sistemas | — |
-| 6 | Implantar la opción elegida y reapuntar los permisos del usuario de consulta (§3.1) | Sistemas | Fases 2, 4 y 5 |
-| 7 | Reapuntar el plugin a la credencial definitiva, solo si la fase 4 obliga a crear un usuario dedicado | Desarrollo | Fase 6 |
-| 8 | Reducir la medida provisional a segunda capa | Desarrollo | Fase 7 |
+Las fases 1-3 son **por solución**. Su estado en la primera solución es el que marca la
+columna correspondiente; en el resto siguen pendientes.
+
+| Fase | Acción | Responsable | Dependencia | 1.ª solución |
+|---|---|---|---|---|
+| 1 | Implantar la medida provisional en modo `audit` | Desarrollo | — | ✅ Hecho |
+| 2 | Generar el inventario de §6 | Desarrollo | Fase 1 | ✅ Hecho |
+| 3 | Activar modo `enforce` | Desarrollo | Fase 2 | ✅ Hecho |
+| 4 | **Responder la pregunta previa del §3** y confirmar por entorno que la conexión no es la del propietario (§2.4) | Sistemas | — | ⏳ Pendiente |
+| 5 | **Decidir la opción de redacción** (§3.2) | Sistemas | — | ⏳ Pendiente |
+| 6 | Implantar la opción elegida y reapuntar los permisos del usuario de consulta (§3.1) | Sistemas | Fases 2, 4 y 5 | ⏳ Pendiente |
+| 7 | Reapuntar el plugin a la credencial definitiva, solo si la fase 4 obliga a crear un usuario dedicado | Desarrollo | Fase 6 | — |
+| 8 | Reducir la medida provisional a segunda capa | Desarrollo | Fase 7 | — |
 
 Las fases 1-3 (Desarrollo) y las fases 4-5 (Sistemas) son independientes y pueden
 avanzar en paralelo. La fase 4 no depende de la decisión de la fase 5 y **puede
 resolverse de inmediato**: es la de mayor efecto por unidad de esfuerzo, porque
 determina si el reapuntado de permisos del §3.1 basta o hay que crear antes un usuario
 dedicado, y sin ese paso ninguna de las opciones de §3.2 es efectiva.
+
+**Dónde está hoy el trabajo.** En la primera solución, todo lo que dependía de Desarrollo
+está hecho: la medida está en `enforce` y el inventario entregado. La fase 6 ya solo espera a
+las fases 4 y 5, que son de Sistemas y no dependen de nada nuestro. Conviene decirlo sin
+rodeos porque cambia quién tiene la pelota: **el motivo de que el control definitivo no esté
+implantado ya no es que falte el inventario.**
 
 ---
 
@@ -774,5 +805,10 @@ Se solicita a Sistemas:
 4. **Fijar una fecha objetivo** para la implantación, que Desarrollo necesita para
    dimensionar hasta cuándo debe sostenerse la medida provisional.
 
-Desarrollo se compromete a entregar el inventario cerrado de columnas afectadas (§6)
-antes de que Sistemas inicie el trabajo del punto 3.
+El inventario cerrado de columnas afectadas (§6) **ya está entregado para la primera
+solución**, con la medida provisional en `enforce` sobre ella. Para el resto de soluciones se
+entregará antes de solicitar el trabajo del §3.2 sobre cada una, con el mismo criterio.
+
+Dicho de otro modo: los puntos 1 y 2 de esta lista no dependen de nada que falte por nuestra
+parte, y el 3 tampoco. Sobre la primera solución, lo único que separa hoy la medida
+provisional del control definitivo son decisiones de Sistemas.
