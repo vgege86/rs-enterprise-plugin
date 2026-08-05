@@ -1,4 +1,4 @@
-# Funciones puras de la integración Mantis (dot-sourceable, sin red).
+﻿# Funciones puras de la integración Mantis (dot-sourceable, sin red).
 # Patrón: hooks/lib-dbconfig.ps1. El token NUNCA se emite: usar Protect-MantisToken.
 
 # Cripto de secretos (Unprotect-RsSecret): el token puede venir cifrado con DPAPI (enc:<base64>).

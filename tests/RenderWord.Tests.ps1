@@ -1,4 +1,4 @@
-<#
+﻿<#
     Tests Pester de hooks/render-word.ps1: los párrafos del .docx generado tienen que salir con los
     ESTILOS de la plantilla, no como Normal con formato manual.
 

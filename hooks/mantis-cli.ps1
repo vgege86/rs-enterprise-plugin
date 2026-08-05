@@ -1,4 +1,4 @@
-# Cliente REST autónomo de MantisBT (2.x). JSON in/out. Llamado por la skill rs-mantis vía Bash.
+﻿# Cliente REST autónomo de MantisBT (2.x). JSON in/out. Llamado por la skill rs-mantis vía Bash.
 # NO usa el MCP rs-workspace (esquiva el FP de CrowdStrike). El token nunca se emite.
 param(
     [Parameter(Mandatory = $true)][string]$Command,

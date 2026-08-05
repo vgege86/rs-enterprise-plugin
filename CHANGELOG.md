@@ -1,5 +1,47 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.6 — 2026-08-05
+
+### Tres hooks llegaron a la 3.4.5 sin BOM y no parseaban
+
+`log_execution` fallaba con `Token '$(' inesperado en la expresión o la instrucción`, y el rastro
+apuntaba a `lib-pii.ps1` línea 420 —una línea que está perfectamente escrita—. El hook no tenía
+nada malo: tenía mal la codificación.
+
+Windows PowerShell 5.1 es el intérprete con el que `plugin.json` y `runner/runner.ps1` lanzan los
+hooks (`powershell -File ...`), y sin BOM decodifica el fichero con la codepage ANSI del sistema.
+El guion largo de esa línea (U+2014, bytes `E2 80 94`) se lee entonces como `â€"`: esa comilla doble
+cierra la cadena en curso y el script **ni siquiera parsea**. De ahí que el error se propagase a las
+líneas 433, 437, 477, 478 y 499 — no eran seis fallos, era uno. Y como `log-execution.ps1` hace
+`. lib-pii.ps1`, la tool caía sin haber ejecutado una sola instrucción propia.
+
+El barrido del repo encontró que no era un caso aislado: **`lib-pii.ps1`, `installer-batch.ps1` y
+`vcs-revert.ps1` estaban rotos** bajo 5.1, y otros seis hooks más los cinco ficheros de test
+arrastraban el mismo defecto latente, salvados solo por dónde caían sus caracteres no-ASCII. Los
+dieciséis se han reescrito en UTF-8 con BOM; el contenido es byte-idéntico, solo cambia el prefijo
+`EF BB BF`. Antes de tocarlos se comprobó que los dieciséis eran UTF-8 estricto válido: sobre un
+fichero realmente ANSI, anteponer el BOM lo declararía UTF-8 y corrompería el texto.
+
+Se descartó sustituir los no-ASCII por ASCII. Los hooks emiten mensajes en español hacia el usuario
+y hacia el modelo, y degradarlos rompería tildes en salida y en las aserciones de test que comparan
+cadenas acentuadas. Sobre todo, no ataca la causa: el siguiente guion largo que alguien escriba
+vuelve a romperlo.
+
+### La convención de codificación ya estaba escrita y aun así se rompió tres veces
+
+`hooks/README.md` documenta desde hace versiones que los `.ps1` van en UTF-8 con BOM, con el aviso
+de que ya pasó con los cuatro hooks del instalador. No sirvió, porque la causa de la reincidencia es
+mecánica y no de criterio: los editores y las herramientas de escritura automática guardan UTF-8
+**sin** BOM por defecto, y el fichero queda roto sin que nadie haga nada mal a la vista.
+
+El nuevo `tests/Encoding.Tests.ps1` convierte la convención en un gate ejecutable: recorre todos los
+`.ps1` del repo —excluido `.venv`, que es de Python— y exige BOM, UTF-8 estricto válido y parseo sin
+errores. De las tres aserciones la del BOM es la que de verdad protege, y por eso se comprueba como
+byte y no a través del parser: PowerShell Core (el del runner de CI) sí lee UTF-8 sin BOM
+correctamente, así que allí un fichero sin BOM pasaría desapercibido y solo reventaría en la máquina
+Windows de quien lo usa. Lleva además una guarda contra el descubrimiento vacío, para que un fallo
+del `Get-ChildItem` no deje la suite en verde sin haber comprobado nada.
+
 ## 3.4.5 — 2026-08-05
 
 ### Los 10 tests que cubren los caminos PII de `db-query.ps1` no llegaban a ejecutarse

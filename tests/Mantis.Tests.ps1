@@ -1,4 +1,4 @@
-Describe "lib-mantis credenciales" {
+﻿Describe "lib-mantis credenciales" {
     BeforeAll {
         . (Join-Path $PSScriptRoot ".." "hooks" "lib-mantis.ps1")
         $script:tmp = Join-Path ([IO.Path]::GetTempPath()) ("mantis-" + [guid]::NewGuid())

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Revierte una lista explícita de ficheros a su estado versionado (SVN o Git), o los elimina si
     son nuevos/sin versionar. Autodetecta el motor VCS. Pensado para deshacer los cambios pendientes

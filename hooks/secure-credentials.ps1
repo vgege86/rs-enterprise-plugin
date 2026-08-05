@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Cifra en reposo (DPAPI, CurrentUser) los secretos del plugin que hoy están en texto plano:
     el Password de docs\.rs-databases.json y los tokens de ~/.claude/rs-jira-credentials.json y

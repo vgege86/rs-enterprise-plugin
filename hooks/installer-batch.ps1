@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Instalador — recompila (Rebuild, no incremental) los procesos batch ACTIVOS del cliente desde
     un único snapshot de fuente y copia sus ejecutables a <destino>\EXES.

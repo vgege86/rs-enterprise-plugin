@@ -1,4 +1,4 @@
-<#
+﻿<#
     Tests Pester de la GUARDA read-only de hooks/db-query.ps1.
 
     La guarda (SELECT/CTE únicamente, sin multi-statement, sin verbo de escritura tras un CTE) se

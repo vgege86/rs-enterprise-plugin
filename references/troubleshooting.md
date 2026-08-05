@@ -229,6 +229,37 @@ Solución:
 
 ---
 
+## Un hook falla con error de sintaxis en una línea que está bien escrita
+
+Síntomas: `Token '$(' inesperado en la expresión o la instrucción`, `Falta la cadena en el
+terminador: "`, `Falta el nombre de tipo después de '['`. El error señala varias líneas seguidas y
+la primera de ellas, leída en el editor, es correcta.
+
+Causas:
+
+- El `.ps1` está guardado en **UTF-8 sin BOM** y contiene caracteres no-ASCII (guion largo `—`,
+  tildes, `€`). Windows PowerShell 5.1 —el intérprete de `plugin.json` y `runner/runner.ps1`— sin
+  BOM decodifica con la codepage ANSI: `—` se lee como `â€"` y esa comilla doble cierra la cadena en
+  curso, así que el fichero **ni siquiera parsea**
+- Los errores posteriores son arrastre del mismo string abierto, no fallos independientes
+- Si el hook roto es una librería (`lib-*.ps1`), el fallo aparece en **quien la dot-sourcea**: la
+  tool que revienta no es la que tiene el problema (así se manifestó en `log_execution` →
+  `log-execution.ps1` → `lib-pii.ps1`, CHANGELOG 3.4.6)
+- No se reproduce con `pwsh` (PowerShell Core sí lee UTF-8 sin BOM): comprobar siempre con
+  `powershell` 5.1
+
+---
+
+Solución:
+
+- Localizar los ficheros afectados y reescribirlos en **UTF-8 con BOM** (`EF BB BF`), sin tocar el
+  contenido. Antes de añadir el BOM, verificar que el fichero es UTF-8 estricto válido: si fuese
+  realmente ANSI, el BOM lo declararía UTF-8 y corrompería el texto
+- Verificar con `Invoke-Pester tests/Encoding.Tests.ps1` (comprueba BOM + UTF-8 + parseo de todos
+  los `.ps1` del repo). Ver `hooks/README.md` § Convención de codificación
+
+---
+
 # ⚠️ Reglas clave
 
 - nunca ignorar errores del validator

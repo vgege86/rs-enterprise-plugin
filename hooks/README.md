@@ -119,10 +119,24 @@ del caché lleva la versión: cada actualización las dejaba muertas). Los resto
 Los `.ps1` de este plugin se guardan en **UTF-8 con BOM**. Windows PowerShell 5.1 —el intérprete que
 usan `plugin.json` y `runner/runner.ps1` (`powershell -File ...`)— asume la codepage ANSI del sistema
 cuando no hay BOM: los acentos y los guiones largos se decodifican mal y el script **ni siquiera
-parsea** (`Falta la cadena en el terminador: "`, `Falta el nombre de tipo después de '['`). Pasó en
-real con los 4 hooks del instalador. Guardar sin BOM o quitarlo vuelve a romperlos.
+parsea** (`Falta la cadena en el terminador: "`, `Falta el nombre de tipo después de '['`,
+`Token '$(' inesperado en la expresión o la instrucción`). Guardar sin BOM o quitarlo vuelve a
+romperlos.
 
-Comprobación rápida de todos los hooks bajo 5.1:
+Ha pasado dos veces: con los 4 hooks del instalador, y en la 3.4.5 con `lib-pii.ps1`,
+`installer-batch.ps1` y `vcs-revert.ps1` (ver CHANGELOG 3.4.6). Que esté escrito aquí no basta,
+porque la causa es mecánica: **los editores y las herramientas de escritura automática guardan
+UTF-8 sin BOM por defecto**. Tras crear o reescribir un `.ps1` entero, comprueba el BOM antes de
+darlo por bueno.
+
+⛔ Desde la 3.4.6 lo verifica `tests/Encoding.Tests.ps1` sobre todos los `.ps1` del repo (BOM +
+UTF-8 estricto + parseo). Es el gate; esta sección solo explica el porqué.
+
+```powershell
+Invoke-Pester tests/Encoding.Tests.ps1
+```
+
+Comprobación rápida de todos los hooks bajo 5.1, sin Pester:
 
 ```powershell
 Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {

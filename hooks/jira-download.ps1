@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Descarga un adjunto de una issue de Jira (Jira Cloud REST v3) a un fichero local.
     Cubre el hueco del MCP Atlassian Rovo, que no expone descarga de attachments.

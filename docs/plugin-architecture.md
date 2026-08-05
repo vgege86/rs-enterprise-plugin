@@ -347,6 +347,14 @@ de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output disc
 CHANGELOG 2.15.9.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / service-build / copy-ais).
 
+⛔ **Todo `.ps1` del repo va en UTF-8 con BOM.** No es estilo: sin BOM, Windows PowerShell 5.1
+decodifica con la codepage ANSI y cualquier no-ASCII (un `—` basta) impide que el fichero **parsee**.
+Si el roto es un `lib-*.ps1`, el fallo se manifiesta en quien lo dot-sourcea, no en él. Lo verifica
+`tests/Encoding.Tests.ps1` (BOM + UTF-8 estricto + parseo, todos los `.ps1` menos `.venv`); el porqué
+está en `hooks/README.md` § Convención de codificación y en CHANGELOG 3.4.6. Cuidado al crear o
+reescribir un `.ps1` entero: editores y herramientas de escritura automática guardan sin BOM por
+defecto.
+
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
 usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,

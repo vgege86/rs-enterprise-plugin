@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Cifrado en reposo de secretos del plugin (password BD, tokens Jira/Mantis) con DPAPI.
 

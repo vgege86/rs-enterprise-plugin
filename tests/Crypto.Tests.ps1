@@ -1,4 +1,4 @@
-<#
+﻿<#
     Tests Pester del helper de cripto hooks/lib-crypto.ps1.
 
     ⛔ DPAPI es Windows-only: el CI corre en Ubuntu, donde un valor cifrado no se puede descifrar

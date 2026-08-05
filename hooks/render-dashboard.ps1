@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Genera el dashboard HTML de estadísticas del pipeline (executions/history.json) y lo abre en el
     navegador. Output JSON: success, path, opened, total.

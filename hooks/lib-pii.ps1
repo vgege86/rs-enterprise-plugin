@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Deteccion de datos personales por FORMA, compartida entre la guarda de escritura
     (pii-guard-write.ps1) y el saneado del registro de ejecuciones (log-execution.ps1).

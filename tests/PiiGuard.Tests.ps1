@@ -1,4 +1,4 @@
-<#
+﻿<#
     Tests Pester de la integracion PII en hooks/db-query.ps1 y del CLI que la aplica.
 
     No requieren BD: el CLI se prueba directo por stdin, y del hook solo se comprueba

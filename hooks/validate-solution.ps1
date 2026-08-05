@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Confirma que la .sln existe y es accesible. Emite JSON en ambas rutas.
 .PARAMETER path
