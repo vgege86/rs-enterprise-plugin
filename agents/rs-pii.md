@@ -65,11 +65,20 @@ modelo.
 
 ## `status` (por defecto)
 
-1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_missing`, `ok`,
-   `error`.
+1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_missing`,
+   `guards_stale`, `guards_foreign`, `ok`, `error`.
 2. Informar el modo actual y si las guardas `PreToolUse` están registradas. Si falta alguna, decir
    **cuál** (`guards_missing`). Recordar que `guards_registered` describe el fichero
    `~/.claude/settings.json`, no la sesión en curso (ver el aviso de `enforce`).
+   - Si `guards_stale` no está vacío → **decirlo aunque el modo sea `off`**: hay una entrada
+     registrada que **no protege** porque el `.ps1` al que apunta no existe. `guards_registered` ya
+     es `false` por ese motivo (una guarda registrada y rota cuenta como ausente, no como presente).
+     Causa habitual: el plugin cambió de ruta y `settings.json` la lleva cableada en absoluto.
+     Solución: `/rs-pii enforce`, que la reescribe con la ruta actual. Usar el texto de
+     `guards_stale` tal cual — lleva el motivo y la ruta muerta.
+   - Si `guards_foreign` no está vacío → la guarda **sí** protege, pero desde otra copia del plugin,
+     que no se actualiza con `/plugin marketplace update`. Es un aviso, no un fallo; se corrige
+     también con `/rs-pii enforce`.
    - Si `mode = enforce` y `ok = false` → usar el `error` de `check_env` tal cual: la protección es
      **incompleta**, el bypass por Bash/Write sigue abierto. No suavizar este mensaje.
    - Si `mode = audit` → recordar explícitamente: **los datos siguen saliendo en claro, `audit` no
@@ -178,6 +187,11 @@ abiertos durante el resto de esta sesión. Debe decirlo así, sin suavizarlo, y 
        preservando `hooks.Stop`/`hooks.UserPromptSubmit`/etc. si los hay.
      - Si ya existe `PreToolUse` → añadir las dos entradas nuevas a la lista existente, sin tocar las
        que ya haya. Si alguna de las dos ya está registrada (p.ej. reinstalación), no duplicarla.
+     - Si una de las dos ya está registrada pero apunta a **otra ruta** —es lo que reportan
+       `pii.guards_stale` (fichero inexistente) y `pii.guards_foreign` (otra copia del plugin)—,
+       **sustituir esa entrada**, no añadir una segunda. Dos entradas de la misma guarda no protegen
+       más: la muerta seguirá fallando en cada llamada y la lista se va llenando de restos de
+       instalaciones anteriores.
    - Cada entrada, con `<plugin_root>` resuelto y **verificado** (SKILL.md "Raíz del plugin" — ⛔ nunca
      `${CLAUDE_PLUGIN_ROOT}` en este fichero: esa variable solo se expande en
      `.claude-plugin/plugin.json`/`.mcp.json`, en cualquier otro sitio llega literal):
@@ -188,8 +202,10 @@ abiertos durante el resto de esta sesión. Debe decirlo así, sin suavizarlo, y 
    - `Edit` (o `Write` si el fichero no existía) con el resultado completo: todo lo que ya había más
      estas dos entradas.
 4. **Verificar de verdad.** `check_env(workspace)` → `pii.guards_registered` debe ser `true`. Si no lo
-   es, **no continuar**: informar el fallo usando `pii.guards_missing` (dice cuál de las dos falta) y
-   dejar el modo del modelo como estaba.
+   es, **no continuar**: informar el fallo usando `pii.guards_missing` (dice cuál de las dos falta, y
+   si está registrada pero rota, por qué) y dejar el modo del modelo como estaba. Esa comprobación
+   incluye que el `.ps1` **exista**: una entrada bien formada que apunte a una ruta muerta no cuenta
+   como registrada, porque el hook falla sin llegar a bloquear nada.
 5. **Solo si el paso 4 confirma `guards_registered = true`**, escribir `pii_policy.mode = "enforce"` en
    el modelo (ver abajo) y confirmar con un último `check_env` que `pii.ok = true`.
 6. **Cerrar diciendo la verdad sobre esta sesión.** Si en el paso 3 se ha escrito alguna entrada nueva
@@ -281,7 +297,8 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 ## Protección PII: <workspace>
 Modo: off | audit | enforce
 Guardas PreToolUse registradas: sí/no
-<aviso si aplica: enforce incompleto / audit no protege>
+<aviso si aplica: enforce incompleto / audit no protege / guarda registrada que no protege
+ (guards_stale) / guarda que protege desde otra copia del plugin (guards_foreign)>
 
 ### Columnas en claro sin patrón (clasificación por modelo, sin muestreo) [N, mostrando hasta 40]
 | Tabla | Columna | Tipo |

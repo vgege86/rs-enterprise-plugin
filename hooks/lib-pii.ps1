@@ -130,11 +130,57 @@ function Remove-RsPii {
     return $Texto
 }
 
-function Test-RsPiiGuards {
-    <# Comprueba ESTRUCTURALMENTE que las dos guardas PII estan registradas como entradas
-       de hooks.PreToolUse en el settings.json indicado.
+function Get-RsPiiGuardRuta {
+    <# Extrae del comando de un hook la ruta del .ps1 de la guarda ($Script). "" si no
+       aparece. Prueba primero la forma entrecomillada, que es la que escribe /rs-pii
+       enforce y la unica que soporta rutas con espacios ("C:\Mis Cosas\hooks\..."). #>
+    param([string]$Comando, [string]$Script)
 
-       Devuelve @{ bash; write; ok; missing } (missing = lista de descripciones).
+    $esc = [regex]::Escape($Script)
+    $m = [regex]::Match($Comando, '"([^"]*' + $esc + ')"')
+    if (-not $m.Success) { $m = [regex]::Match($Comando, '([^\s"]*' + $esc + ')') }
+    if (-not $m.Success) { return "" }
+    return $m.Groups[1].Value
+}
+
+function Test-RsPiiGuardRuta {
+    <# Clasifica la ruta registrada de una guarda. Devuelve @{ efectiva; motivo; ruta }.
+
+       Registrada != efectiva, y la diferencia importa: si el .ps1 no esta donde dice la
+       entrada, Claude Code lanza el hook, powershell sale con error y ese codigo NO es 2
+       -- el unico que bloquea. La guarda falla ABIERTA y nada lo delata. Ver la cabecera
+       de Test-RsPiiGuards. #>
+    param([string]$Ruta)
+
+    if (-not $Ruta) {
+        return @{ efectiva = $false; motivo = "el comando no nombra el .ps1 de la guarda"; ruta = "" }
+    }
+    # ${CLAUDE_PLUGIN_ROOT}, %VAR% o $env:VAR sin expandir: Claude Code solo sustituye
+    # ${CLAUDE_PLUGIN_ROOT} en .claude-plugin/plugin.json y .mcp.json; en settings.json
+    # llega literal y el hook apunta a una carpeta que no existe.
+    if ($Ruta -match '\$\{|\$env:|%[A-Za-z_][A-Za-z0-9_]*%') {
+        return @{ efectiva = $false; motivo = "la ruta lleva una variable sin expandir"; ruta = $Ruta }
+    }
+    $rooted = $false
+    try { $rooted = [System.IO.Path]::IsPathRooted($Ruta) } catch { }
+    if (-not $rooted) {
+        # Relativa: se resolveria contra el directorio de trabajo de Claude Code, que no
+        # se conoce desde aqui. No verificable = no se puede afirmar que protege.
+        return @{ efectiva = $false; motivo = "la ruta es relativa y no se puede verificar"; ruta = $Ruta }
+    }
+    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) {
+        return @{ efectiva = $false; motivo = "el fichero no existe"; ruta = $Ruta }
+    }
+    return @{ efectiva = $true; motivo = ""; ruta = $Ruta }
+}
+
+function Test-RsPiiGuards {
+    <# Comprueba que las dos guardas PII estan registradas como entradas de
+       hooks.PreToolUse en el settings.json indicado Y que el .ps1 al que apuntan existe.
+
+       Devuelve @{ bash; write; ok; missing; stale; foreign } — listas de descripciones.
+       bash/write son "efectiva", no "mencionada": una entrada bien formada que apunte a
+       un fichero inexistente cuenta como NO registrada, y sale ademas en `stale`.
 
        Antes era un -match sobre el TEXTO del fichero: "pii-guard-bash" mencionado en un
        comentario, en una clave desactivada, o registrado bajo PostToolUse con un matcher
@@ -142,14 +188,40 @@ function Test-RsPiiGuards {
        en este resultado, asi que un falso positivo aqui deja el workspace declarandose
        protegido con los dos bypass abiertos.
 
+       La comprobacion de existencia cierra la version silenciosa de ese mismo fallo. La
+       ruta va CABLEADA EN ABSOLUTO en settings.json (ahi ${CLAUDE_PLUGIN_ROOT} no se
+       expande), asi que basta con que el plugin cambie de sitio -- reinstalacion, otra
+       ruta de cache, otro perfil, un checkout movido -- para que la entrada apunte a un
+       .ps1 que ya no esta. El hook falla, pero no con codigo 2, que es el unico que
+       bloquea: los dos bypass quedan abiertos mientras check_env sigue diciendo
+       "registradas". Es el mismo desenlace que la comprobacion por -match, alcanzable sin
+       que nadie haga nada mal.
+
+       -HooksDir (opcional) es el directorio hooks\ del plugin en uso. Si se pasa, una
+       guarda que exista pero cuelgue de OTRA copia del plugin se anota en `foreign`: sigue
+       protegiendo -- por eso no invalida `ok` -- pero es una copia vendorizada que no se
+       actualiza con el plugin (el escenario de la v2.11.0, ver CHANGELOG).
+
        ⚠️ Comprueba el FICHERO, no la sesion. Claude Code captura la configuracion de hooks
        al arrancar: unas entradas escritas a mitad de sesion no estan vivas hasta reiniciar.
        Esto no se puede verificar desde aqui -- por eso /rs-pii enforce debe pedir el
        reinicio y no declarar la proteccion activa en la misma sesion que las registro. #>
-    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$SettingsPath)
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$SettingsPath,
+        [AllowEmptyString()][string]$HooksDir = ""
+    )
 
-    $bash  = $false
-    $write = $false
+    $guardas = [ordered]@{
+        bash  = @{ script = "pii-guard-bash.ps1";  desc = "pii-guard-bash (PreToolUse, matcher Bash)";        efectiva = $false; rota = "" }
+        write = @{ script = "pii-guard-write.ps1"; desc = "pii-guard-write (PreToolUse, matcher Write|Edit)"; efectiva = $false; rota = "" }
+    }
+    $foreign = @()
+
+    $hooksDirNorm = ""
+    if ($HooksDir) {
+        try { $hooksDirNorm = [System.IO.Path]::GetFullPath($HooksDir).TrimEnd('\', '/') } catch { }
+    }
+
     if ($SettingsPath -and (Test-Path $SettingsPath)) {
         try {
             # Sin -AsHashtable: no existe en PowerShell 5.1, donde corren los hooks.
@@ -159,21 +231,58 @@ function Test-RsPiiGuards {
                 $matcher = "$($entrada.matcher)"
                 # Matcher plausible: el que realmente dispararia para esa herramienta. Un
                 # matcher vacio o "*" aplica a todas, asi que tambien vale.
-                $matchBash  = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Bash")
-                $matchWrite = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Write|Edit")
+                $dispara = @{
+                    bash  = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Bash")
+                    write = ($matcher -eq "" -or $matcher -eq "*" -or $matcher -match "Write|Edit")
+                }
                 foreach ($h in @($entrada.hooks)) {
                     $cmd = "$($h.command)"
                     if (-not $cmd) { continue }
-                    if ($matchBash  -and $cmd -match "pii-guard-bash")  { $bash  = $true }
-                    if ($matchWrite -and $cmd -match "pii-guard-write") { $write = $true }
+                    foreach ($clave in @("bash", "write")) {
+                        $g = $guardas[$clave]
+                        if ($g.efectiva) { continue }
+                        if (-not $dispara[$clave]) { continue }
+                        if ($cmd -notmatch [regex]::Escape($g.script.Replace(".ps1", ""))) { continue }
+
+                        $veredicto = Test-RsPiiGuardRuta (Get-RsPiiGuardRuta -Comando $cmd -Script $g.script)
+                        if ($veredicto.efectiva) {
+                            $g.efectiva = $true
+                            $g.rota     = ""
+                            if ($hooksDirNorm) {
+                                $dir = ""
+                                # GetDirectoryName y no Split-Path: Split-Path trata la ruta como
+                                # patron de comodines y una carpeta con [ ] en el nombre lo tumba.
+                                try { $dir = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($veredicto.ruta)).TrimEnd('\', '/') } catch { }
+                                if ($dir -and $dir -ne $hooksDirNorm) {
+                                    $foreign += "$($g.script) registrada desde otra copia del plugin: $($veredicto.ruta)"
+                                }
+                            }
+                        } elseif (-not $g.rota) {
+                            # Se guarda el primer motivo, pero se sigue recorriendo: puede
+                            # haber una segunda entrada de la misma guarda que si sea buena.
+                            $g.rota = "$($g.script) registrada pero no protege — $($veredicto.motivo): $($veredicto.ruta)"
+                        }
+                    }
                 }
             }
         } catch { }
     }
 
     $missing = @()
-    if (-not $bash)  { $missing += "pii-guard-bash (PreToolUse, matcher Bash)" }
-    if (-not $write) { $missing += "pii-guard-write (PreToolUse, matcher Write|Edit)" }
+    $stale   = @()
+    foreach ($clave in @("bash", "write")) {
+        $g = $guardas[$clave]
+        if ($g.efectiva) { continue }
+        if ($g.rota) { $stale += $g.rota; $missing += $g.rota }
+        else         { $missing += $g.desc }
+    }
 
-    return @{ bash = $bash; write = $write; ok = ($missing.Count -eq 0); missing = @($missing) }
+    return @{
+        bash    = $guardas.bash.efectiva
+        write   = $guardas.write.efectiva
+        ok      = ($missing.Count -eq 0)
+        missing = @($missing)
+        stale   = @($stale)
+        foreign = @($foreign)
+    }
 }

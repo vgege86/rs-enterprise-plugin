@@ -261,9 +261,14 @@ dos guardas `PreToolUse` (`hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1
 `~/.claude/settings.json` y confirmar el registro con `check_env` — un workspace que crea estar
 protegido sin estarlo es peor que uno que sabe que está en `off`. La verificación de `check_env` es
 estructural (parsea `settings.json` y exige entradas reales bajo `hooks.PreToolUse` con matcher
-plausible, vía `Test-RsPiiGuards` de `hooks/lib-pii.ps1`) y comprueba el **fichero, no la sesión**:
-Claude Code captura los hooks al arrancar, así que `enforce` cierra pidiendo el reinicio en vez de
-declarar la protección activa. La clasificación de columnas la hace
+plausible, vía `Test-RsPiiGuards` de `hooks/lib-pii.ps1`) **y de existencia**: el `.ps1` al que
+apunta cada entrada tiene que estar ahí. Registrada ≠ efectiva — `settings.json` guarda la ruta
+cableada en absoluto (ahí `${CLAUDE_PLUGIN_ROOT}` no se expande, §5), así que un plugin que cambia
+de sitio deja entradas que se lanzan, fallan y **no bloquean**, porque el código de error no es 2.
+Esas salen en `pii.guards_stale` y cuentan como ausentes; `pii.guards_foreign` marca aparte las que
+sí protegen pero desde otra copia del plugin (el escenario de la v2.11.0). Comprueba además el
+**fichero, no la sesión**: Claude Code captura los hooks al arrancar, así que `enforce` cierra
+pidiendo el reinicio en vez de declarar la protección activa. La clasificación de columnas la hace
 `scripts/pii_cli.py --clasificar`, no un clasificador reescrito en el prompt. ⛔ Gate de
 confirmación explícita en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
 de este documento (los módulos `scripts/pii_*.py` que aplica la política).

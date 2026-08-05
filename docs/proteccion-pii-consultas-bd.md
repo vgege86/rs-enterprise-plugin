@@ -1,6 +1,6 @@
 # Protección de datos personales en consultas a BD desde herramientas de IA
 
-**Fecha:** 2026-08-04 (rev. 1.1 — corrige el supuesto sobre el usuario de conexión)
+**Fecha:** 2026-08-05 (rev. 1.2 — §5.2e: la guarda registrada con la ruta rota)
 **Ámbito:** Soluciones uCollect/RS consultadas mediante el plugin `rs-enterprise-agent`
 **Destinatario:** Departamento de Sistemas / Administración de Bases de Datos
 **Estado:** Petición de control definitivo + medida provisional en curso
@@ -634,6 +634,17 @@ modo que una guarda registrada a mitad de sesión no entra en vigor hasta reinic
 ventana la verificación informa de que están registradas —lo están, en el fichero— mientras
 los bypass siguen abiertos. Por eso el procedimiento de activación exige reiniciar antes de
 dar la protección por efectiva.
+
+Y un segundo matiz, del mismo origen: esa configuración guarda la **ruta absoluta** del script
+de cada guarda, porque la variable que resuelve la raíz del plugin solo se sustituye en los
+manifiestos del propio plugin, no en la configuración personal. Si el plugin cambia de sitio
+—una reinstalación, otra ruta de caché, otro perfil— la entrada sigue ahí pero apunta a un
+fichero que ya no existe: la guarda se lanza, falla, y **no bloquea nada**, porque el código de
+error de un script que no se encuentra no es el que interrumpe la operación. Desde la versión
+3.2.2 la verificación de entorno comprueba que el fichero existe y reporta esas guardas como
+**no registradas**, con el motivo y la ruta; antes las contaba como presentes, de modo que el
+sistema podía declararse protegido con los dos bypass abiertos sin que nadie hubiera hecho nada
+mal. El aviso se emite en cualquier modo, porque las guardas no dependen del modo del workspace.
 
 **f) Una columna marcada como segura por error no se detecta.** Nombres, apellidos y
 direcciones no tienen patrón reconocible. Si alguien los declara seguros, ninguna

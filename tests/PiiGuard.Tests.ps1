@@ -774,6 +774,12 @@ Describe "check-env.ps1 verificacion de guardas" {
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_registered"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_missing"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_note"
+        # Las dos listas viajan SIEMPRE, tambien vacias: un consumidor que solo las lea
+        # cuando existen se comportaria distinto segun el estado, y son la unica senal de
+        # que una guarda registrada no protege (guards_stale) o protege desde otra copia
+        # del plugin (guards_foreign).
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_stale"
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_foreign"
     }
 }
 
@@ -783,59 +789,80 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
         si las entradas estaban bajo hooks.PreToolUse ni con que matcher. /rs-pii enforce
         se apoya en el resultado para conmutar el modo, asi que un falso positivo deja el
         workspace declarandose protegido con los dos bypass abiertos.
+
+        Y desde 3.2.2 tampoco basta con que la entrada este bien formada: el .ps1 al que
+        apunta tiene que EXISTIR. Por eso estos tests fabrican guardas de mentira pero en
+        ficheros reales -- con las rutas inventadas de antes ya no medirian lo que creen.
     #>
     BeforeAll {
         . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+
+        $script:HooksReales = Join-Path $TestDrive "plugin\hooks"
+        $script:HooksOtros  = Join-Path $TestDrive "copia-vieja\hooks"
+        foreach ($d in @($script:HooksReales, $script:HooksOtros)) {
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            foreach ($n in @("pii-guard-bash.ps1", "pii-guard-write.ps1")) {
+                Set-Content (Join-Path $d $n) "exit 0" -Encoding UTF8
+            }
+        }
+        $script:RutaBash  = Join-Path $script:HooksReales "pii-guard-bash.ps1"
+        $script:RutaWrite = Join-Path $script:HooksReales "pii-guard-write.ps1"
+
         function New-Settings($nombre, $json) {
             $p = Join-Path $TestDrive $nombre
             $json | Set-Content $p -Encoding UTF8
             return $p
         }
+
+        function New-SettingsGuardas {
+            <# settings.json con las dos guardas y las rutas que se le indiquen. #>
+            param(
+                [string]$Nombre,
+                [string]$RutaBash     = $script:RutaBash,
+                [string]$RutaWrite    = $script:RutaWrite,
+                [string]$Evento       = "PreToolUse",
+                [string]$MatcherBash  = "Bash",
+                [string]$MatcherWrite = "Write|Edit"
+            )
+            $b = $RutaBash.Replace('\', '\\')
+            $w = $RutaWrite.Replace('\', '\\')
+            return (New-Settings $Nombre @"
+{ "hooks": { "$Evento": [
+  { "matcher": "$MatcherBash",  "hooks": [ { "type": "command", "command": "powershell -File \"$b\"" } ] },
+  { "matcher": "$MatcherWrite", "hooks": [ { "type": "command", "command": "powershell -File \"$w\"" } ] }
+] } }
+"@)
+        }
     }
 
     It "reconoce las dos guardas bien registradas" {
-        $p = New-Settings "ok.json" @'
-{ "hooks": { "PreToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-bash.ps1\"" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-write.ps1\"" } ] }
-] } }
-'@
-        $r = Test-RsPiiGuards -SettingsPath $p
+        $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "ok.json")
         $r.ok    | Should -Be $true
         @($r.missing).Count | Should -Be 0
+        @($r.stale).Count   | Should -Be 0
     }
 
     It "no acepta las guardas mencionadas fuera de hooks.PreToolUse" {
-        # Aqui van bajo PostToolUse: el texto del fichero contiene las dos cadenas, pero
-        # ninguna guarda se ejecuta ANTES de la herramienta, que es lo unico que protege.
-        $p = New-Settings "post.json" @'
-{ "hooks": { "PostToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
-] } }
-'@
+        # Bajo PostToolUse: el texto del fichero contiene las dos cadenas y los .ps1 existen,
+        # pero ninguna guarda corre ANTES de la herramienta, que es lo unico que protege.
+        $p = New-SettingsGuardas "post.json" -Evento "PostToolUse"
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
     }
 
     It "no acepta una guarda con un matcher que no dispara para su herramienta" {
-        $p = New-Settings "matcher.json" @'
-{ "hooks": { "PreToolUse": [
-  { "matcher": "Read", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
-] } }
-'@
-        $r = Test-RsPiiGuards -SettingsPath $p
+        $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "matcher.json" -MatcherBash "Read")
         $r.ok    | Should -Be $false
         $r.bash  | Should -Be $false
         $r.write | Should -Be $true
     }
 
     It "dice CUAL de las dos falta cuando solo hay una" {
-        $p = New-Settings "una.json" @'
+        $b = $script:RutaBash.Replace('\', '\\')
+        $p = New-Settings "una.json" @"
 { "hooks": { "PreToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] }
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$b\"" } ] }
 ] } }
-'@
+"@
         $r = Test-RsPiiGuards -SettingsPath $p
         $r.ok      | Should -Be $false
         $r.bash    | Should -Be $true
@@ -844,13 +871,15 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
     }
 
     It "acepta el matcher comodin" {
-        $p = New-Settings "comodin.json" @'
+        $b = $script:RutaBash.Replace('\', '\\')
+        $w = $script:RutaWrite.Replace('\', '\\')
+        $p = New-Settings "comodin.json" @"
 { "hooks": { "PreToolUse": [
   { "matcher": "*", "hooks": [
-      { "type": "command", "command": "powershell -File pii-guard-bash.ps1" },
-      { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
+      { "type": "command", "command": "powershell -File \"$b\"" },
+      { "type": "command", "command": "powershell -File \"$w\"" } ] }
 ] } }
-'@
+"@
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $true
     }
 
@@ -866,5 +895,87 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
   "hooks": { "PreToolUse": [] } }
 '@
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
+    }
+
+    Context "la entrada existe pero el .ps1 no: registrada != efectiva" {
+        <#
+            Es el fallo silencioso que cierra este bloque. La ruta va cableada en absoluto
+            (en settings.json ${CLAUDE_PLUGIN_ROOT} no se expande), asi que basta con que el
+            plugin cambie de sitio para que la entrada apunte a un .ps1 que no esta. Claude
+            Code lanza el hook, powershell sale con error -- pero NO con codigo 2, el unico
+            que bloquea -- de modo que el bypass queda abierto mientras check_env decia
+            "registradas". Ese estado es peor que saberse en off, y era alcanzable sin que
+            nadie hiciera nada mal.
+        #>
+        It "una ruta absoluta que no existe no cuenta como registrada, y lo dice" {
+            $muerta = Join-Path $TestDrive "plugin-que-ya-no-esta\hooks\pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "muerta.json" -RutaBash $muerta)
+            $r.ok    | Should -Be $false
+            $r.bash  | Should -Be $false
+            $r.write | Should -Be $true
+            ($r.stale -join " ") | Should -Match "no existe"
+            ($r.stale -join " ") | Should -Match "pii-guard-bash"
+            # La ruta concreta va en el mensaje: sin ella no se sabe a que copia apuntaba.
+            ($r.stale -join " ") | Should -Match ([regex]::Escape($muerta))
+        }
+
+        It 'CLAUDE_PLUGIN_ROOT en settings.json no protege: llega literal' {
+            # Claude Code solo expande esa variable en .claude-plugin/plugin.json y .mcp.json.
+            # En settings.json queda tal cual y el hook apunta a una carpeta inexistente.
+            $conVar = '${CLAUDE_PLUGIN_ROOT}\hooks\pii-guard-bash.ps1'
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "var.json" -RutaBash $conVar)
+            $r.bash | Should -Be $false
+            ($r.stale -join " ") | Should -Match "variable sin expandir"
+        }
+
+        It "una ruta relativa no se puede verificar y tampoco cuenta" {
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "rel.json" -RutaBash "pii-guard-bash.ps1")
+            $r.bash | Should -Be $false
+            ($r.stale -join " ") | Should -Match "relativa"
+        }
+
+        It "una segunda entrada valida rescata a una rota" {
+            # Reinstalar deja la entrada vieja y anade la nueva. Mientras UNA dispare y
+            # exista, la guarda protege: no se puede reportar como rota.
+            $muerta = ($TestDrive + "\no-esta\pii-guard-bash.ps1").Replace('\', '\\')
+            $viva   = $script:RutaBash.Replace('\', '\\')
+            $w      = $script:RutaWrite.Replace('\', '\\')
+            $p = New-Settings "dos.json" @"
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$muerta\"" } ] },
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$viva\"" } ] },
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"$w\"" } ] }
+] } }
+"@
+            $r = Test-RsPiiGuards -SettingsPath $p
+            $r.ok  | Should -Be $true
+            @($r.stale).Count | Should -Be 0
+        }
+    }
+
+    Context "-HooksDir: de que copia del plugin cuelga la guarda viva" {
+        It "avisa cuando la guarda protege desde otra copia, sin invalidar el registro" {
+            # El escenario de la v2.11.0: una copia vendorizada sigue protegiendo (por eso
+            # ok = true) pero no se actualiza con /plugin marketplace update.
+            $otra = Join-Path $script:HooksOtros "pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "ajena.json" -RutaBash $otra) `
+                                  -HooksDir $script:HooksReales
+            $r.ok | Should -Be $true
+            ($r.foreign -join " ") | Should -Match "otra copia"
+            ($r.foreign -join " ") | Should -Match "pii-guard-bash"
+        }
+
+        It "no marca como ajena la copia en uso" {
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "propia.json") -HooksDir $script:HooksReales
+            $r.ok | Should -Be $true
+            @($r.foreign).Count | Should -Be 0
+        }
+
+        It "sin -HooksDir no se pronuncia sobre la procedencia" {
+            $otra = Join-Path $script:HooksOtros "pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "sindir.json" -RutaBash $otra)
+            $r.ok | Should -Be $true
+            @($r.foreign).Count | Should -Be 0
+        }
     }
 }

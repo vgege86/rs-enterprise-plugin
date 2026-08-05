@@ -1,5 +1,49 @@
 # RS Enterprise Agent — Changelog
 
+## 3.2.2 — 2026-08-05
+
+### Una guarda PII registrada con la ruta rota se contaba como protección
+
+`Test-RsPiiGuards` verificaba que las dos guardas estuvieran bajo `hooks.PreToolUse` con un matcher
+que dispare, pero **no que el `.ps1` al que apuntan exista**. Y la ruta va cableada en absoluto,
+porque `${CLAUDE_PLUGIN_ROOT}` solo se expande en `.claude-plugin/plugin.json` y `.mcp.json` — en
+`~/.claude/settings.json` llega literal. Basta con que el plugin cambie de sitio (reinstalación,
+otra ruta de caché, otro perfil, un checkout movido) para que la entrada apunte a un fichero que ya
+no está: Claude Code lanza el hook, `powershell` sale con error, y ese código **no es 2**, el único
+que bloquea. La guarda falla **abierta** mientras `check_env` seguía devolviendo
+`guards_registered = true` y `pii.ok = true`.
+
+Es el mismo desenlace que ya corrigió el paso de `-match` sobre el texto a comprobación estructural
+—«un workspace que cree estar protegido sin estarlo es peor que uno que sabe que está en `off`»—,
+pero por una vía que no exige que nadie haga nada mal.
+
+Ahora **registrada ≠ efectiva**: una entrada cuyo `.ps1` no se puede verificar cuenta como ausente.
+Tres motivos, todos con la ruta en el mensaje:
+
+| Situación | Veredicto |
+|---|---|
+| El fichero no existe | no efectiva — `el fichero no existe` |
+| La ruta lleva `${...}`, `%VAR%` o `$env:VAR` sin expandir | no efectiva — `la ruta lleva una variable sin expandir` |
+| La ruta es relativa (se resolvería contra un cwd que no se conoce) | no efectiva — `la ruta es relativa y no se puede verificar` |
+
+Si hay **varias** entradas de la misma guarda y una de ellas sí es válida, la guarda protege y no se
+reporta como rota: reinstalar deja restos, y lo que importa es que alguna dispare.
+
+`check_env` gana `pii.guards_stale` (guardas registradas que no protegen) y `pii.guards_foreign`
+(guardas que **sí** protegen, pero desde otra copia del plugin — la copia vendorizada de la v2.11.0,
+que no se actualiza con `/plugin marketplace update`). `guards_stale` se avisa **en cualquier modo,
+también en `off`**: las guardas no dependen de `pii_policy.mode`, así que una entrada muerta deja ese
+bypass abierto siempre. Con `enforce` sale además por `pii.ok = false`. `guards_foreign` no invalida
+el registro — esa copia protege — pero se dice.
+
+`/rs-pii enforce` pasa a **sustituir** la entrada que apunte a otra ruta en vez de añadir una
+segunda: dos entradas de la misma guarda no protegen más, y la muerta seguiría fallando en cada
+llamada.
+
+`tests/PiiGuard.Tests.ps1` se reescribe para fabricar guardas de mentira en ficheros **reales** —con
+las rutas inventadas de antes los casos existentes ya no medirían lo que creen— y añade los seis
+casos nuevos, incluido el de las dos entradas donde la buena rescata a la rota.
+
 ## 3.2.1 — 2026-08-04
 
 ### `/rs-word`: el documento salía con la tipografía de la plantilla perdida

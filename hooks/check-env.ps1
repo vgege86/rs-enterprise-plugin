@@ -194,19 +194,38 @@ if ($model -and $model.pii_policy -and $model.pii_policy.mode) {
 # dispare, no que la cadena aparezca en cualquier sitio del JSON.
 . (Join-Path $PSScriptRoot "lib-pii.ps1")
 $settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
-$guardas   = Test-RsPiiGuards -SettingsPath $settingsUsuario
+# -HooksDir: el hooks\ de ESTE plugin. Sirve para dos cosas -- verificar que el .ps1 al que
+# apunta cada entrada existe de verdad (una entrada que apunte a una ruta muerta NO protege:
+# el hook falla, pero no con codigo 2, asi que el bypass queda abierto en silencio) y detectar
+# que la guarda viva cuelga de otra copia del plugin.
+$guardas   = Test-RsPiiGuards -SettingsPath $settingsUsuario -HooksDir $PSScriptRoot
 $guardasOk = $guardas.ok
 
 $piiEstado = @{
     mode              = $piiModo
     guards_registered = $guardasOk
     guards_missing    = @($guardas.missing)
+    guards_stale      = @($guardas.stale)
+    guards_foreign    = @($guardas.foreign)
     ok                = ($piiModo -ne "enforce") -or $guardasOk
 }
 if (-not $piiEstado.ok) {
-    $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse en ${settingsUsuario}: " +
+    $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse efectivas en ${settingsUsuario}: " +
                        (($guardas.missing) -join ", ") +
                        ". La proteccion es incompleta: ese bypass esta abierto. Ejecutar /rs-pii enforce para registrarlas."
+}
+# Una guarda ROTA se avisa SIEMPRE, tambien con mode=off: las guardas no dependen del modo
+# del workspace -- bloquean sqlplus/sqlcmd directos y la escritura de datos personales
+# estuviera el modo donde estuviera -- asi que una entrada que apunta a una ruta muerta deja
+# ese bypass abierto en cualquier modo. Con enforce ya sale ademas por 'error' (ok = false).
+if (@($guardas.stale).Count -gt 0) {
+    $piiEstado.guards_stale_note = "Hay guardas registradas que NO protegen (la entrada existe, el .ps1 no). " +
+                                   "Suele significar que el plugin cambio de ruta: settings.json lleva la ruta cableada en absoluto. " +
+                                   "Volver a ejecutar /rs-pii enforce la reescribe con la ruta actual."
+}
+if (@($guardas.foreign).Count -gt 0) {
+    $piiEstado.guards_foreign_note = "Hay guardas que protegen desde OTRA copia del plugin: esa copia no se actualiza con /plugin marketplace update. " +
+                                     "Volver a ejecutar /rs-pii enforce las repunta a la copia en uso."
 }
 # Se comprueba el FICHERO, no la sesion en curso: Claude Code captura la configuracion de
 # hooks al arrancar, asi que unas guardas registradas a mitad de sesion NO estan activas
