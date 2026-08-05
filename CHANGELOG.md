@@ -1,5 +1,55 @@
 # RS Enterprise Agent — Changelog
 
+## 3.3.0 — 2026-08-05
+
+### Las guardas PII siguen al modo del workspace
+
+⚠️ **Cambio de comportamiento.** Hasta ahora las dos guardas `PreToolUse`, una vez registradas,
+bloqueaban **siempre**: `sqlplus`/`sqlcmd` directos y la escritura de contenido con forma de dato
+personal, en cualquier proyecto del ordenador y con el workspace en el modo que fuera. Viven en
+`~/.claude/settings.json`, que es configuración personal, así que su alcance era la **máquina**.
+
+Desde esta versión siguen a `pii_policy.mode` del workspace al que pertenece cada operación:
+
+| Situación | Guarda |
+|---|---|
+| Fuera de un workspace uCollect/RS | inactiva |
+| Dentro, `mode = off` | inactiva |
+| Dentro, `mode = audit` o `enforce` | **actúa** |
+| Dentro, modo **indeterminado** (política declarada que no se puede leer) | **actúa** |
+
+**Qué cambia para quien ya las tenga registradas:** en un workspace en `off` —el estado por defecto,
+y hoy el de todos— **dejan de bloquear** al actualizar. Y dejan de bloquear también en el resto de
+repos del usuario, que es lo que las hacía insostenibles: un `README` con la dirección de soporte
+disparaba el patrón de correo en un proyecto que no tiene nada que ver con uCollect/RS.
+
+La última fila de la tabla es la que sostiene el diseño: un modelo declarado y ausente, o una config
+de BD ilegible, **no** degradan a "sin protección". Es el mismo criterio que ya aplica `db_query`,
+que falla cerrado justo ahí. En `audit` las guardas bloquean aunque los datos aún salgan en claro:
+es la fase en la que se mide un workspace que va a protegerse, y es cuando menos interesa que se
+coja la costumbre de rodear la herramienta.
+
+Con **varias conexiones** manda la más restrictiva. La guarda de Bash no puede saber a qué BD apunta
+un comando, así que un workspace con PROD en `enforce` y DEV en `off` bloquea igual.
+
+Cada guarda resuelve el workspace por la señal que tiene: la de escritura desde el `file_path` del
+evento —manda el **destino**, no la sesión: si escribes en un workspace en `enforce` desde una sesión
+abierta en uno en `off`, bloquea—, y la de Bash desde el `cwd`, que es lo único que trae. Corolario
+que se documenta en §5.2b: un comando lanzado desde el workspace A contra la BD del B se mide con el
+modo de A. Sigue siendo un guardarraíl, no una frontera.
+
+**El coste se midió antes de elegir.** Esto corre en cada `Bash` y cada `Write`, y el modelo BD pesa
+entre 288 KB y 664 KB. Sobre un modelo de 1,3 MB: **12 ms** leyendo el modo con una regex contra
+**135 ms** con `ConvertFrom-Json` (×11), y en Windows PowerShell 5.1 la diferencia es mayor. Se lee
+con regex. La contrapartida —que la regex no entienda una forma que el parser sí— se cubre por dos
+lados: "hay bloque `pii_policy` y no consigo leer el modo" **no** degrada a `off` sino a
+indeterminado (o sea, bloquea), y `check_env` contrasta la lectura rápida con el parseo completo que
+ya hacía y publica `pii.mode_mismatch` si divergen.
+
+`check_env` gana `pii.guards_active`: registradas y actuando son cosas distintas y se informan por
+separado. `/rs-pii off` sigue sin desregistrar las guardas — ya no hace falta para dejar de bloquear
+aquí, y quitarlas apagaría los workspaces que sí las necesitan.
+
 ## 3.2.2 — 2026-08-05
 
 ### Una guarda PII registrada con la ruta rota se contaba como protección

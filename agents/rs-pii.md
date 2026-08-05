@@ -65,11 +65,15 @@ modelo.
 
 ## `status` (por defecto)
 
-1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_missing`,
-   `guards_stale`, `guards_foreign`, `ok`, `error`.
+1. `check_env(workspace)` → leer el bloque `pii`: `mode`, `guards_registered`, `guards_active`,
+   `guards_missing`, `guards_stale`, `guards_foreign`, `ok`, `error`.
 2. Informar el modo actual y si las guardas `PreToolUse` están registradas. Si falta alguna, decir
    **cuál** (`guards_missing`). Recordar que `guards_registered` describe el fichero
    `~/.claude/settings.json`, no la sesión en curso (ver el aviso de `enforce`).
+   - **Registradas ≠ actuando.** `guards_active` dice si bloquean **en este workspace**: desde 3.3.0
+     las guardas siguen a `pii_policy.mode`, así que en `off` están registradas y no bloquean nada —
+     que es el estado normal en desarrollo, no un problema. Informar de las dos cosas por separado y
+     no presentar `guards_registered: true` como "aquí está bloqueando".
    - Si `guards_stale` no está vacío → **decirlo aunque el modo sea `off`**: hay una entrada
      registrada que **no protege** porque el `.ps1` al que apunta no existe. `guards_registered` ya
      es `false` por ese motivo (una guarda registrada y rota cuenta como ausente, no como presente).
@@ -221,13 +225,16 @@ abiertos durante el resto de esta sesión. Debe decirlo así, sin suavizarlo, y 
 
 ## `off`
 
-Vuelve a `off`. **No** toca `~/.claude/settings.json` ni desregistra las guardas — son configuración
-de usuario, potencialmente compartida con otros workspaces, y no tienen coste real de seguir activas
-(siguen bloqueando `sqlplus`/`sqlcmd` directos y escritura de PII en ficheros, con o sin `enforce`).
+Vuelve a `off`. **No** toca `~/.claude/settings.json` ni desregistra las guardas: son configuración
+de usuario, compartida con los demás workspaces, y desde 3.3.0 dejar de bloquear aquí **no** exige
+desregistrarlas — las guardas leen `pii_policy.mode` del workspace de cada operación y no actúan en
+`off`. Quitarlas del fichero apagaría de paso los workspaces que sí las necesitan.
 
 1. `check_env(workspace)` → mostrar el modo actual.
 2. **Confirmación explícita.** Advertir: **esto desactiva la protección** — las consultas volverán a
-   devolver los datos en claro en el contexto de la conversación.
+   devolver los datos en claro en el contexto de la conversación, y **las guardas dejan de bloquear
+   en este workspace**: `sqlplus`/`sqlcmd` directos y la escritura de datos personales en ficheros
+   vuelven a estar permitidos aquí. En los demás workspaces no cambia nada.
 3. Solo tras confirmación: escribir el modo (ver abajo).
 4. Confirmar con un nuevo `check_env`.
 
@@ -296,7 +303,7 @@ sin que su contenido entre nunca en el contexto de la conversación — el coman
 ```
 ## Protección PII: <workspace>
 Modo: off | audit | enforce
-Guardas PreToolUse registradas: sí/no
+Guardas PreToolUse registradas: sí/no · bloqueando en este workspace: sí/no (guards_active)
 <aviso si aplica: enforce incompleto / audit no protege / guarda registrada que no protege
  (guards_stale) / guarda que protege desde otra copia del plugin (guards_foreign)>
 

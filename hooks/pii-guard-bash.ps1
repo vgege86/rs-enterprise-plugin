@@ -29,9 +29,17 @@ try {
     if (-not $textoEvento) { $textoEvento = Read-RsStdinUtf8 }
     $evento  = $textoEvento | ConvertFrom-Json
     $comando = "$($evento.tool_input.command)"
+    $origen  = "$($evento.cwd)"
 } catch {
     exit 0   # Sin evento parseable no hay nada que bloquear.
 }
+
+# La guarda sigue al modo del WORKSPACE (ver Get-RsPiiEstadoGuarda). Un comando de Bash no dice
+# sobre que workspace actua, asi que se usa el cwd de la sesion: es la unica senal disponible.
+# Corolario documentado en #5.2b: un comando lanzado desde el workspace A contra la BD del B se
+# mide con el modo de A. Sigue siendo un guardarrail, no una frontera.
+$estado = Get-RsPiiEstadoGuarda $origen
+if (-not $estado.activa) { exit 0 }
 
 # Clientes de BD invocados directamente. \b evita que "mysqlplus" o una ruta que
 # contenga la palabra disparen por accidente.

@@ -130,6 +130,133 @@ function Remove-RsPii {
     return $Texto
 }
 
+# Resolucion del modelo BD: una sola implementacion, la de lib-dbconfig.ps1 (Get-RsModelPath es
+# "el unico sitio que resuelve el campo model"). Se carga solo si quien nos dot-sourcea no la
+# traia ya -- check-env.ps1 carga las dos librerias.
+if (-not (Get-Command Get-RsModelPath -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot "lib-dbconfig.ps1")
+}
+
+# Lectura DIRIGIDA del modo: el modelo pesa entre 288 KB y 664 KB en workspaces reales y esto
+# corre en CADA Bash y CADA Write. Medido sobre un modelo de 1,3 MB: 12 ms con esta regex
+# contra 135 ms con ConvertFrom-Json, y en Windows PowerShell 5.1 la diferencia es mayor
+# (su parser JSON es mucho mas lento que el de PS7). No se parsea el modelo entero para leer
+# un campo. La contrapartida es que la regex puede no entender una forma que el parser si
+# entenderia: por eso "hay bloque pii_policy y no consigo leer el modo" NO degrada a off
+# (ver Get-RsPiiModoDeModelo), y por eso check-env.ps1 contrasta esta lectura con el parseo
+# completo que ya hace, y avisa si discrepan.
+$script:RsPiiRxPolicy = [regex]::new('"pii_policy"\s*:', 'IgnoreCase')
+$script:RsPiiRxModo   = [regex]::new('"pii_policy"\s*:\s*\{[^{}]*?"mode"\s*:\s*"\s*(off|audit|enforce)\s*"', 'IgnoreCase')
+
+function Find-RsWorkspaceRaiz {
+    <# Sube desde $Desde hasta encontrar docs\.rs-databases.json. "" si no aparece.
+
+       Es lo que decide si una operacion cae DENTRO de un workspace uCollect/RS. Fuera de uno
+       las guardas no se activan: el plugin no tiene nada que decir sobre los otros repos del
+       usuario, y ese era el precio de que vivieran en la configuracion personal.
+
+       Misma expresion "docs\.rs-databases.json" que Read-RsDatabases a proposito: si una
+       usara separador nativo y la otra no, en un sistema no-Windows encontrarian ficheros
+       distintos. Que las dos coincidan importa mas que cual de las dos es mas portable. #>
+    param([AllowEmptyString()][string]$Desde)
+
+    if (-not $Desde) { return "" }
+    try { $p = [System.IO.Path]::GetFullPath($Desde) } catch { return "" }
+    # Un fichero -- o una ruta que todavia no existe, que es el caso normal en Write -- no es
+    # por donde se empieza a subir: se empieza por su carpeta.
+    if (-not (Test-Path -LiteralPath $p -PathType Container)) {
+        try { $p = [System.IO.Path]::GetDirectoryName($p) } catch { return "" }
+    }
+    $saltos = 0
+    while ($p -and $saltos -lt 40) {
+        if (Test-Path -LiteralPath (Join-Path $p "docs\.rs-databases.json")) { return $p }
+        $padre = ""
+        try { $padre = [System.IO.Path]::GetDirectoryName($p) } catch { }
+        if (-not $padre -or $padre -eq $p) { break }
+        $p = $padre
+        $saltos++
+    }
+    return ""
+}
+
+function Get-RsPiiModoDeModelo {
+    <# Modo declarado en un modelo BD: off | audit | enforce | indeterminado | ausente.
+
+       'ausente' = el fichero no esta; lo resuelve quien llama, porque la respuesta depende de
+       si la conexion DECLARA su modelo (Test-RsModelDeclarado) o cae al convenio -- la misma
+       distincion que ya aplica db_query.
+
+       'indeterminado' = hay bloque pii_policy y no se ha podido leer el modo. NO se degrada a
+       off a proposito: un modelo con politica que no se entiende es un workspace roto, y
+       tratarlo como "sin politica" es exactamente el fallo silencioso que este sistema existe
+       para evitar. Sin bloque pii_policy si es off: ese es el workspace ordinario que nunca
+       configuro nada, y es lo que garantiza que actualizar no cambie el comportamiento. #>
+    param([AllowEmptyString()][string]$ModelPath)
+
+    if (-not $ModelPath) { return "indeterminado" }
+    if (-not (Test-Path -LiteralPath $ModelPath -PathType Leaf)) { return "ausente" }
+    try { $texto = [System.IO.File]::ReadAllText($ModelPath) } catch { return "indeterminado" }
+    $m = $script:RsPiiRxModo.Match($texto)
+    if ($m.Success) { return $m.Groups[1].Value.ToLower() }
+    if ($script:RsPiiRxPolicy.IsMatch($texto)) { return "indeterminado" }
+    return "off"
+}
+
+function Get-RsPiiEstadoGuarda {
+    <# Decide si las guardas PreToolUse deben actuar sobre una operacion, a partir de la ruta
+       que la origina. Devuelve @{ activa; modo; motivo; workspace }.
+
+       Las guardas siguen al modo del WORKSPACE, no a la maquina: lo normal en desarrollo es
+       tenerlas desactivadas, y se encienden solo en el workspace cuya BD tiene datos reales.
+
+       | Situacion                                   | Guarda   |
+       |---------------------------------------------|----------|
+       | Fuera de un workspace RS                    | inactiva |
+       | Dentro, modo off                            | inactiva |
+       | Dentro, modo audit o enforce                | ACTIVA   |
+       | Dentro, modo indeterminado (workspace roto) | ACTIVA   |
+
+       La ultima fila es la que evita que esto sea un agujero: un modelo declarado y ausente, o
+       una config ilegible, no degradan a "sin proteccion". Es el mismo criterio que aplica
+       db_query, que falla cerrado justo ahi.
+
+       Con VARIAS conexiones manda la mas restrictiva: la guarda de Bash no puede saber a que
+       BD apunta un comando, asi que un workspace con PROD en enforce y DEV en off tiene que
+       bloquear igual. #>
+    param([AllowEmptyString()][string]$Desde)
+
+    $ws = Find-RsWorkspaceRaiz $Desde
+    if (-not $ws) {
+        return @{ activa = $false; modo = "fuera"; workspace = ""
+                  motivo = "la operacion no cae dentro de un workspace uCollect/RS" }
+    }
+
+    $cfg = Read-RsDatabases -Workspace $ws
+    if (-not $cfg.ok) {
+        return @{ activa = $true; modo = "indeterminado"; workspace = $ws
+                  motivo = "workspace RS con la config de BD ilegible: $($cfg.error)" }
+    }
+
+    $rango = @{ "off" = 0; "audit" = 1; "enforce" = 2; "indeterminado" = 3 }
+    $peor  = "off"
+    foreach ($c in @($cfg.conexiones)) {
+        $modo = Get-RsPiiModoDeModelo (Get-RsModelPath -Workspace $ws -Conexion $c -Proyecto $cfg.proyecto)
+        if ($modo -eq "ausente") {
+            # Declarado y ausente = workspace roto; convenio y ausente = nunca configuro nada.
+            $modo = if (Test-RsModelDeclarado $c) { "indeterminado" } else { "off" }
+        }
+        if ($rango[$modo] -gt $rango[$peor]) { $peor = $modo }
+    }
+
+    $motivo = switch ($peor) {
+        "off"           { "el workspace declara pii_policy.mode = off" }
+        "audit"         { "el workspace esta en audit" }
+        "enforce"       { "el workspace esta en enforce" }
+        "indeterminado" { "el workspace declara una politica que no se puede leer" }
+    }
+    return @{ activa = ($rango[$peor] -ge 1); modo = $peor; workspace = $ws; motivo = $motivo }
+}
+
 function Get-RsPiiGuardRuta {
     <# Extrae del comando de un hook la ruta del .ps1 de la guarda ($Script). "" si no
        aparece. Prueba primero la forma entrecomillada, que es la que escribe /rs-pii

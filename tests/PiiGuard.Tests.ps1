@@ -8,6 +8,30 @@
     (pwsh, no powershell: la suite usa Join-Path de tres argumentos, que es PS 6+)
 #>
 
+BeforeAll {
+    function New-RsWorkspacePii {
+        <# Workspace uCollect/RS de mentira con el modo indicado. Desde 3.3.0 las guardas
+           PreToolUse siguen al modo del WORKSPACE, asi que un evento cuya ruta no cae dentro
+           de uno no bloquea nada: los casos que miden el bloqueo tienen que vivir dentro de
+           un workspace en enforce, o pasarian por la razon equivocada. #>
+        param([string]$Ruta, [ValidateSet("off", "audit", "enforce")][string]$Modo = "enforce")
+
+        New-Item -ItemType Directory -Path $Ruta -Force | Out-Null
+        # -ItemType File -Force crea las carpetas intermedias: en Windows hacen falta docs\ y
+        # BD\ de verdad; en Linux el literal "docs\..." es un solo nombre de fichero. La
+        # expresion es la misma que usa Read-RsDatabases, que es lo que tiene que coincidir.
+        foreach ($par in @(
+            @{ P = (Join-Path $Ruta "docs\.rs-databases.json")
+               C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "Data Source=X;User Id=u", "schema": "S" } ] }' },
+            @{ P = (Join-Path $Ruta "BD\Demo-model.json")
+               C = '{ "proyecto": "Demo", "tables": {}, "pii_policy": { "mode": "' + $Modo + '" } }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        return $Ruta
+    }
+}
+
 Describe "pii_cli.py" {
     BeforeAll {
         $script:cli   = Join-Path $PSScriptRoot ".." "scripts" "pii_cli.py"
@@ -504,25 +528,38 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
 }
 
 Describe "pii-guard-bash.ps1" {
-    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1" }
+    BeforeAll {
+        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1"
+        $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "bash-enforce") "enforce"
+        $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "bash-off") "off"
+        $script:fuera = Join-Path $TestDrive "bash-otro-repo"
+        New-Item -ItemType Directory -Path $script:fuera -Force | Out-Null
+
+        function New-EventoBash {
+            <# El cwd es la unica senal que tiene esta guarda: un comando de Bash no dice
+               sobre que workspace actua. #>
+            param([string]$Comando, [string]$Cwd = $script:wsEnf)
+            return (@{ cwd = $Cwd; tool_input = @{ command = $Comando } } | ConvertTo-Json -Depth 5 -Compress)
+        }
+    }
 
     It "bloquea sqlplus" {
-        '{"tool_input":{"command":"sqlplus -S user/pass@DS @x.sql"}}' | & $script:g | Out-Null
+        (New-EventoBash "sqlplus -S user/pass@DS @x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea sqlcmd" {
-        '{"tool_input":{"command":"sqlcmd -S srv -Q \"SELECT 1\""}}' | & $script:g | Out-Null
+        (New-EventoBash 'sqlcmd -S srv -Q "SELECT 1"') | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite comandos normales" {
-        '{"tool_input":{"command":"dotnet build MiSolucion.sln"}}' | & $script:g | Out-Null
+        (New-EventoBash "dotnet build MiSolucion.sln") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite los scripts del propio plugin que usan sqlplus por dentro" {
-        '{"tool_input":{"command":"python installer-inserts.py C:\\ws Proy out"}}' | & $script:g | Out-Null
+        (New-EventoBash "python installer-inserts.py C:\ws Proy out") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
@@ -540,11 +577,45 @@ Describe "pii-guard-bash.ps1" {
         # de PowerShell añade contexto "Line |" con la linea de codigo que invoco el
         # pipeline (aqui, la propia linea del test) al formatear para consola, que no
         # es el mensaje del guard y ensuciaria la comprobacion con el mismo secreto.
-        $salida = '{"tool_input":{"command":"sqlplus -S usuario/contrasena@ORCL"}}' | & $script:g 2>&1
+        $salida = (New-EventoBash "sqlplus -S usuario/contrasena@ORCL") | & $script:g 2>&1
         $LASTEXITCODE | Should -Be 2
         $mensaje = [string]$salida
         $mensaje | Should -Not -Match "contrasena"
         $mensaje | Should -Match "sqlplus"
+    }
+
+    Context "sigue al modo del workspace (3.3.0)" {
+        It "el MISMO comando no bloquea si el workspace esta en off" {
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:wsOff) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "no bloquea fuera de un workspace RS" {
+            # Es lo que quita la friccion de alcance de maquina: la guarda vive en la
+            # configuracion personal y afectaba a TODOS los proyectos del usuario.
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:fuera) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "bloquea en audit, no solo en enforce" {
+            $ws = New-RsWorkspacePii (Join-Path $TestDrive "bash-audit") "audit"
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
+
+        It "bloquea si el workspace declara un modelo que no existe (falla cerrado)" {
+            # Workspace roto: hay politica declarada y no se puede leer. Tratarlo como
+            # "sin politica" seria el fallo silencioso que este sistema existe para evitar.
+            $ws = Join-Path $TestDrive "bash-roto"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $cfg = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $cfg -Force | Out-Null
+            Set-Content -LiteralPath $cfg -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x", "model": "BD\\no-existe.json" } ] }'
+
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
     }
 }
 
@@ -566,7 +637,10 @@ Describe "Repair-RsTextoUtf8 (codificacion de la stdin de las guardas)" {
         $script:utf8 = New-Object System.Text.UTF8Encoding($false)
         # "Jose Munoz" con e acentuada y ene, compuesto por codigo de caracter para que no
         # dependa de como este guardado ESTE fichero.
-        $script:bueno = "C:\x\Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz.md"
+        # Dentro de un workspace en enforce: desde 3.3.0 la guarda no bloquea fuera de uno, y
+        # este caso necesita que bloquee para poder mirar el texto del bloqueo.
+        $script:wsAcentos = New-RsWorkspacePii (Join-Path $TestDrive "acentos") "enforce"
+        $script:bueno = Join-Path $script:wsAcentos ("Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz.md")
         # Lo que ve el script: los bytes UTF-8 descodificados como si fueran OEM.
         $script:roto  = $script:oem.GetString($script:utf8.GetBytes($script:bueno))
     }
@@ -625,70 +699,118 @@ Describe "pii-guard-write.ps1" {
         ademas exigen letra de control valida -- sin eso, cualquier fecha AAAAMMDD del
         repo (convencion Actualizador\<ENTORNO>_<AAAAMMDD>) dispara la guarda.
     #>
-    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1" }
+    BeforeAll {
+        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1"
+        $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "write-enforce") "enforce"
+        $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "write-off") "off"
+        $script:fuera = Join-Path $TestDrive "write-otro-repo"
+        New-Item -ItemType Directory -Path $script:fuera -Force | Out-Null
+
+        function New-EventoWrite {
+            <# Manda el workspace del FICHERO que se va a escribir, no el de la sesion. #>
+            param([string]$Contenido, [string]$Ruta = "", [string]$Workspace = $script:wsEnf,
+                  [string]$Relativa = "a.md", [string]$Cwd = "")
+            if (-not $Ruta) { $Ruta = Join-Path $Workspace $Relativa }
+            $ev = @{ tool_input = @{ file_path = $Ruta; content = $Contenido } }
+            if ($Cwd) { $ev.cwd = $Cwd }
+            return ($ev | ConvertTo-Json -Depth 5 -Compress)
+        }
+    }
 
     It "bloquea contenido con DNI de letra de control valida" {
         # 12345678Z: 12345678 % 23 = 14 -> "TRWAGMYFPDXBNJZSQVHLCKE"[14] = "Z". Valido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678Z debe 300"}}' | & $script:g | Out-Null
+        (New-EventoWrite "El deudor 12345678Z debe 300") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea el mismo numero de DNI con letra de control incorrecta" {
         # 12345678A: la letra correcta es Z, no A. Misma forma, checksum invalido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678A debe 300"}}' | & $script:g | Out-Null
+        (New-EventoWrite "El deudor 12345678A debe 300") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "NO bloquea una fecha AAAAMMDD seguida de letra (falso positivo tipico del repo)" {
         # 20260803 % 23 = ... letra correcta es "B", no "A": no cuela como DNI valido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Entrega 20260803A generada por el hook"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Entrega 20260803A generada por el hook") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con NIE de letra de control valida" {
         # X1234567L: X->0, 01234567 % 23 -> "L". Valido (ejemplo clasico de NIE).
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567L"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567L") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea un NIE con letra de control incorrecta" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567A"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567A") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con IBAN" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"ES9121000418450200051332"}}' | & $script:g | Out-Null
+        (New-EventoWrite "ES9121000418450200051332") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea contenido con correo electronico" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Contacto: ana.lopez@example.com"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Contacto: ana.lopez@example.com") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite contenido sin datos personales" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"SELECT COUNT(*) FROM RDEUDORES"}}' | & $script:g | Out-Null
+        (New-EventoWrite "SELECT COUNT(*) FROM RDEUDORES") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un importe largo sin forma de DNI/NIE/IBAN/correo (telefono y tarjeta fuera de esta guarda)" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Total acumulado: 1234567890123456 centimos"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Total acumulado: 1234567890123456 centimos") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del instalador" {
-        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Instalador\\Scripts\\Inserts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        # Dentro del workspace en enforce a proposito: lo que se prueba es la exclusion de
+        # ruta, no que la guarda estuviera dormida.
+        (New-EventoWrite "12345678Z" -Relativa "Instalador\Scripts\Inserts\x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del actualizador" {
-        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Actualizador\\DESA_20260803\\Scripts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        (New-EventoWrite "12345678Z" -Relativa "Actualizador\DESA_20260803\Scripts\x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un evento no parseable (JSON invalido)" {
         'esto no es json' | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
+    }
+
+    Context "sigue al modo del workspace (3.3.0)" {
+        It "el MISMO contenido no bloquea si el workspace del fichero esta en off" {
+            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsOff) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "no bloquea un correo en un fichero de otro repo" {
+            # La friccion que motivo el cambio: escribir un README con la direccion de
+            # soporte en un proyecto que no es uCollect/RS quedaba bloqueado.
+            (New-EventoWrite "Contacto: soporte@empresa.com" -Ruta (Join-Path $script:fuera "README.md")) |
+                & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "manda el workspace del FICHERO, no el de la sesion" {
+            # Sesion abierta en un workspace en off, escribiendo en uno en enforce: decide
+            # el destino, que es de quien es la BD con datos reales.
+            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsEnf -Cwd $script:wsOff) |
+                & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
+
+        It "usa el cwd cuando el evento no trae ruta de fichero" {
+            $ev = @{ cwd = $script:wsEnf; tool_input = @{ content = "El deudor 12345678Z debe 300" } } |
+                  ConvertTo-Json -Depth 5 -Compress
+            $ev | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
     }
 }
 
@@ -780,6 +902,119 @@ Describe "check-env.ps1 verificacion de guardas" {
         # del plugin (guards_foreign).
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_stale"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_foreign"
+    }
+}
+
+Describe "Get-RsPiiEstadoGuarda (las guardas siguen al modo del workspace)" {
+    <#
+        Lo normal en desarrollo es tenerlas desactivadas; se encienden solo en el workspace
+        cuya BD tiene datos reales. La fila que sostiene el diseño es la ultima: dentro de un
+        workspace RS cuyo modo no se puede determinar, la guarda ACTUA. Sin eso, un modelo
+        declarado y ausente convertiria un workspace protegido en uno sin proteccion, en
+        silencio -- que es el mismo fallo que ya arreglo la 3.2.2 por otra via.
+    #>
+    BeforeAll { . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1") }
+
+    It "modo off -> inactiva" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-off") "off")).activa | Should -BeFalse
+    }
+
+    It "modo audit -> ACTIVA" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-audit") "audit")).activa | Should -BeTrue
+    }
+
+    It "modo enforce -> ACTIVA" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-enf") "enforce")).activa | Should -BeTrue
+    }
+
+    It "fuera de un workspace RS -> inactiva, y lo dice" {
+        $d = Join-Path $TestDrive "e-fuera"
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        $r = Get-RsPiiEstadoGuarda $d
+        $r.activa | Should -BeFalse
+        $r.modo   | Should -Be "fuera"
+    }
+
+    It "una subcarpeta hereda el modo del workspace" {
+        $ws  = New-RsWorkspacePii (Join-Path $TestDrive "e-sub") "enforce"
+        $sub = Join-Path $ws "Batch/Soluciones/RSProcIN"
+        New-Item -ItemType Directory -Path $sub -Force | Out-Null
+        (Get-RsPiiEstadoGuarda $sub).activa | Should -BeTrue
+        # Un fichero que TODAVIA no existe es el caso normal en Write: se resuelve por su carpeta.
+        (Get-RsPiiEstadoGuarda (Join-Path $sub "nuevo.cs")).activa | Should -BeTrue
+    }
+
+    It "modelo sin bloque pii_policy -> inactiva (workspace que nunca configuro nada)" {
+        $ws = Join-Path $TestDrive "e-sinpol"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        foreach ($par in @(
+            @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }' },
+            @{ P = (Join-Path $ws "BD\Demo-model.json");      C = '{ "proyecto": "Demo", "tables": {} }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        $r = Get-RsPiiEstadoGuarda $ws
+        $r.activa | Should -BeFalse
+        $r.modo   | Should -Be "off"
+    }
+
+    Context "falla cerrado dentro del workspace" {
+        It "modelo DECLARADO y ausente -> ACTIVA" {
+            $ws = Join-Path $TestDrive "e-declarado-roto"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $p = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x", "model": "BD\\no-existe.json" } ] }'
+            $r = Get-RsPiiEstadoGuarda $ws
+            $r.activa | Should -BeTrue
+            $r.modo   | Should -Be "indeterminado"
+        }
+
+        It "modelo por CONVENIO y ausente -> inactiva (nunca declaro politica)" {
+            # La otra mitad de la misma regla, la que garantiza que actualizar no cambie el
+            # comportamiento de un workspace que nunca configuro nada.
+            $ws = Join-Path $TestDrive "e-convenio-ausente"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $p = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }'
+            (Get-RsPiiEstadoGuarda $ws).activa | Should -BeFalse
+        }
+
+        It "pii_policy que la lectura rapida no entiende -> ACTIVA, nunca off" {
+            # Un objeto anidado por delante de "mode" rompe la regex. Degradar a off ahi
+            # apagaria la guarda de un workspace protegido sin decir nada.
+            $ws = Join-Path $TestDrive "e-ilegible"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            foreach ($par in @(
+                @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }' },
+                @{ P = (Join-Path $ws "BD\Demo-model.json");      C = '{ "pii_policy": { "raro": { "x": 1 }, "mode": "enforce" } }' })) {
+                New-Item -ItemType File -Path $par.P -Force | Out-Null
+                Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+            }
+            $r = Get-RsPiiEstadoGuarda $ws
+            $r.activa | Should -BeTrue
+            $r.modo   | Should -Be "indeterminado"
+        }
+    }
+
+    It "con varias conexiones manda la mas restrictiva" {
+        # La guarda de Bash no puede saber a que BD apunta un comando, asi que un workspace
+        # con PROD en enforce y DEV en off tiene que bloquear igual.
+        $ws = Join-Path $TestDrive "e-mixto"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        foreach ($par in @(
+            @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "dev", "motor": "ORACLE", "cadena": "x", "model": "BD\\dev-model.json" }, { "id": "prod", "motor": "ORACLE", "cadena": "x", "model": "BD\\prod-model.json" } ] }' },
+            @{ P = (Join-Path $ws "BD\dev-model.json");       C = '{ "pii_policy": { "mode": "off" } }' },
+            @{ P = (Join-Path $ws "BD\prod-model.json");      C = '{ "pii_policy": { "mode": "enforce" } }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        $r = Get-RsPiiEstadoGuarda $ws
+        $r.activa | Should -BeTrue
+        $r.modo   | Should -Be "enforce"
     }
 }
 

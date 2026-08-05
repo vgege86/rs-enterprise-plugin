@@ -189,10 +189,19 @@ if ($model -and $model.pii_policy -and $model.pii_policy.mode) {
     $piiModo = "$($model.pii_policy.mode)"
 }
 
-# Comprobacion ESTRUCTURAL (lib-pii.ps1), no un -match sobre el texto del fichero: hay que
-# verificar que las dos guardas son entradas reales de hooks.PreToolUse con un matcher que
-# dispare, no que la cadena aparezca en cualquier sitio del JSON.
+# Contraste de la lectura RAPIDA con la completa. Las guardas PreToolUse corren en cada Bash y
+# cada Write, asi que no parsean el modelo entero: leen el modo con una regex (ver
+# Get-RsPiiModoDeModelo). Aqui ya tenemos el modelo parseado de verdad, asi que este es el unico
+# sitio barato donde se puede comprobar que las dos lecturas coinciden. Si divergen, las guardas
+# estan actuando con un modo distinto del que cree el resto del sistema -- y como el error puede
+# ir en la direccion de no proteger, se dice.
 . (Join-Path $PSScriptRoot "lib-pii.ps1")
+$piiModoRapido = Get-RsPiiModoDeModelo $modelPath
+$piiDiscrepa = ($piiModoRapido -notin @("ausente", $piiModo))
+
+# Comprobacion ESTRUCTURAL (lib-pii.ps1, ya dot-sourceada arriba), no un -match sobre el texto
+# del fichero: hay que verificar que las dos guardas son entradas reales de hooks.PreToolUse con
+# un matcher que dispare, no que la cadena aparezca en cualquier sitio del JSON.
 $settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
 # -HooksDir: el hooks\ de ESTE plugin. Sirve para dos cosas -- verificar que el .ps1 al que
 # apunta cada entrada existe de verdad (una entrada que apunte a una ruta muerta NO protege:
@@ -207,7 +216,18 @@ $piiEstado = @{
     guards_missing    = @($guardas.missing)
     guards_stale      = @($guardas.stale)
     guards_foreign    = @($guardas.foreign)
+    guards_active     = ($piiModo -in @("audit", "enforce"))
     ok                = ($piiModo -ne "enforce") -or $guardasOk
+}
+# Las guardas siguen al modo del workspace: registradas != actuando. Con mode=off estan
+# registradas y no bloquean nada, que es el estado normal en desarrollo.
+if ($piiDiscrepa) {
+    $piiEstado.mode_fast_read = $piiModoRapido
+    $piiEstado.mode_mismatch  = "El modo leido por las guardas ('$piiModoRapido') NO coincide con el del modelo ('$piiModo'). " +
+                                "Las guardas leen pii_policy.mode con una lectura rapida para no parsear el modelo entero en cada " +
+                                "llamada; si discrepa, estan actuando con un modo distinto del que cree el resto del sistema. " +
+                                "Revisar el bloque pii_policy de ${modelPath}: el modo debe ser un literal 'off'/'audit'/'enforce' " +
+                                "sin objetos anidados por delante dentro de pii_policy."
 }
 if (-not $piiEstado.ok) {
     $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse efectivas en ${settingsUsuario}: " +

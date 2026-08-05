@@ -38,9 +38,17 @@ try {
     $evento    = $textoEvento | ConvertFrom-Json
     $ruta      = "$($evento.tool_input.file_path)"
     $contenido = "$($evento.tool_input.content)$($evento.tool_input.new_string)"
+    $cwd       = "$($evento.cwd)"
 } catch {
     exit 0
 }
+
+# La guarda sigue al modo del WORKSPACE (ver Get-RsPiiEstadoGuarda). Manda el workspace del
+# FICHERO que se va a escribir, no el de la sesion: escribiendo en el workspace B desde una
+# sesion abierta en A, quien decide es B -- es su BD la que tiene o no datos reales. El cwd
+# queda de respaldo para las herramientas que no traen ruta.
+$estado = Get-RsPiiEstadoGuarda $(if ($ruta) { $ruta } else { $cwd })
+if (-not $estado.activa) { exit 0 }
 
 # Entrega al cliente: el volcado de datos reales es intencionado.
 if ($ruta -match '\\(Instalador|Actualizador)\\') { exit 0 }

@@ -547,11 +547,29 @@ personales** que Sistemas necesita para el paso 3.2. El trabajo no se duplica.
 La medida se despliega apagada y se activa de forma controlada, para no romper de
 golpe los diez agentes que consultan datos:
 
-| Modo | Comportamiento |
-|---|---|
-| `off` | Comportamiento actual: los datos salen en claro. Cada consulta lo indica en su respuesta (`pii.mode = "off"`), pero **no** hay ninguna advertencia adicional. |
-| `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege.** |
-| `enforce` | Enmascarado activo. |
+| Modo | Consultas | Guardas (cliente de BD directo, escritura a fichero) |
+|---|---|---|
+| `off` | Datos en claro. Cada consulta lo indica (`pii.mode = "off"`), sin advertencia adicional | **No bloquean** |
+| `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege** | Bloquean |
+| `enforce` | Enmascarado activo | Bloquean |
+
+**El modo es del workspace, y las guardas lo siguen.** Desde la versión 3.3.0 las dos guardas
+—la que impide invocar el cliente de base de datos directamente y la que impide escribir un dato
+personal en un fichero— consultan el modo del workspace al que pertenece cada operación, y no
+actúan en `off`. Antes bloqueaban siempre, en cualquier proyecto del ordenador, estuviera el modo
+donde estuviera.
+
+Es lo que hace utilizable el planteamiento en un equipo de desarrollo: lo normal es tener la
+protección apagada, y encenderla **solo en el workspace cuya base de datos contiene datos reales**.
+Una operación que no cae dentro de ningún workspace uCollect/RS queda fuera del alcance del plugin y
+no se bloquea. Con una excepción deliberada: dentro de un workspace cuyo modo **no se puede
+determinar** —una política declarada que no se puede leer— las guardas sí actúan. Un workspace roto
+no puede degradar en silencio a un workspace sin protección, que es el mismo criterio que ya aplica
+el filtro de las consultas.
+
+En `audit` las guardas bloquean aunque los datos aún salgan en claro: `audit` es la fase en la que
+se mide un workspace que va a protegerse, y es justo cuando no interesa que se coja la costumbre de
+rodear la herramienta.
 
 **El modo se lee de la configuración de la solución, y no poder leerla no equivale a `off`.**
 Si esa configuración declara dónde vive la política y ese fichero no está, o está y no se puede
@@ -628,6 +646,11 @@ en la configuración personal de Claude Code de cada desarrollador, que no viaja
 repositorio. Un equipo nuevo sin configurar queda desprotegido. Se mitiga con una
 verificación de entorno que falla si no están registradas, pero sigue siendo una
 dependencia de puesto de trabajo.
+
+Conviene distinguir dos cosas que se confunden: **estar registradas** es del puesto de
+trabajo, **actuar** es del workspace. Una guarda registrada no bloquea nada en un workspace
+en `off` (§4.4), y eso es lo pretendido; lo que este apartado señala es lo contrario — un
+workspace en `enforce` en un puesto donde nadie las registró no tiene quien las aplique.
 
 Con un matiz adicional: la herramienta lee esa configuración **al arrancar la sesión**, de
 modo que una guarda registrada a mitad de sesión no entra en vigor hasta reiniciarla. En esa

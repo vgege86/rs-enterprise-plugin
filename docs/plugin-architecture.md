@@ -268,7 +268,17 @@ de sitio deja entradas que se lanzan, fallan y **no bloquean**, porque el códig
 Esas salen en `pii.guards_stale` y cuentan como ausentes; `pii.guards_foreign` marca aparte las que
 sí protegen pero desde otra copia del plugin (el escenario de la v2.11.0). Comprueba además el
 **fichero, no la sesión**: Claude Code captura los hooks al arrancar, así que `enforce` cierra
-pidiendo el reinicio en vez de declarar la protección activa. La clasificación de columnas la hace
+pidiendo el reinicio en vez de declarar la protección activa.
+
+**Registradas ≠ actuando** (3.3.0). Las guardas siguen al modo del workspace de cada operación
+(`Get-RsPiiEstadoGuarda`, `hooks/lib-pii.ps1`): en `off` no bloquean, en `audit`/`enforce` sí, fuera
+de un workspace RS tampoco — y con el modo **indeterminado** bloquean, para que un workspace roto no
+degrade en silencio a uno sin protección. La guarda de escritura resuelve el workspace desde el
+`file_path` del evento (manda el destino, no la sesión); la de Bash, desde el `cwd`, que es su única
+señal. `check_env` publica las dos caras: `guards_registered` (puesto de trabajo) y `guards_active`
+(este workspace). El modo se lee con una regex sobre el modelo, no con `ConvertFrom-Json` — esto
+corre en cada `Bash` y cada `Write`, y el modelo pesa cientos de KB; `check_env` contrasta esa
+lectura rápida con el parseo completo que ya hace y publica `mode_mismatch` si divergen. La clasificación de columnas la hace
 `scripts/pii_cli.py --clasificar`, no un clasificador reescrito en el prompt. ⛔ Gate de
 confirmación explícita en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
 de este documento (los módulos `scripts/pii_*.py` que aplica la política).

@@ -38,9 +38,14 @@ Estado general: ✅ LISTO | ⚠️ ATENCIÓN | ❌ BLOQUEANTE
 ```
 
 La fila `Protección PII` sale del bloque `pii` de `check_env` (`mode`, `guards_registered`,
-`guards_missing`, `guards_stale`, `guards_foreign`, `ok`, `error`). Es la única señal que tiene
-el usuario de que el enmascarado de datos personales está activo de verdad, así que **nunca se
-omite**, ni siquiera en `off`.
+`guards_active`, `guards_missing`, `guards_stale`, `guards_foreign`, `ok`, `error`). Es la única
+señal que tiene el usuario de que el enmascarado de datos personales está activo de verdad, así que
+**nunca se omite**, ni siquiera en `off`.
+
+`guards_registered` y `guards_active` son cosas distintas y se informan por separado: la primera
+dice que las guardas están en `~/.claude/settings.json` (puesto de trabajo), la segunda que bloquean
+**en este workspace** (siguen a `pii_policy.mode`). En `off` lo normal es registradas y no activas —
+no es un problema, es el estado por defecto en desarrollo.
 
 Con `mode: enforce` y `guards_registered: false` el detalle debe decir sin rodeos que la
 protección **está incompleta** y nombrar las guardas que faltan (`guards_missing`): el bypass

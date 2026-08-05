@@ -107,6 +107,23 @@ Solución:
 
 ---
 
+## Las guardas están registradas pero no bloquean nada en este workspace
+
+Causas:
+
+- **es el comportamiento normal en `off`**. Desde 3.3.0 las guardas siguen a `pii_policy.mode` del workspace de cada operación: en `off` no actúan. `check_env` lo publica por separado — `pii.guards_registered` (están en `settings.json`) y `pii.guards_active` (bloquean **aquí**)
+- la operación no cae dentro de un workspace uCollect/RS: subiendo desde la ruta no aparece `docs/.rs-databases.json`. Fuera de un workspace el plugin no bloquea nada, a propósito
+- en la guarda de escritura manda el workspace **del fichero**, no el de la sesión: escribiendo en un workspace en `off` desde una sesión abierta en uno en `enforce`, no bloquea
+
+---
+
+Solución:
+
+- si ese workspace tiene datos reales en su BD, activarlo ahí: `/rs-pii audit` o `/rs-pii enforce`. La decisión es **por workspace**, que es justo el objetivo
+- si esperabas bloqueo y el modo ya es `audit`/`enforce`, comprobar `pii.mode_mismatch` en `check_env`: significa que la lectura rápida que hacen las guardas no entiende el bloque `pii_policy` del modelo
+
+---
+
 ## check_env dice guards_stale: una guarda registrada que no protege
 
 Causas:
