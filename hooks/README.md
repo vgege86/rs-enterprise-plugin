@@ -76,15 +76,19 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `export-dmd.ps1 <workspace>` | Export a Oracle Data Modeler (.dmd) |
 
 ### Protección de datos personales (PII)
-Guardas `PreToolUse` — no son fallback de una tool MCP, se registran directamente en la config
-personal del usuario (`~/.claude/settings.json`) solo tras `/rs-pii enforce`. Ver
-`docs/proteccion-pii-consultas-bd.md`.
+Guardas `PreToolUse` — no son fallback de una tool MCP. Desde 3.4.0 las declara
+`.claude-plugin/plugin.json` con `${CLAUDE_PLUGIN_ROOT}`, así que se instalan y actualizan con el
+plugin; **ya no se registran a mano** en `~/.claude/settings.json` (ahí la ruta iba en absoluto y la
+del caché lleva la versión: cada actualización las dejaba muertas). Los restos manuales los retira
+`scripts/cleanup-preplugin.ps1` al arrancar la sesión. Ver `docs/proteccion-pii-consultas-bd.md`.
 
 | Script | Uso |
 |--------|-----|
-| `pii-guard-bash.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Bash` la invocación directa de `sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp`. **Guardarraíl, no control** — se elude con un script intermedio o invocando el binario por otra ruta |
-| `pii-guard-write.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Write`/`Edit` contenido con forma de DNI/NIE (letra de control válida), IBAN o correo. Teléfono y tarjeta quedan fuera a propósito — casarían con cualquier importe o identificador de fila largo. Excluye `Instalador\`/`Actualizador\` |
-| `lib-pii.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Test-DniNieChecksum`, `Remove-RsPii`, patrones DNI/NIE/IBAN/correo). Compartida por `pii-guard-write.ps1` y `log-execution.ps1`, mismo patrón que `lib-dbconfig.ps1` |
+| `pii-guard-bash.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Bash` la invocación directa de `sqlplus`/`sqlcmd`/`osql`/`bcp`/`sqlldr`/`impdp`/`expdp`. **Guardarraíl, no control** — se elude con un script intermedio o invocando el binario por otra ruta. Solo actúa si el workspace del `cwd` está en `audit`/`enforce` |
+| `pii-guard-write.ps1` (stdin: evento PreToolUse) | Bloquea sobre `Write`/`Edit` contenido con forma de DNI/NIE (letra de control válida), IBAN o correo. Teléfono y tarjeta quedan fuera a propósito — casarían con cualquier importe o identificador de fila largo. Excluye `Instalador\`/`Actualizador\`. Solo actúa si el workspace **del fichero** está en `audit`/`enforce` |
+| `Get-RsPiiEstadoGuarda` (en `lib-pii.ps1`) | `-Desde <ruta>` → `@{activa; modo; motivo; workspace}`. Las guardas siguen al modo del workspace: fuera de un workspace RS y en `off` no actúan; en `audit`/`enforce` sí; y en un workspace cuyo modo **no se puede determinar** también, para que uno roto no degrade a uno sin protección. Con varias conexiones manda la más restrictiva. Lee el modo con `Get-RsPiiModoDeModelo` (regex, no `ConvertFrom-Json`: esto corre en cada `Bash` y cada `Write`) |
+| `lib-pii.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Test-DniNieChecksum`, `Remove-RsPii`, patrones DNI/NIE/IBAN/correo, `Test-RsPiiGuards`). Compartida por `pii-guard-write.ps1`, `log-execution.ps1` y `check-env.ps1`, mismo patrón que `lib-dbconfig.ps1` |
+| `Test-RsPiiGuards` (en `lib-pii.ps1`) | ¿Están las dos guardas disponibles **y existe el `.ps1` al que apuntan**? → `@{bash; write; ok; missing; stale; foreign; legacy; source}`. Fuente preferente `-ManifestPath` (el `plugin.json` del plugin); el `settings.json` personal se mira solo para listar en `legacy` los restos manuales, que ya sobran. Declarada ≠ efectiva: una entrada que apunte a una ruta muerta falla sin código 2 — no bloquea nada. `-HooksDir` marca en `foreign` las que cuelgan de otra copia del plugin |
 
 ### SVN
 | Script | Uso |

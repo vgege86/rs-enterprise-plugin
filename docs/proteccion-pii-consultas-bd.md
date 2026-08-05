@@ -1,9 +1,10 @@
 # Protección de datos personales en consultas a BD desde herramientas de IA
 
-**Fecha:** 2026-08-04 (rev. 1.1 — corrige el supuesto sobre el usuario de conexión)
+**Fecha:** 2026-08-05 (rev. 1.3 — inventario entregado y medida en `enforce` en la 1.ª solución)
 **Ámbito:** Soluciones uCollect/RS consultadas mediante el plugin `rs-enterprise-agent`
 **Destinatario:** Departamento de Sistemas / Administración de Bases de Datos
-**Estado:** Petición de control definitivo + medida provisional en curso
+**Estado:** Medida provisional **activa** en la primera solución (inventario entregado);
+petición de control definitivo pendiente de decisión de Sistemas
 
 ---
 
@@ -13,24 +14,31 @@ Las herramientas de desarrollo asistido por IA que usamos ejecutan consultas `SE
 contra las bases de datos de las soluciones uCollect/RS y **envían el resultado íntegro
 a un proveedor externo** (Anthropic) como parte del contexto de la conversación.
 
-Hoy eso incluye, sin ningún filtro, columnas con datos personales: nombres, DNI,
-teléfonos, direcciones, correos y números de cuenta de personas deudoras.
+Sin ningún filtro por medio, eso incluye columnas con datos personales: nombres, DNI,
+teléfonos, direcciones, correos y números de cuenta de personas deudoras. Es la situación de
+partida, y sigue siendo la de toda solución donde la medida provisional no esté activa.
 
 Este documento pide a Sistemas el control que resuelve el problema de raíz —
 **que la base de datos no emita esos datos** — y describe la medida provisional que
-Desarrollo implantará mientras tanto, junto con lo que esa medida **no** puede proteger.
+Desarrollo **ya ha implantado** mientras tanto, junto con lo que esa medida **no** puede
+proteger.
+
+**Estado a fecha de esta revisión.** La medida provisional está **activa en la primera
+solución**, con el inventario de columnas afectadas ya generado y entregado (§6). Todo lo que
+esta petición hacía depender de Desarrollo está hecho para esa solución; lo que falta para el
+control definitivo son decisiones de Sistemas (§7). En el resto de soluciones el despliegue
+sigue pendiente.
 
 En §3 se presentan **todas** las opciones técnicas disponibles, con y sin coste de
 licencia, en igualdad de condiciones. Desarrollo no tiene visibilidad sobre las
 licencias contratadas ni sobre el presupuesto: **la elección corresponde a Sistemas.**
 
-**Punto de partida verificado.** En la instalación de **B2Impact** el plugin ya conecta
-con un usuario de consulta, `RSB2IMPACTQUERY`, que **no es el propietario** del esquema
-consultado (`RSB2IMPACT`). Eso significa que los mecanismos de redacción del §3.2 **sí
-pueden aplicarse a la credencial que ya está en uso**, y que el trabajo del §3.1 se
-reduce a reapuntar sus permisos en lugar de crear un usuario nuevo. La comprobación
-está hecha solo para B2Impact: **se pide a Sistemas que confirme si vale igual para el
-resto de proyectos y entornos** (§2.4).
+**Punto de partida verificado.** En la instalación comprobada, el plugin ya conecta con un
+usuario de consulta que **no es el propietario** del esquema consultado: son dos principales
+distintos. Eso significa que los mecanismos de redacción del §3.2 **sí pueden aplicarse a la
+credencial que ya está en uso**, y que el trabajo del §3.1 se reduce a reapuntar sus permisos
+en lugar de crear un usuario nuevo. La comprobación está hecha sobre **una sola instalación**:
+**se pide a Sistemas que confirme si vale igual para el resto de proyectos y entornos** (§2.4).
 
 **Hay una pregunta previa que decide el alcance de todo lo demás** y que solo Sistemas
 puede responder: **¿ese usuario de consulta lo utiliza algo más aparte de las
@@ -64,7 +72,10 @@ Agente IA  ──SELECT──▶  Oracle / SQL Server
                    Proveedor externo (Anthropic)
 ```
 
-No existe ningún punto intermedio que inspeccione o filtre los valores.
+Así es el camino **sin** la medida provisional, y es el que sigue vigente en las soluciones
+donde todavía no está activa: ningún punto intermedio inspecciona ni filtra los valores. Donde
+la medida sí está activa (§6), se interpone entre el resultado y el contexto — con los límites
+del §5, que no son menores: el dato **ya ha salido del motor**.
 
 ### 2.2 Alcance real
 
@@ -88,10 +99,10 @@ de **exposición**.
 
 ### 2.4 El usuario de conexión actual: qué habilita y qué no protege
 
-En la instalación de **B2Impact** —la única verificada al redactar este documento— el
-plugin **no conecta con el propietario del esquema**. La conexión declarada en
-`docs/.rs-databases.json` usa el usuario `RSB2IMPACTQUERY`, mientras que el esquema
-consultado es `RSB2IMPACT`: son dos principales distintos.
+En la instalación verificada —la única comprobada al redactar este documento— el plugin
+**no conecta con el propietario del esquema**. La conexión declarada en su configuración usa
+un usuario de consulta, `<USUARIO_CONSULTA>`, mientras que el esquema consultado es
+`<ESQUEMA>`: son dos principales distintos.
 
 Conviene decirlo con precisión, porque cambia qué medidas son aplicables:
 
@@ -119,11 +130,10 @@ Por eso el §3.1 no pide crear un usuario, sino **quitarle a este el camino dire
 tablas con datos personales** y dejarle únicamente el que pasa por el mecanismo de
 redacción que se elija.
 
-**Alcance de esta comprobación.** Lo anterior está verificado **únicamente** para la
-instalación de B2Impact. Este documento **no puede afirmar** que ocurra lo mismo en el
-resto de proyectos ni en el resto de entornos (desarrollo, test, producción) de este
-mismo proyecto: Desarrollo no tiene visibilidad sobre cómo se dieron de alta esas
-credenciales. **Se pide a Sistemas que lo confirme entorno por entorno.** Allí donde la
+**Alcance de esta comprobación.** Lo anterior está verificado **únicamente** sobre una
+instalación. Este documento **no puede afirmar** que ocurra lo mismo en el resto de proyectos
+ni en el resto de entornos (desarrollo, test, producción) de ese mismo proyecto: Desarrollo no
+tiene visibilidad sobre cómo se dieron de alta esas credenciales. **Se pide a Sistemas que lo confirme entorno por entorno.** Allí donde la
 conexión sí sea la del propietario del esquema, la advertencia original se mantiene
 íntegra: mientras se use esa credencial ninguna opción del §3.2 es efectiva, y lo
 primero es sustituirla.
@@ -138,9 +148,9 @@ primero es sustituirla.
 Desarrollo no puede responderla.** Se pide a Sistemas que la conteste antes que
 cualquier otra cosa.
 
-> **¿El usuario de conexión de las herramientas de desarrollo —en B2Impact,
-> `RSB2IMPACTQUERY`— lo utiliza algo más? ¿Informes, procesos batch, integraciones,
-> alguna aplicación, tareas programadas, cuadros de mando?**
+> **¿El usuario de conexión de las herramientas de desarrollo —`<USUARIO_CONSULTA>`— lo
+> utiliza algo más? ¿Informes, procesos batch, integraciones, alguna aplicación, tareas
+> programadas, cuadros de mando?**
 
 | Respuesta | Consecuencia |
 |---|---|
@@ -157,12 +167,13 @@ La pregunta se plantea por entorno y por proyecto, junto con la del §2.4.
 
 El objetivo de este paso no es disponer de una credencial nueva: es **que la credencial
 con la que conectan las herramientas no tenga camino directo a las columnas con datos
-personales**. En B2Impact esa credencial ya existe y ya no es la del propietario (§2.4),
-de modo que el trabajo se reduce a reapuntar sus permisos.
+personales**. En la instalación verificada esa credencial ya existe y ya no es la del
+propietario (§2.4), de modo que el trabajo se reduce a reapuntar sus permisos.
 
-> En lo que sigue, `<USUARIO_CONSULTA>` designa el usuario de conexión de las
-> herramientas de desarrollo en el entorno de que se trate. En B2Impact es
-> `RSB2IMPACTQUERY`, sobre el esquema `RSB2IMPACT`.
+> **Notación.** `<USUARIO_CONSULTA>` designa el usuario de conexión de las herramientas de
+> desarrollo en el entorno de que se trate, y `<ESQUEMA>` el esquema consultado. Este
+> documento no nombra proyectos, esquemas ni credenciales concretos: los valores reales de
+> cada entorno acompañan a este documento por el canal correspondiente, no dentro de él.
 
 La forma concreta depende del mecanismo que se elija en §3.2, y son dos familias:
 
@@ -185,11 +196,11 @@ SELECT * FROM DBA_SYS_PRIVS  WHERE GRANTEE = '<USUARIO_CONSULTA>'
                      'EXEMPT REDACTION POLICY');
 
 -- Con la Opción A (vistas redactadas): quitar el camino directo…
-REVOKE SELECT ON RSB2IMPACT.RDEUDORES FROM <USUARIO_CONSULTA>;
+REVOKE SELECT ON <ESQUEMA>.RDEUDORES FROM <USUARIO_CONSULTA>;
 --   …una sentencia por cada tabla base con datos personales (inventario del §6)…
 
 -- …y dejar solo el que pasa por la vista:
-GRANT SELECT ON RSB2IMPACT.V_RDEUDORES TO <USUARIO_CONSULTA>;
+GRANT SELECT ON <ESQUEMA>.V_RDEUDORES TO <USUARIO_CONSULTA>;
 
 -- Con las Opciones C o D no se revoca el SELECT de la tabla base: basta con
 -- asegurar que el usuario NO tiene EXEMPT ACCESS POLICY ni EXEMPT REDACTION POLICY.
@@ -443,7 +454,7 @@ disponible por TDE u otro motivo— y del presupuesto.
 | 4 | Implantar la opción elegida | Sistemas | según opción | 1-5 jornadas |
 | 5 | Confirmar a Desarrollo que la credencial en uso es la definitiva, o entregar la nueva si se ha creado un usuario dedicado | Sistemas | — | — |
 | 6 | Activar registro de acceso del usuario de consulta | Sistemas | Ninguna (§3.4) | 1 jornada |
-| 7 | Entregar el inventario de columnas con datos personales | **Desarrollo** | — | ver §6 |
+| 7 | Entregar el inventario de columnas con datos personales | **Desarrollo** | — | ✅ hecho para la 1.ª solución (§6); pendiente en el resto |
 
 El punto 1 **no depende de ninguna decisión pendiente** y puede resolverse de inmediato:
 es una consulta al alta de credenciales, no un desarrollo. El punto 2 depende
@@ -457,8 +468,8 @@ cerrado.
 
 ## 4. Medida provisional (Desarrollo)
 
-Mientras no exista el control en BD, el plugin filtrará los resultados antes de que
-entren en el contexto de la conversación.
+Mientras no exista el control en BD, el plugin filtra los resultados antes de que
+entren en el contexto de la conversación. Está implantado y activo en la primera solución.
 
 ### 4.1 Funcionamiento
 
@@ -547,11 +558,29 @@ personales** que Sistemas necesita para el paso 3.2. El trabajo no se duplica.
 La medida se despliega apagada y se activa de forma controlada, para no romper de
 golpe los diez agentes que consultan datos:
 
-| Modo | Comportamiento |
-|---|---|
-| `off` | Comportamiento actual: los datos salen en claro. Cada consulta lo indica en su respuesta (`pii.mode = "off"`), pero **no** hay ninguna advertencia adicional. |
-| `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege.** |
-| `enforce` | Enmascarado activo. |
+| Modo | Consultas | Guardas (cliente de BD directo, escritura a fichero) |
+|---|---|---|
+| `off` | Datos en claro. Cada consulta lo indica (`pii.mode = "off"`), sin advertencia adicional | **No bloquean** |
+| `audit` | Datos en claro + informe de qué se habría enmascarado. **No protege** | Bloquean |
+| `enforce` | Enmascarado activo | Bloquean |
+
+**El modo es del workspace, y las guardas lo siguen.** Desde la versión 3.3.0 las dos guardas
+—la que impide invocar el cliente de base de datos directamente y la que impide escribir un dato
+personal en un fichero— consultan el modo del workspace al que pertenece cada operación, y no
+actúan en `off`. Antes bloqueaban siempre, en cualquier proyecto del ordenador, estuviera el modo
+donde estuviera.
+
+Es lo que hace utilizable el planteamiento en un equipo de desarrollo: lo normal es tener la
+protección apagada, y encenderla **solo en el workspace cuya base de datos contiene datos reales**.
+Una operación que no cae dentro de ningún workspace uCollect/RS queda fuera del alcance del plugin y
+no se bloquea. Con una excepción deliberada: dentro de un workspace cuyo modo **no se puede
+determinar** —una política declarada que no se puede leer— las guardas sí actúan. Un workspace roto
+no puede degradar en silencio a un workspace sin protección, que es el mismo criterio que ya aplica
+el filtro de las consultas.
+
+En `audit` las guardas bloquean aunque los datos aún salgan en claro: `audit` es la fase en la que
+se mide un workspace que va a protegerse, y es justo cuando no interesa que se coja la costumbre de
+rodear la herramienta.
 
 **El modo se lee de la configuración de la solución, y no poder leerla no equivale a `off`.**
 Si esa configuración declara dónde vive la política y ese fichero no está, o está y no se puede
@@ -623,17 +652,35 @@ externo. Si el requisito es que el dato personal **no salga en claro**, la medid
 cumple. Si el requisito es que **no salga**, no lo cumple: eso exige supresión total
 o el control en BD.
 
-**e) Depende de configuración local no versionada.** Parte de las guardas se registran
-en la configuración personal de Claude Code de cada desarrollador, que no viaja con el
-repositorio. Un equipo nuevo sin configurar queda desprotegido. Se mitiga con una
-verificación de entorno que falla si no están registradas, pero sigue siendo una
-dependencia de puesto de trabajo.
+**e) Depende de que la herramienta esté instalada, no de configuración personal.**
+*(Resuelto en la versión 3.4.0; se conserva el apartado porque describe una limitación real
+durante la fase inicial y explica una decisión de diseño.)*
 
-Con un matiz adicional: la herramienta lee esa configuración **al arrancar la sesión**, de
-modo que una guarda registrada a mitad de sesión no entra en vigor hasta reiniciarla. En esa
-ventana la verificación informa de que están registradas —lo están, en el fichero— mientras
-los bypass siguen abiertos. Por eso el procedimiento de activación exige reiniciar antes de
-dar la protección por efectiva.
+Durante las primeras versiones las guardas se registraban **a mano en la configuración
+personal** de cada desarrollador, que no viaja con el repositorio. Eso traía tres problemas,
+y el tercero era grave:
+
+- Un puesto nuevo quedaba desprotegido en silencio hasta que alguien las registrara.
+- Al ser configuración personal, aplicaban a **todos** los proyectos de esa persona, tuvieran
+  o no que ver con estas soluciones.
+- Y guardaban la **ruta absoluta** del script de cada guarda. El almacén local de la
+  herramienta organiza cada versión en su propia carpeta, de modo que **cada actualización
+  del plugin dejaba esas rutas apuntando a una carpeta que ya no existía**: la guarda se
+  lanzaba, fallaba, y no bloqueaba nada, porque el código de error de un script que no se
+  encuentra no es el que interrumpe la operación. Fallaba abierta, sin ninguna señal. Se
+  comprobó sobre una instalación real: la ruta registrada apuntaba a la versión anterior.
+
+Desde 3.4.0 las guardas las declara el **propio plugin**, con una variable que se resuelve a
+la versión en curso. Se instalan, se actualizan y se retiran con él; no hay ruta que
+envejezca, ni configuración personal que tocar, ni puesto que quede a medias. Las entradas
+manuales que quedaran de antes se retiran solas al arrancar una sesión, con copia previa.
+
+Queda una dependencia, menor y ordinaria: **si el plugin no está instalado, no hay guardas**.
+Y una ventana: la herramienta resuelve los hooks al arrancar, así que un plugin recién
+instalado o actualizado no las tiene vivas hasta reiniciar. La verificación de entorno
+distingue las dos caras — si están **disponibles** (instalación) y si **bloquean aquí**
+(modo del workspace, §4.4) — y comprueba además que el fichero de cada guarda exista, para no
+poder declarar protegido lo que no lo está.
 
 **f) Una columna marcada como segura por error no se detecta.** Nombres, apellidos y
 direcciones no tienen patrón reconocible. Si alguien los declara seguros, ninguna
@@ -668,40 +715,63 @@ que podía tomar el fallo descrito en el apartado (a).
 
 ## 6. Inventario de columnas afectadas
 
-Pendiente de generar. Se obtendrá ejecutando la medida provisional en modo `audit`
-sobre cada solución, lo que produce la lista de tablas y columnas con datos personales
-en el formato que Sistemas necesita para implantar la opción que elija en §3.2,
-cualquiera que sea.
+**Generado para la primera solución**, y pendiente para el resto. Se obtiene ejecutando la
+medida provisional en modo `audit` sobre cada solución, lo que produce la lista de tablas y
+columnas con datos personales en el formato que Sistemas necesita para implantar la opción
+que elija en §3.2, cualquiera que sea.
 
-Formato previsto:
+| Solución | Estado | Fichero |
+|---|---|---|
+| Primera solución desplegada | **Generado** — la medida está en `enforce` | `docs/inventario-pii.md` de su workspace |
+| Resto de soluciones | Pendiente | — |
+
+El inventario de cada solución **es un anexo, no parte de este documento**: contiene nombres
+de tablas y columnas del cliente. Se entrega por separado, junto con la identificación del
+proyecto al que corresponde.
+
+Formato del fichero:
 
 | Solución | Tabla | Columna | Tipo | Categoría | Tratamiento propuesto |
 |---|---|---|---|---|---|
 | | | | | Identificativo / Contacto / Financiero | Pseudónimo / Supresión |
 
-**Se entregará antes de solicitar el trabajo del paso 3.2**, para que Sistemas
-trabaje sobre un alcance cerrado y no sobre una estimación.
+Cada inventario se genera **muestreando valores reales**, de modo que recoge también las
+columnas que el nombre no delata (§4.3). Ningún valor muestreado se reproduce en el fichero:
+solo tabla, columna, categoría detectada y número de coincidencias.
+
+El inventario de una solución **se entrega antes de solicitar el trabajo del paso 3.2 sobre
+esa solución**, para que Sistemas trabaje sobre un alcance cerrado y no sobre una estimación.
+Para la primera solución esa condición ya está cumplida.
 
 ---
 
 ## 7. Plan propuesto
 
-| Fase | Acción | Responsable | Dependencia |
-|---|---|---|---|
-| 1 | Implantar la medida provisional en modo `audit` | Desarrollo | — |
-| 2 | Generar el inventario de §6 | Desarrollo | Fase 1 |
-| 3 | Activar modo `enforce` | Desarrollo | Fase 2 |
-| 4 | **Responder la pregunta previa del §3** y confirmar por entorno que la conexión no es la del propietario (§2.4) | Sistemas | — |
-| 5 | **Decidir la opción de redacción** (§3.2) | Sistemas | — |
-| 6 | Implantar la opción elegida y reapuntar los permisos del usuario de consulta (§3.1) | Sistemas | Fases 2, 4 y 5 |
-| 7 | Reapuntar el plugin a la credencial definitiva, solo si la fase 4 obliga a crear un usuario dedicado | Desarrollo | Fase 6 |
-| 8 | Reducir la medida provisional a segunda capa | Desarrollo | Fase 7 |
+Las fases 1-3 son **por solución**. Su estado en la primera solución es el que marca la
+columna correspondiente; en el resto siguen pendientes.
+
+| Fase | Acción | Responsable | Dependencia | 1.ª solución |
+|---|---|---|---|---|
+| 1 | Implantar la medida provisional en modo `audit` | Desarrollo | — | ✅ Hecho |
+| 2 | Generar el inventario de §6 | Desarrollo | Fase 1 | ✅ Hecho |
+| 3 | Activar modo `enforce` | Desarrollo | Fase 2 | ✅ Hecho |
+| 4 | **Responder la pregunta previa del §3** y confirmar por entorno que la conexión no es la del propietario (§2.4) | Sistemas | — | ⏳ Pendiente |
+| 5 | **Decidir la opción de redacción** (§3.2) | Sistemas | — | ⏳ Pendiente |
+| 6 | Implantar la opción elegida y reapuntar los permisos del usuario de consulta (§3.1) | Sistemas | Fases 2, 4 y 5 | ⏳ Pendiente |
+| 7 | Reapuntar el plugin a la credencial definitiva, solo si la fase 4 obliga a crear un usuario dedicado | Desarrollo | Fase 6 | — |
+| 8 | Reducir la medida provisional a segunda capa | Desarrollo | Fase 7 | — |
 
 Las fases 1-3 (Desarrollo) y las fases 4-5 (Sistemas) son independientes y pueden
 avanzar en paralelo. La fase 4 no depende de la decisión de la fase 5 y **puede
 resolverse de inmediato**: es la de mayor efecto por unidad de esfuerzo, porque
 determina si el reapuntado de permisos del §3.1 basta o hay que crear antes un usuario
 dedicado, y sin ese paso ninguna de las opciones de §3.2 es efectiva.
+
+**Dónde está hoy el trabajo.** En la primera solución, todo lo que dependía de Desarrollo
+está hecho: la medida está en `enforce` y el inventario entregado. La fase 6 ya solo espera a
+las fases 4 y 5, que son de Sistemas y no dependen de nada nuestro. Conviene decirlo sin
+rodeos porque cambia quién tiene la pelota: **el motivo de que el control definitivo no esté
+implantado ya no es que falte el inventario.**
 
 ---
 
@@ -713,9 +783,9 @@ haya salido del motor** y es evitable por varias vías documentadas en §5.2.
 
 El control efectivo consta de dos piezas: un **usuario de conexión que no pueda llegar
 a la columna original** de las tablas con datos personales (§3.1) y un **mecanismo de
-redacción en el motor** (§3.2). La primera pieza está a medio camino: en B2Impact la
-conexión ya usa un usuario de consulta que no es el propietario del esquema, de modo
-que basta con reapuntar sus permisos en lugar de crear uno nuevo. Lo que sigue faltando
+redacción en el motor** (§3.2). La primera pieza está a medio camino: en la instalación
+verificada la conexión ya usa un usuario de consulta que no es el propietario del esquema, de
+modo que basta con reapuntar sus permisos en lugar de crear uno nuevo. Lo que sigue faltando
 es que ese usuario **pierda el `SELECT` directo**: ser de solo lectura no impide
 devolver un DNI en claro. Para la segunda pieza existen seis opciones, con y sin coste
 de licencia, comparadas en §3.3. Desarrollo las expone todas y **no recomienda
@@ -726,7 +796,7 @@ Se solicita a Sistemas:
 
 1. **Responder de inmediato la pregunta previa del §3** —si el usuario de consulta lo usa
    algo más que las herramientas de desarrollo— y confirmar, entorno por entorno, lo
-   que §2.4 solo ha podido verificar en B2Impact. No depende de ninguna decisión
+   que §2.4 solo ha podido verificar en una instalación. No depende de ninguna decisión
    pendiente, no consume jornadas de desarrollo y determina si el §3.1 se resuelve
    reapuntando permisos o exige crear un usuario dedicado.
 2. **Reapuntar los permisos** de ese usuario según el §3.1, de modo que pierda el acceso
@@ -738,5 +808,10 @@ Se solicita a Sistemas:
 4. **Fijar una fecha objetivo** para la implantación, que Desarrollo necesita para
    dimensionar hasta cuándo debe sostenerse la medida provisional.
 
-Desarrollo se compromete a entregar el inventario cerrado de columnas afectadas (§6)
-antes de que Sistemas inicie el trabajo del punto 3.
+El inventario cerrado de columnas afectadas (§6) **ya está entregado para la primera
+solución**, con la medida provisional en `enforce` sobre ella. Para el resto de soluciones se
+entregará antes de solicitar el trabajo del §3.2 sobre cada una, con el mismo criterio.
+
+Dicho de otro modo: los puntos 1 y 2 de esta lista no dependen de nada que falte por nuestra
+parte, y el 3 tampoco. Sobre la primera solución, lo único que separa hoy la medida
+provisional del control definitivo son decisiones de Sistemas.

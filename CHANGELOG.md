@@ -1,5 +1,169 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.1 — 2026-08-05
+
+### El repo llevaba el nombre de un cliente en 24 sitios
+
+`docs/proteccion-pii-consultas-bd.md` —que es un documento **dirigido al departamento de
+Sistemas**— nombraba al cliente 19 veces, y con él su esquema y su usuario de consulta reales.
+El CHANGELOG y `hooks/installer-batch.ps1` lo citaban en otras cinco, al documentar regresiones
+reales.
+
+El plugin es genérico y su repositorio se comparte, así que ahí no van nombres de clientes: ni en
+documentación, ni en el CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco
+sus derivados identificables — esquema, usuario de BD, nombres de solución que incluyan la marca.
+
+- El documento pasa a usar la notación que ya tenía para la credencial (`<USUARIO_CONSULTA>`) y
+  estrena `<ESQUEMA>`, con una nota explícita de que **los valores reales acompañan al documento
+  por otro canal, no dentro de él**. El §6 añade lo mismo sobre el inventario de columnas: es un
+  anexo, porque lleva nombres de tablas y columnas del cliente.
+- Las regresiones reales del instalador se citan como "una instalación de cliente" y "el proyecto
+  donde se detectó". Las referencias útiles (la revisión `r14970`) se conservan sin el nombre.
+
+La regla queda escrita donde se aplica: `skills/rs-plugin-dev/SKILL.md` (reglas globales) y §10 de
+`docs/plugin-architecture.md` (checklist de coherencia). Con una excepción explícita, porque la
+confusión es fácil: **no** aplica a lo que los agentes escriben en el workspace del cliente, donde
+los nombres propios son legítimos y necesarios.
+
+## 3.4.0 — 2026-08-05
+
+### Las guardas PII las declara el plugin: cada actualización las mataba en silencio
+
+Se registraban a mano en `~/.claude/settings.json` desde `/rs-pii enforce`. Ahí
+`${CLAUDE_PLUGIN_ROOT}` **no se expande** —solo lo hace en `.claude-plugin/plugin.json` y
+`.mcp.json`—, así que había que cablear la ruta absoluta. Y el caché de plugins de Claude Code
+organiza cada versión en su propia carpeta:
+
+```
+~/.claude/plugins/cache/rs-enterprise-agent/rs-enterprise-agent/3.2.1/hooks/pii-guard-bash.ps1
+                                                                 ^^^^^
+```
+
+**Cada `/plugin marketplace update` dejaba las dos entradas apuntando a un directorio que ya no
+existe.** Claude Code lanza el hook, `powershell` sale con error, y ese código **no es 2** —el único
+que bloquea—, así que las dos guardas fallaban **abiertas**, sin ninguna señal. Hasta la 3.2.2
+`check_env` seguía respondiendo `guards_registered: true`. No es un caso raro que exija mover el
+plugin de sitio: le pasa a todo el mundo, en cada actualización, por construcción. Verificado sobre
+una instalación real.
+
+`.claude-plugin/plugin.json` declara ahora las dos guardas en `hooks.PreToolUse`, junto a los tres
+hooks que ya tenía, con `${CLAUDE_PLUGIN_ROOT}` — que ahí sí se expande, y a la versión en curso. Se
+instalan, se actualizan y se retiran con el plugin. Esto era inviable antes de la 3.3.0, cuando las
+guardas bloqueaban siempre: declararlas en el manifiesto habría encendido un bloqueo de alcance de
+máquina para todo el equipo. Como ahora siguen al modo del workspace, no enciende nada a nadie que
+no lo haya pedido.
+
+**`/rs-pii enforce` deja de escribir en `~/.claude/settings.json`.** Su procedimiento se reduce a:
+inventario → verificar que las guardas están → confirmar → escribir el modo. Desaparece el paso de
+editar a mano el fichero personal del usuario, que era la operación más frágil del agente.
+
+**Los restos se retiran solos.** `scripts/cleanup-preplugin.ps1` —que ya corre en `SessionStart` por
+esto mismo: `/plugin marketplace update` no toca `~/.claude`, y un hook del propio `plugin.json` es
+el único vector que llega— detecta las entradas manuales y las quita, con copia previa en
+`~/.claude/_backup-preplugin-<fecha>/`. Se lleva tanto las muertas (fallan en cada `Bash` y cada
+`Write`) como las vivas (duplicarían el hook del plugin, que es el fallo de la v2.11.0), y **no toca
+nada más** del fichero: permisos, hooks de otros proyectos y demás claves se conservan; si
+`PreToolUse` se queda vacío, se elimina la clave en vez de dejar una lista huérfana.
+
+`Test-RsPiiGuards` cambia de fuente de verdad: `-ManifestPath` (el `plugin.json`) manda, y
+`settings.json` se mira solo para listar los restos. `check_env` gana `pii.guards_legacy` y
+`pii.guards_source` (`plugin` | `settings`), y `guards_note` deja de hablar de `settings.json`:
+`guards_registered` describe la **instalación**, `guards_active` si bloquea **en este workspace**.
+
+## 3.3.0 — 2026-08-05
+
+### Las guardas PII siguen al modo del workspace
+
+⚠️ **Cambio de comportamiento.** Hasta ahora las dos guardas `PreToolUse`, una vez registradas,
+bloqueaban **siempre**: `sqlplus`/`sqlcmd` directos y la escritura de contenido con forma de dato
+personal, en cualquier proyecto del ordenador y con el workspace en el modo que fuera. Viven en
+`~/.claude/settings.json`, que es configuración personal, así que su alcance era la **máquina**.
+
+Desde esta versión siguen a `pii_policy.mode` del workspace al que pertenece cada operación:
+
+| Situación | Guarda |
+|---|---|
+| Fuera de un workspace uCollect/RS | inactiva |
+| Dentro, `mode = off` | inactiva |
+| Dentro, `mode = audit` o `enforce` | **actúa** |
+| Dentro, modo **indeterminado** (política declarada que no se puede leer) | **actúa** |
+
+**Qué cambia para quien ya las tenga registradas:** en un workspace en `off` —el estado por defecto,
+y hoy el de todos— **dejan de bloquear** al actualizar. Y dejan de bloquear también en el resto de
+repos del usuario, que es lo que las hacía insostenibles: un `README` con la dirección de soporte
+disparaba el patrón de correo en un proyecto que no tiene nada que ver con uCollect/RS.
+
+La última fila de la tabla es la que sostiene el diseño: un modelo declarado y ausente, o una config
+de BD ilegible, **no** degradan a "sin protección". Es el mismo criterio que ya aplica `db_query`,
+que falla cerrado justo ahí. En `audit` las guardas bloquean aunque los datos aún salgan en claro:
+es la fase en la que se mide un workspace que va a protegerse, y es cuando menos interesa que se
+coja la costumbre de rodear la herramienta.
+
+Con **varias conexiones** manda la más restrictiva. La guarda de Bash no puede saber a qué BD apunta
+un comando, así que un workspace con PROD en `enforce` y DEV en `off` bloquea igual.
+
+Cada guarda resuelve el workspace por la señal que tiene: la de escritura desde el `file_path` del
+evento —manda el **destino**, no la sesión: si escribes en un workspace en `enforce` desde una sesión
+abierta en uno en `off`, bloquea—, y la de Bash desde el `cwd`, que es lo único que trae. Corolario
+que se documenta en §5.2b: un comando lanzado desde el workspace A contra la BD del B se mide con el
+modo de A. Sigue siendo un guardarraíl, no una frontera.
+
+**El coste se midió antes de elegir.** Esto corre en cada `Bash` y cada `Write`, y el modelo BD pesa
+entre 288 KB y 664 KB. Sobre un modelo de 1,3 MB: **12 ms** leyendo el modo con una regex contra
+**135 ms** con `ConvertFrom-Json` (×11), y en Windows PowerShell 5.1 la diferencia es mayor. Se lee
+con regex. La contrapartida —que la regex no entienda una forma que el parser sí— se cubre por dos
+lados: "hay bloque `pii_policy` y no consigo leer el modo" **no** degrada a `off` sino a
+indeterminado (o sea, bloquea), y `check_env` contrasta la lectura rápida con el parseo completo que
+ya hacía y publica `pii.mode_mismatch` si divergen.
+
+`check_env` gana `pii.guards_active`: registradas y actuando son cosas distintas y se informan por
+separado. `/rs-pii off` sigue sin desregistrar las guardas — ya no hace falta para dejar de bloquear
+aquí, y quitarlas apagaría los workspaces que sí las necesitan.
+
+## 3.2.2 — 2026-08-05
+
+### Una guarda PII registrada con la ruta rota se contaba como protección
+
+`Test-RsPiiGuards` verificaba que las dos guardas estuvieran bajo `hooks.PreToolUse` con un matcher
+que dispare, pero **no que el `.ps1` al que apuntan exista**. Y la ruta va cableada en absoluto,
+porque `${CLAUDE_PLUGIN_ROOT}` solo se expande en `.claude-plugin/plugin.json` y `.mcp.json` — en
+`~/.claude/settings.json` llega literal. Basta con que el plugin cambie de sitio (reinstalación,
+otra ruta de caché, otro perfil, un checkout movido) para que la entrada apunte a un fichero que ya
+no está: Claude Code lanza el hook, `powershell` sale con error, y ese código **no es 2**, el único
+que bloquea. La guarda falla **abierta** mientras `check_env` seguía devolviendo
+`guards_registered = true` y `pii.ok = true`.
+
+Es el mismo desenlace que ya corrigió el paso de `-match` sobre el texto a comprobación estructural
+—«un workspace que cree estar protegido sin estarlo es peor que uno que sabe que está en `off`»—,
+pero por una vía que no exige que nadie haga nada mal.
+
+Ahora **registrada ≠ efectiva**: una entrada cuyo `.ps1` no se puede verificar cuenta como ausente.
+Tres motivos, todos con la ruta en el mensaje:
+
+| Situación | Veredicto |
+|---|---|
+| El fichero no existe | no efectiva — `el fichero no existe` |
+| La ruta lleva `${...}`, `%VAR%` o `$env:VAR` sin expandir | no efectiva — `la ruta lleva una variable sin expandir` |
+| La ruta es relativa (se resolvería contra un cwd que no se conoce) | no efectiva — `la ruta es relativa y no se puede verificar` |
+
+Si hay **varias** entradas de la misma guarda y una de ellas sí es válida, la guarda protege y no se
+reporta como rota: reinstalar deja restos, y lo que importa es que alguna dispare.
+
+`check_env` gana `pii.guards_stale` (guardas registradas que no protegen) y `pii.guards_foreign`
+(guardas que **sí** protegen, pero desde otra copia del plugin — la copia vendorizada de la v2.11.0,
+que no se actualiza con `/plugin marketplace update`). `guards_stale` se avisa **en cualquier modo,
+también en `off`**: las guardas no dependen de `pii_policy.mode`, así que una entrada muerta deja ese
+bypass abierto siempre. Con `enforce` sale además por `pii.ok = false`. `guards_foreign` no invalida
+el registro — esa copia protege — pero se dice.
+
+`/rs-pii enforce` pasa a **sustituir** la entrada que apunte a otra ruta en vez de añadir una
+segunda: dos entradas de la misma guarda no protegen más, y la muerta seguiría fallando en cada
+llamada.
+
+`tests/PiiGuard.Tests.ps1` se reescribe para fabricar guardas de mentira en ficheros **reales** —con
+las rutas inventadas de antes los casos existentes ya no medirían lo que creen— y añade los seis
+casos nuevos, incluido el de las dos entradas donde la buena rescata a la rota.
+
 ## 3.2.1 — 2026-08-04
 
 ### `/rs-word`: el documento salía con la tipografía de la plantilla perdida
@@ -845,7 +1009,7 @@ las tools de BD/config para esas soluciones.
 - **Fix `workspace`:** para `.sln` fuera de `Batch\Soluciones\`/`OnLine\`, resuelve el workspace al
   `…\trunk` (antes = carpeta del `.sln`). Arregla la resolución de `docs\.rs-databases.json` y del
   modelo BD para RecBatchSvc **y** para todas las `.sln` de raíz. Verificado sin regresión en Batch
-  (IncDemaJudi) y Online (AgendaWebB2Impact).
+  (un batch) y Online (la Agenda Web).
 
 **Nueva rama de build `Servicio`** (`agents/rs-editor-build.md` + `hooks/service-build.ps1`):
 - Código (.NET Framework) con **MSBuild** (vía vswhere); instalador `.vdproj` con **devenv** (MSBuild
@@ -1220,7 +1384,7 @@ coinciden → se listan `config · assembly · newVersion vs real` y **exit 1**,
 ### Fix: `installer-batch.ps1` generaba frankenbuilds → StackOverflowException al arrancar
 
 `hooks/installer-batch.ps1` (etapa Batch de `/rs-instalador`). El hook compilaba con `dotnet build`
-**incremental**, por-sln y sin verificación final. En un caso real (B2Impact) dejó en `EXES` 8 exes
+**incremental**, por-sln y sin verificación final. En un caso real dejó en `EXES` 8 exes
 del build 07-20 15:33 junto a `Comun.dll`/`BusComun.dll`/`RsExtrae.exe` del 07-21 10:31.
 
 **Causa raíz**: las DLLs compartidas (`Comun`/`BusComun`/`RSModel`) **no tienen strong-name** y su
@@ -1245,7 +1409,7 @@ el straggler exacto observado.
   **exit 1**, nunca "OK".
 - **Aviso de la trampa estructural `HintPath`** — detecta `<Reference><HintPath>..\bin\Debug\X.dll`
   cuando existe `X.csproj` en el workspace (debería ser `<ProjectReference>`): se enlaza contra una DLL
-  de otro build. Advisory (no falla). Ya corregida en B2Impact r14970.
+  de otro build. Advisory (no falla). Ya corregida en r14970 del proyecto donde se detectó.
 
 ## 2.15.6 — 2026-07-22
 

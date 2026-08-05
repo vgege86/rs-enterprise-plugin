@@ -28,6 +28,15 @@ mínimos > reescrituras | no romper convenciones existentes.
 - Todo cambio del plugin **sube la versión** (gate ⛔, paso 7) — sin excepción.
 - No editar la copia cacheada (`~/.claude/plugins/cache/...`) — solo la fuente del repo.
 - No salir del scope del repo del plugin.
+- ⛔ **Nunca escribir nombres de clientes en el repo del plugin** — ni en documentación, ni en
+  CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco sus derivados
+  identificables: nombres de esquema, usuarios de BD, nombres de solución que incluyan la marca,
+  rutas de instalación. El plugin es genérico y su repo se comparte; un caso real se cita como
+  "una instalación de cliente" o "el proyecto donde se detectó", y si hace falta la referencia
+  concreta (una revisión de SVN, un ticket) va sin el nombre. En los documentos dirigidos a
+  terceros, los valores reales viajan en un anexo aparte, no dentro del documento.
+  ⚠️ Esto **no** aplica a lo que los agentes escriben en el workspace del cliente: ahí los
+  nombres propios son legítimos y necesarios. La regla es sobre el repo del plugin.
 
 # Fuente canónica
 

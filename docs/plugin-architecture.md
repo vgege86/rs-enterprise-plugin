@@ -259,11 +259,27 @@ reproduce un valor muestreado, ni en la respuesta ni en el fichero); `audit`/`en
 escriben `pii_policy.mode` en el modelo BD. `enforce` no conmuta el modo sin antes registrar las
 dos guardas `PreToolUse` (`hooks/pii-guard-bash.ps1`, `hooks/pii-guard-write.ps1`) en
 `~/.claude/settings.json` y confirmar el registro con `check_env` — un workspace que crea estar
-protegido sin estarlo es peor que uno que sabe que está en `off`. La verificación de `check_env` es
-estructural (parsea `settings.json` y exige entradas reales bajo `hooks.PreToolUse` con matcher
-plausible, vía `Test-RsPiiGuards` de `hooks/lib-pii.ps1`) y comprueba el **fichero, no la sesión**:
-Claude Code captura los hooks al arrancar, así que `enforce` cierra pidiendo el reinicio en vez de
-declarar la protección activa. La clasificación de columnas la hace
+protegido sin estarlo es peor que uno que sabe que está en `off`. **Desde 3.4.0 las dos guardas las
+declara `plugin.json`** con `${CLAUDE_PLUGIN_ROOT}`, como los otros tres hooks: `/rs-pii enforce` ya
+no escribe en `~/.claude/settings.json`. Antes sí, y eso obligaba a cablear la ruta en absoluto —ahí
+esa variable no se expande (§5)— mientras el caché de plugins lleva la **versión** en la ruta: cada
+actualización dejaba las dos entradas apuntando a un directorio inexistente, y como el código de
+error de un `.ps1` que no se encuentra no es 2, **fallaban abiertas sin avisar**. Los restos manuales
+salen en `pii.guards_legacy` y los retira `cleanup-preplugin.ps1` al arrancar, con copia previa.
+La verificación de `check_env` (`Test-RsPiiGuards`, `hooks/lib-pii.ps1`) es estructural **y de
+existencia**: el `.ps1` declarado tiene que estar ahí; si no, sale en `pii.guards_stale` y cuenta
+como ausente. `pii.guards_foreign` marca las que protegen desde otra copia del plugin (v2.11.0).
+Comprueba la **instalación, no la sesión**: Claude Code resuelve los hooks al arrancar.
+
+**Registradas ≠ actuando** (3.3.0). Las guardas siguen al modo del workspace de cada operación
+(`Get-RsPiiEstadoGuarda`, `hooks/lib-pii.ps1`): en `off` no bloquean, en `audit`/`enforce` sí, fuera
+de un workspace RS tampoco — y con el modo **indeterminado** bloquean, para que un workspace roto no
+degrade en silencio a uno sin protección. La guarda de escritura resuelve el workspace desde el
+`file_path` del evento (manda el destino, no la sesión); la de Bash, desde el `cwd`, que es su única
+señal. `check_env` publica las dos caras: `guards_registered` (puesto de trabajo) y `guards_active`
+(este workspace). El modo se lee con una regex sobre el modelo, no con `ConvertFrom-Json` — esto
+corre en cada `Bash` y cada `Write`, y el modelo pesa cientos de KB; `check_env` contrasta esa
+lectura rápida con el parseo completo que ya hace y publica `mode_mismatch` si divergen. La clasificación de columnas la hace
 `scripts/pii_cli.py --clasificar`, no un clasificador reescrito en el prompt. ⛔ Gate de
 confirmación explícita en cualquier dirección, incluida la vuelta a `off`. Ver `docs/proteccion-pii-consultas-bd.md` y §12
 de este documento (los módulos `scripts/pii_*.py` que aplica la política).
@@ -402,6 +418,16 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Nueva skill | README · CHANGELOG · §2/§3 este doc |
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
+
+⛔ **Sin nombres de clientes, en ningún fichero del repo.** Ni en documentación, ni en el
+CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco sus derivados
+identificables: esquemas, usuarios de BD, nombres de solución que incluyan la marca, rutas de
+instalación. Un caso real se cita como "una instalación de cliente" o "el proyecto donde se
+detectó"; si hace falta la referencia concreta (una revisión, un ticket), va sin el nombre. Y
+en un documento dirigido a terceros, los valores reales viajan en un anexo aparte —el
+inventario de columnas del §6 de `docs/proteccion-pii-consultas-bd.md` es exactamente ese
+caso—. Esto **no** aplica a lo que los agentes escriben en el workspace del cliente: ahí los
+nombres propios son legítimos.
 
 ---
 

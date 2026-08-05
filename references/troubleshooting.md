@@ -107,6 +107,41 @@ Solución:
 
 ---
 
+## Las guardas están registradas pero no bloquean nada en este workspace
+
+Causas:
+
+- **es el comportamiento normal en `off`**. Desde 3.3.0 las guardas siguen a `pii_policy.mode` del workspace de cada operación: en `off` no actúan. `check_env` lo publica por separado — `pii.guards_registered` (están en `settings.json`) y `pii.guards_active` (bloquean **aquí**)
+- la operación no cae dentro de un workspace uCollect/RS: subiendo desde la ruta no aparece `docs/.rs-databases.json`. Fuera de un workspace el plugin no bloquea nada, a propósito
+- en la guarda de escritura manda el workspace **del fichero**, no el de la sesión: escribiendo en un workspace en `off` desde una sesión abierta en uno en `enforce`, no bloquea
+
+---
+
+Solución:
+
+- si ese workspace tiene datos reales en su BD, activarlo ahí: `/rs-pii audit` o `/rs-pii enforce`. La decisión es **por workspace**, que es justo el objetivo
+- si esperabas bloqueo y el modo ya es `audit`/`enforce`, comprobar `pii.mode_mismatch` en `check_env`: significa que la lectura rápida que hacen las guardas no entiende el bloque `pii_policy` del modelo
+
+---
+
+## check_env dice guards_stale: una guarda declarada que no protege
+
+Causas:
+
+- la entrada existe y está bien formada, pero el `.ps1` al que apunta **no está en esa ruta**. Claude Code lanza el hook, `powershell` sale con error — y ese código **no es 2**, el único que bloquea —, así que el bypass queda abierto sin que nada lo delate
+- si viene del **plugin** (`guards_source` = `plugin`): la instalación está incompleta, falta alguno de los dos `.ps1`. Reinstalar el plugin
+- si viene de un **resto manual** en `~/.claude/settings.json` (`guards_legacy` no vacío): es la forma antigua de registrarlas, anterior a 3.4.0. Ahí la ruta iba **cableada en absoluto** —`${CLAUDE_PLUGIN_ROOT}` solo se expande en `.claude-plugin/plugin.json` y `.mcp.json`— y la ruta del caché de plugins lleva la **versión** dentro, así que cada actualización del plugin la dejaba muerta
+
+---
+
+Solución:
+
+- desde 3.4.0 **no hay que registrar nada a mano**: las guardas las declara el plugin y se actualizan con él. Los restos los retira `scripts/cleanup-preplugin.ps1` al arrancar una sesión nueva, con copia previa en `~/.claude/_backup-preplugin-<fecha>/`
+- se avisa en **cualquier modo**, también en `off`: `guards_stale` describe la instalación, no si bloquea aquí (eso es `guards_active`). Con `enforce` sale además como `pii.ok = false`
+- `guards_foreign` es distinto y **no** es un fallo: la guarda protege, pero desde otra copia del plugin que no se actualiza con `/plugin marketplace update`
+
+---
+
 ## Los valores llegan como pii:xxxxxxxxxxxx y se esperaban datos reales
 
 Causas:

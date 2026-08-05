@@ -189,30 +189,80 @@ if ($model -and $model.pii_policy -and $model.pii_policy.mode) {
     $piiModo = "$($model.pii_policy.mode)"
 }
 
-# Comprobacion ESTRUCTURAL (lib-pii.ps1), no un -match sobre el texto del fichero: hay que
-# verificar que las dos guardas son entradas reales de hooks.PreToolUse con un matcher que
-# dispare, no que la cadena aparezca en cualquier sitio del JSON.
+# Contraste de la lectura RAPIDA con la completa. Las guardas PreToolUse corren en cada Bash y
+# cada Write, asi que no parsean el modelo entero: leen el modo con una regex (ver
+# Get-RsPiiModoDeModelo). Aqui ya tenemos el modelo parseado de verdad, asi que este es el unico
+# sitio barato donde se puede comprobar que las dos lecturas coinciden. Si divergen, las guardas
+# estan actuando con un modo distinto del que cree el resto del sistema -- y como el error puede
+# ir en la direccion de no proteger, se dice.
 . (Join-Path $PSScriptRoot "lib-pii.ps1")
+$piiModoRapido = Get-RsPiiModoDeModelo $modelPath
+$piiDiscrepa = ($piiModoRapido -notin @("ausente", $piiModo))
+
+# Comprobacion ESTRUCTURAL (lib-pii.ps1, ya dot-sourceada arriba), no un -match sobre el texto
+# del fichero: hay que verificar que las dos guardas son entradas reales de hooks.PreToolUse con
+# un matcher que dispare, no que la cadena aparezca en cualquier sitio del JSON.
 $settingsUsuario = Join-Path $env:USERPROFILE ".claude\settings.json"
-$guardas   = Test-RsPiiGuards -SettingsPath $settingsUsuario
-$guardasOk = $guardas.ok
+# -HooksDir: el hooks\ de ESTE plugin. Sirve para dos cosas -- verificar que el .ps1 al que
+# apunta cada entrada existe de verdad (una entrada que apunte a una ruta muerta NO protege:
+# el hook falla, pero no con codigo 2, asi que el bypass queda abierto en silencio) y detectar
+# que la guarda viva cuelga de otra copia del plugin.
+$manifiesto = Join-Path $PSScriptRoot "..\.claude-plugin\plugin.json"
+$guardas    = Test-RsPiiGuards -SettingsPath $settingsUsuario -HooksDir $PSScriptRoot -ManifestPath $manifiesto
+$guardasOk  = $guardas.ok
 
 $piiEstado = @{
     mode              = $piiModo
     guards_registered = $guardasOk
     guards_missing    = @($guardas.missing)
+    guards_stale      = @($guardas.stale)
+    guards_foreign    = @($guardas.foreign)
+    guards_legacy     = @($guardas.legacy)
+    guards_source     = $guardas.source
+    guards_active     = ($piiModo -in @("audit", "enforce"))
     ok                = ($piiModo -ne "enforce") -or $guardasOk
 }
+# Las guardas siguen al modo del workspace: registradas != actuando. Con mode=off estan
+# registradas y no bloquean nada, que es el estado normal en desarrollo.
+if ($piiDiscrepa) {
+    $piiEstado.mode_fast_read = $piiModoRapido
+    $piiEstado.mode_mismatch  = "El modo leido por las guardas ('$piiModoRapido') NO coincide con el del modelo ('$piiModo'). " +
+                                "Las guardas leen pii_policy.mode con una lectura rapida para no parsear el modelo entero en cada " +
+                                "llamada; si discrepa, estan actuando con un modo distinto del que cree el resto del sistema. " +
+                                "Revisar el bloque pii_policy de ${modelPath}: el modo debe ser un literal 'off'/'audit'/'enforce' " +
+                                "sin objetos anidados por delante dentro de pii_policy."
+}
 if (-not $piiEstado.ok) {
-    $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse en ${settingsUsuario}: " +
+    $piiEstado.error = "mode=enforce pero faltan guardas PreToolUse efectivas en ${settingsUsuario}: " +
                        (($guardas.missing) -join ", ") +
                        ". La proteccion es incompleta: ese bypass esta abierto. Ejecutar /rs-pii enforce para registrarlas."
+}
+# Una guarda ROTA se avisa SIEMPRE, tambien con mode=off: las guardas no dependen del modo
+# del workspace -- bloquean sqlplus/sqlcmd directos y la escritura de datos personales
+# estuviera el modo donde estuviera -- asi que una entrada que apunta a una ruta muerta deja
+# ese bypass abierto en cualquier modo. Con enforce ya sale ademas por 'error' (ok = false).
+if (@($guardas.stale).Count -gt 0) {
+    $piiEstado.guards_stale_note = "Hay guardas registradas que NO protegen (la entrada existe, el .ps1 no). " +
+                                   "Suele significar que el plugin cambio de ruta: settings.json lleva la ruta cableada en absoluto. " +
+                                   "Volver a ejecutar /rs-pii enforce la reescribe con la ruta actual."
+}
+if (@($guardas.foreign).Count -gt 0) {
+    $piiEstado.guards_foreign_note = "Hay guardas que protegen desde OTRA copia del plugin: esa copia no se actualiza con /plugin marketplace update."
+}
+# Restos de cuando /rs-pii enforce las registraba a mano. Desde 3.4.0 las declara el propio
+# plugin, asi que estas entradas sobran: si su ruta sigue viva el hook corre DUPLICADO, y si
+# esta muerta -- lo habitual, porque la ruta del cache lleva la version -- falla en cada
+# llamada a Bash/Write. cleanup-preplugin.ps1 las retira solo al arrancar la sesion.
+if (@($guardas.legacy).Count -gt 0) {
+    $piiEstado.guards_legacy_note = "Hay guardas registradas a mano en ${settingsUsuario} que ya sobran: desde 3.4.0 las declara el propio plugin. " +
+                                    "Se retiran solas al arrancar una sesion nueva (scripts/cleanup-preplugin.ps1, con copia previa); " +
+                                    "no hay que hacer nada."
 }
 # Se comprueba el FICHERO, no la sesion en curso: Claude Code captura la configuracion de
 # hooks al arrancar, asi que unas guardas registradas a mitad de sesion NO estan activas
 # hasta reiniciar. Este aviso viaja siempre para que ningun consumidor lea
 # guards_registered = true como "protegido ahora mismo".
-$piiEstado.guards_note = "guards_registered describe el contenido de settings.json, no la sesion en curso: unas guardas registradas durante esta sesion no estan activas hasta reiniciar Claude Code."
+$piiEstado.guards_note = "guards_registered describe la INSTALACION (plugin.json declara las dos guardas y sus .ps1 existen), no la sesion en curso: Claude Code resuelve los hooks al arrancar, asi que un plugin recien instalado o actualizado no las tiene vivas hasta reiniciar. guards_active es otra cosa: dice si bloquean en ESTE workspace, y eso lo decide pii_policy.mode, que las guardas leen en cada invocacion."
 
 # Output JSON estructurado para consumo del agente
 $output = @{

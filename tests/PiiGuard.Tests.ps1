@@ -8,6 +8,30 @@
     (pwsh, no powershell: la suite usa Join-Path de tres argumentos, que es PS 6+)
 #>
 
+BeforeAll {
+    function New-RsWorkspacePii {
+        <# Workspace uCollect/RS de mentira con el modo indicado. Desde 3.3.0 las guardas
+           PreToolUse siguen al modo del WORKSPACE, asi que un evento cuya ruta no cae dentro
+           de uno no bloquea nada: los casos que miden el bloqueo tienen que vivir dentro de
+           un workspace en enforce, o pasarian por la razon equivocada. #>
+        param([string]$Ruta, [ValidateSet("off", "audit", "enforce")][string]$Modo = "enforce")
+
+        New-Item -ItemType Directory -Path $Ruta -Force | Out-Null
+        # -ItemType File -Force crea las carpetas intermedias: en Windows hacen falta docs\ y
+        # BD\ de verdad; en Linux el literal "docs\..." es un solo nombre de fichero. La
+        # expresion es la misma que usa Read-RsDatabases, que es lo que tiene que coincidir.
+        foreach ($par in @(
+            @{ P = (Join-Path $Ruta "docs\.rs-databases.json")
+               C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "Data Source=X;User Id=u", "schema": "S" } ] }' },
+            @{ P = (Join-Path $Ruta "BD\Demo-model.json")
+               C = '{ "proyecto": "Demo", "tables": {}, "pii_policy": { "mode": "' + $Modo + '" } }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        return $Ruta
+    }
+}
+
 Describe "pii_cli.py" {
     BeforeAll {
         $script:cli   = Join-Path $PSScriptRoot ".." "scripts" "pii_cli.py"
@@ -504,25 +528,38 @@ Describe "db-query.ps1 camino CON filas (integracion PII)" {
 }
 
 Describe "pii-guard-bash.ps1" {
-    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1" }
+    BeforeAll {
+        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-bash.ps1"
+        $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "bash-enforce") "enforce"
+        $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "bash-off") "off"
+        $script:fuera = Join-Path $TestDrive "bash-otro-repo"
+        New-Item -ItemType Directory -Path $script:fuera -Force | Out-Null
+
+        function New-EventoBash {
+            <# El cwd es la unica senal que tiene esta guarda: un comando de Bash no dice
+               sobre que workspace actua. #>
+            param([string]$Comando, [string]$Cwd = $script:wsEnf)
+            return (@{ cwd = $Cwd; tool_input = @{ command = $Comando } } | ConvertTo-Json -Depth 5 -Compress)
+        }
+    }
 
     It "bloquea sqlplus" {
-        '{"tool_input":{"command":"sqlplus -S user/pass@DS @x.sql"}}' | & $script:g | Out-Null
+        (New-EventoBash "sqlplus -S user/pass@DS @x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea sqlcmd" {
-        '{"tool_input":{"command":"sqlcmd -S srv -Q \"SELECT 1\""}}' | & $script:g | Out-Null
+        (New-EventoBash 'sqlcmd -S srv -Q "SELECT 1"') | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite comandos normales" {
-        '{"tool_input":{"command":"dotnet build MiSolucion.sln"}}' | & $script:g | Out-Null
+        (New-EventoBash "dotnet build MiSolucion.sln") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite los scripts del propio plugin que usan sqlplus por dentro" {
-        '{"tool_input":{"command":"python installer-inserts.py C:\\ws Proy out"}}' | & $script:g | Out-Null
+        (New-EventoBash "python installer-inserts.py C:\ws Proy out") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
@@ -540,11 +577,45 @@ Describe "pii-guard-bash.ps1" {
         # de PowerShell añade contexto "Line |" con la linea de codigo que invoco el
         # pipeline (aqui, la propia linea del test) al formatear para consola, que no
         # es el mensaje del guard y ensuciaria la comprobacion con el mismo secreto.
-        $salida = '{"tool_input":{"command":"sqlplus -S usuario/contrasena@ORCL"}}' | & $script:g 2>&1
+        $salida = (New-EventoBash "sqlplus -S usuario/contrasena@ORCL") | & $script:g 2>&1
         $LASTEXITCODE | Should -Be 2
         $mensaje = [string]$salida
         $mensaje | Should -Not -Match "contrasena"
         $mensaje | Should -Match "sqlplus"
+    }
+
+    Context "sigue al modo del workspace (3.3.0)" {
+        It "el MISMO comando no bloquea si el workspace esta en off" {
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:wsOff) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "no bloquea fuera de un workspace RS" {
+            # Es lo que quita la friccion de alcance de maquina: la guarda vive en la
+            # configuracion personal y afectaba a TODOS los proyectos del usuario.
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:fuera) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "bloquea en audit, no solo en enforce" {
+            $ws = New-RsWorkspacePii (Join-Path $TestDrive "bash-audit") "audit"
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
+
+        It "bloquea si el workspace declara un modelo que no existe (falla cerrado)" {
+            # Workspace roto: hay politica declarada y no se puede leer. Tratarlo como
+            # "sin politica" seria el fallo silencioso que este sistema existe para evitar.
+            $ws = Join-Path $TestDrive "bash-roto"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $cfg = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $cfg -Force | Out-Null
+            Set-Content -LiteralPath $cfg -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x", "model": "BD\\no-existe.json" } ] }'
+
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
     }
 }
 
@@ -566,7 +637,10 @@ Describe "Repair-RsTextoUtf8 (codificacion de la stdin de las guardas)" {
         $script:utf8 = New-Object System.Text.UTF8Encoding($false)
         # "Jose Munoz" con e acentuada y ene, compuesto por codigo de caracter para que no
         # dependa de como este guardado ESTE fichero.
-        $script:bueno = "C:\x\Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz.md"
+        # Dentro de un workspace en enforce: desde 3.3.0 la guarda no bloquea fuera de uno, y
+        # este caso necesita que bloquee para poder mirar el texto del bloqueo.
+        $script:wsAcentos = New-RsWorkspacePii (Join-Path $TestDrive "acentos") "enforce"
+        $script:bueno = Join-Path $script:wsAcentos ("Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz.md")
         # Lo que ve el script: los bytes UTF-8 descodificados como si fueran OEM.
         $script:roto  = $script:oem.GetString($script:utf8.GetBytes($script:bueno))
     }
@@ -625,70 +699,118 @@ Describe "pii-guard-write.ps1" {
         ademas exigen letra de control valida -- sin eso, cualquier fecha AAAAMMDD del
         repo (convencion Actualizador\<ENTORNO>_<AAAAMMDD>) dispara la guarda.
     #>
-    BeforeAll { $script:g = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1" }
+    BeforeAll {
+        $script:g     = Join-Path $PSScriptRoot ".." "hooks" "pii-guard-write.ps1"
+        $script:wsEnf = New-RsWorkspacePii (Join-Path $TestDrive "write-enforce") "enforce"
+        $script:wsOff = New-RsWorkspacePii (Join-Path $TestDrive "write-off") "off"
+        $script:fuera = Join-Path $TestDrive "write-otro-repo"
+        New-Item -ItemType Directory -Path $script:fuera -Force | Out-Null
+
+        function New-EventoWrite {
+            <# Manda el workspace del FICHERO que se va a escribir, no el de la sesion. #>
+            param([string]$Contenido, [string]$Ruta = "", [string]$Workspace = $script:wsEnf,
+                  [string]$Relativa = "a.md", [string]$Cwd = "")
+            if (-not $Ruta) { $Ruta = Join-Path $Workspace $Relativa }
+            $ev = @{ tool_input = @{ file_path = $Ruta; content = $Contenido } }
+            if ($Cwd) { $ev.cwd = $Cwd }
+            return ($ev | ConvertTo-Json -Depth 5 -Compress)
+        }
+    }
 
     It "bloquea contenido con DNI de letra de control valida" {
         # 12345678Z: 12345678 % 23 = 14 -> "TRWAGMYFPDXBNJZSQVHLCKE"[14] = "Z". Valido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678Z debe 300"}}' | & $script:g | Out-Null
+        (New-EventoWrite "El deudor 12345678Z debe 300") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea el mismo numero de DNI con letra de control incorrecta" {
         # 12345678A: la letra correcta es Z, no A. Misma forma, checksum invalido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"El deudor 12345678A debe 300"}}' | & $script:g | Out-Null
+        (New-EventoWrite "El deudor 12345678A debe 300") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "NO bloquea una fecha AAAAMMDD seguida de letra (falso positivo tipico del repo)" {
         # 20260803 % 23 = ... letra correcta es "B", no "A": no cuela como DNI valido.
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Entrega 20260803A generada por el hook"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Entrega 20260803A generada por el hook") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con NIE de letra de control valida" {
         # X1234567L: X->0, 01234567 % 23 -> "L". Valido (ejemplo clasico de NIE).
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567L"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567L") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea un NIE con letra de control incorrecta" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Cliente extranjero X1234567A"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567A") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con IBAN" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"ES9121000418450200051332"}}' | & $script:g | Out-Null
+        (New-EventoWrite "ES9121000418450200051332") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea contenido con correo electronico" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Contacto: ana.lopez@example.com"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Contacto: ana.lopez@example.com") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite contenido sin datos personales" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"SELECT COUNT(*) FROM RDEUDORES"}}' | & $script:g | Out-Null
+        (New-EventoWrite "SELECT COUNT(*) FROM RDEUDORES") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un importe largo sin forma de DNI/NIE/IBAN/correo (telefono y tarjeta fuera de esta guarda)" {
-        '{"tool_input":{"file_path":"C:\\x\\a.md","content":"Total acumulado: 1234567890123456 centimos"}}' | & $script:g | Out-Null
+        (New-EventoWrite "Total acumulado: 1234567890123456 centimos") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del instalador" {
-        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Instalador\\Scripts\\Inserts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        # Dentro del workspace en enforce a proposito: lo que se prueba es la exclusion de
+        # ruta, no que la guarda estuviera dormida.
+        (New-EventoWrite "12345678Z" -Relativa "Instalador\Scripts\Inserts\x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del actualizador" {
-        '{"tool_input":{"file_path":"C:\\AIS\\Proy\\Actualizador\\DESA_20260803\\Scripts\\x.sql","content":"12345678Z"}}' | & $script:g | Out-Null
+        (New-EventoWrite "12345678Z" -Relativa "Actualizador\DESA_20260803\Scripts\x.sql") | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un evento no parseable (JSON invalido)" {
         'esto no es json' | & $script:g | Out-Null
         $LASTEXITCODE | Should -Be 0
+    }
+
+    Context "sigue al modo del workspace (3.3.0)" {
+        It "el MISMO contenido no bloquea si el workspace del fichero esta en off" {
+            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsOff) | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "no bloquea un correo en un fichero de otro repo" {
+            # La friccion que motivo el cambio: escribir un README con la direccion de
+            # soporte en un proyecto que no es uCollect/RS quedaba bloqueado.
+            (New-EventoWrite "Contacto: soporte@empresa.com" -Ruta (Join-Path $script:fuera "README.md")) |
+                & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It "manda el workspace del FICHERO, no el de la sesion" {
+            # Sesion abierta en un workspace en off, escribiendo en uno en enforce: decide
+            # el destino, que es de quien es la BD con datos reales.
+            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsEnf -Cwd $script:wsOff) |
+                & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
+
+        It "usa el cwd cuando el evento no trae ruta de fichero" {
+            $ev = @{ cwd = $script:wsEnf; tool_input = @{ content = "El deudor 12345678Z debe 300" } } |
+                  ConvertTo-Json -Depth 5 -Compress
+            $ev | & $script:g | Out-Null
+            $LASTEXITCODE | Should -Be 2
+        }
     }
 }
 
@@ -774,6 +896,125 @@ Describe "check-env.ps1 verificacion de guardas" {
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_registered"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_missing"
         $out.pii.PSObject.Properties.Name | Should -Contain "guards_note"
+        # Las dos listas viajan SIEMPRE, tambien vacias: un consumidor que solo las lea
+        # cuando existen se comportaria distinto segun el estado, y son la unica senal de
+        # que una guarda registrada no protege (guards_stale) o protege desde otra copia
+        # del plugin (guards_foreign).
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_stale"
+        $out.pii.PSObject.Properties.Name | Should -Contain "guards_foreign"
+    }
+}
+
+Describe "Get-RsPiiEstadoGuarda (las guardas siguen al modo del workspace)" {
+    <#
+        Lo normal en desarrollo es tenerlas desactivadas; se encienden solo en el workspace
+        cuya BD tiene datos reales. La fila que sostiene el diseño es la ultima: dentro de un
+        workspace RS cuyo modo no se puede determinar, la guarda ACTUA. Sin eso, un modelo
+        declarado y ausente convertiria un workspace protegido en uno sin proteccion, en
+        silencio -- que es el mismo fallo que ya arreglo la 3.2.2 por otra via.
+    #>
+    BeforeAll { . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1") }
+
+    It "modo off -> inactiva" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-off") "off")).activa | Should -BeFalse
+    }
+
+    It "modo audit -> ACTIVA" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-audit") "audit")).activa | Should -BeTrue
+    }
+
+    It "modo enforce -> ACTIVA" {
+        (Get-RsPiiEstadoGuarda (New-RsWorkspacePii (Join-Path $TestDrive "e-enf") "enforce")).activa | Should -BeTrue
+    }
+
+    It "fuera de un workspace RS -> inactiva, y lo dice" {
+        $d = Join-Path $TestDrive "e-fuera"
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        $r = Get-RsPiiEstadoGuarda $d
+        $r.activa | Should -BeFalse
+        $r.modo   | Should -Be "fuera"
+    }
+
+    It "una subcarpeta hereda el modo del workspace" {
+        $ws  = New-RsWorkspacePii (Join-Path $TestDrive "e-sub") "enforce"
+        $sub = Join-Path $ws "Batch/Soluciones/RSProcIN"
+        New-Item -ItemType Directory -Path $sub -Force | Out-Null
+        (Get-RsPiiEstadoGuarda $sub).activa | Should -BeTrue
+        # Un fichero que TODAVIA no existe es el caso normal en Write: se resuelve por su carpeta.
+        (Get-RsPiiEstadoGuarda (Join-Path $sub "nuevo.cs")).activa | Should -BeTrue
+    }
+
+    It "modelo sin bloque pii_policy -> inactiva (workspace que nunca configuro nada)" {
+        $ws = Join-Path $TestDrive "e-sinpol"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        foreach ($par in @(
+            @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }' },
+            @{ P = (Join-Path $ws "BD\Demo-model.json");      C = '{ "proyecto": "Demo", "tables": {} }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        $r = Get-RsPiiEstadoGuarda $ws
+        $r.activa | Should -BeFalse
+        $r.modo   | Should -Be "off"
+    }
+
+    Context "falla cerrado dentro del workspace" {
+        It "modelo DECLARADO y ausente -> ACTIVA" {
+            $ws = Join-Path $TestDrive "e-declarado-roto"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $p = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x", "model": "BD\\no-existe.json" } ] }'
+            $r = Get-RsPiiEstadoGuarda $ws
+            $r.activa | Should -BeTrue
+            $r.modo   | Should -Be "indeterminado"
+        }
+
+        It "modelo por CONVENIO y ausente -> inactiva (nunca declaro politica)" {
+            # La otra mitad de la misma regla, la que garantiza que actualizar no cambie el
+            # comportamiento de un workspace que nunca configuro nada.
+            $ws = Join-Path $TestDrive "e-convenio-ausente"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            $p = Join-Path $ws "docs\.rs-databases.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value `
+                '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }'
+            (Get-RsPiiEstadoGuarda $ws).activa | Should -BeFalse
+        }
+
+        It "pii_policy que la lectura rapida no entiende -> ACTIVA, nunca off" {
+            # Un objeto anidado por delante de "mode" rompe la regex. Degradar a off ahi
+            # apagaria la guarda de un workspace protegido sin decir nada.
+            $ws = Join-Path $TestDrive "e-ilegible"
+            New-Item -ItemType Directory -Path $ws -Force | Out-Null
+            foreach ($par in @(
+                @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x" } ] }' },
+                @{ P = (Join-Path $ws "BD\Demo-model.json");      C = '{ "pii_policy": { "raro": { "x": 1 }, "mode": "enforce" } }' })) {
+                New-Item -ItemType File -Path $par.P -Force | Out-Null
+                Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+            }
+            $r = Get-RsPiiEstadoGuarda $ws
+            $r.activa | Should -BeTrue
+            $r.modo   | Should -Be "indeterminado"
+        }
+    }
+
+    It "con varias conexiones manda la mas restrictiva" {
+        # La guarda de Bash no puede saber a que BD apunta un comando, asi que un workspace
+        # con PROD en enforce y DEV en off tiene que bloquear igual.
+        $ws = Join-Path $TestDrive "e-mixto"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        foreach ($par in @(
+            @{ P = (Join-Path $ws "docs\.rs-databases.json"); C = '{ "proyecto": "Demo", "conexiones": [ { "id": "dev", "motor": "ORACLE", "cadena": "x", "model": "BD\\dev-model.json" }, { "id": "prod", "motor": "ORACLE", "cadena": "x", "model": "BD\\prod-model.json" } ] }' },
+            @{ P = (Join-Path $ws "BD\dev-model.json");       C = '{ "pii_policy": { "mode": "off" } }' },
+            @{ P = (Join-Path $ws "BD\prod-model.json");      C = '{ "pii_policy": { "mode": "enforce" } }' })) {
+            New-Item -ItemType File -Path $par.P -Force | Out-Null
+            Set-Content -LiteralPath $par.P -Value $par.C -Encoding UTF8
+        }
+        $r = Get-RsPiiEstadoGuarda $ws
+        $r.activa | Should -BeTrue
+        $r.modo   | Should -Be "enforce"
     }
 }
 
@@ -783,59 +1024,80 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
         si las entradas estaban bajo hooks.PreToolUse ni con que matcher. /rs-pii enforce
         se apoya en el resultado para conmutar el modo, asi que un falso positivo deja el
         workspace declarandose protegido con los dos bypass abiertos.
+
+        Y desde 3.2.2 tampoco basta con que la entrada este bien formada: el .ps1 al que
+        apunta tiene que EXISTIR. Por eso estos tests fabrican guardas de mentira pero en
+        ficheros reales -- con las rutas inventadas de antes ya no medirian lo que creen.
     #>
     BeforeAll {
         . (Join-Path $PSScriptRoot ".." "hooks" "lib-pii.ps1")
+
+        $script:HooksReales = Join-Path $TestDrive "plugin\hooks"
+        $script:HooksOtros  = Join-Path $TestDrive "copia-vieja\hooks"
+        foreach ($d in @($script:HooksReales, $script:HooksOtros)) {
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            foreach ($n in @("pii-guard-bash.ps1", "pii-guard-write.ps1")) {
+                Set-Content (Join-Path $d $n) "exit 0" -Encoding UTF8
+            }
+        }
+        $script:RutaBash  = Join-Path $script:HooksReales "pii-guard-bash.ps1"
+        $script:RutaWrite = Join-Path $script:HooksReales "pii-guard-write.ps1"
+
         function New-Settings($nombre, $json) {
             $p = Join-Path $TestDrive $nombre
             $json | Set-Content $p -Encoding UTF8
             return $p
         }
+
+        function New-SettingsGuardas {
+            <# settings.json con las dos guardas y las rutas que se le indiquen. #>
+            param(
+                [string]$Nombre,
+                [string]$RutaBash     = $script:RutaBash,
+                [string]$RutaWrite    = $script:RutaWrite,
+                [string]$Evento       = "PreToolUse",
+                [string]$MatcherBash  = "Bash",
+                [string]$MatcherWrite = "Write|Edit"
+            )
+            $b = $RutaBash.Replace('\', '\\')
+            $w = $RutaWrite.Replace('\', '\\')
+            return (New-Settings $Nombre @"
+{ "hooks": { "$Evento": [
+  { "matcher": "$MatcherBash",  "hooks": [ { "type": "command", "command": "powershell -File \"$b\"" } ] },
+  { "matcher": "$MatcherWrite", "hooks": [ { "type": "command", "command": "powershell -File \"$w\"" } ] }
+] } }
+"@)
+        }
     }
 
     It "reconoce las dos guardas bien registradas" {
-        $p = New-Settings "ok.json" @'
-{ "hooks": { "PreToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-bash.ps1\"" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\p\\hooks\\pii-guard-write.ps1\"" } ] }
-] } }
-'@
-        $r = Test-RsPiiGuards -SettingsPath $p
+        $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "ok.json")
         $r.ok    | Should -Be $true
         @($r.missing).Count | Should -Be 0
+        @($r.stale).Count   | Should -Be 0
     }
 
     It "no acepta las guardas mencionadas fuera de hooks.PreToolUse" {
-        # Aqui van bajo PostToolUse: el texto del fichero contiene las dos cadenas, pero
-        # ninguna guarda se ejecuta ANTES de la herramienta, que es lo unico que protege.
-        $p = New-Settings "post.json" @'
-{ "hooks": { "PostToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
-] } }
-'@
+        # Bajo PostToolUse: el texto del fichero contiene las dos cadenas y los .ps1 existen,
+        # pero ninguna guarda corre ANTES de la herramienta, que es lo unico que protege.
+        $p = New-SettingsGuardas "post.json" -Evento "PostToolUse"
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
     }
 
     It "no acepta una guarda con un matcher que no dispara para su herramienta" {
-        $p = New-Settings "matcher.json" @'
-{ "hooks": { "PreToolUse": [
-  { "matcher": "Read", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] },
-  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
-] } }
-'@
-        $r = Test-RsPiiGuards -SettingsPath $p
+        $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "matcher.json" -MatcherBash "Read")
         $r.ok    | Should -Be $false
         $r.bash  | Should -Be $false
         $r.write | Should -Be $true
     }
 
     It "dice CUAL de las dos falta cuando solo hay una" {
-        $p = New-Settings "una.json" @'
+        $b = $script:RutaBash.Replace('\', '\\')
+        $p = New-Settings "una.json" @"
 { "hooks": { "PreToolUse": [
-  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File pii-guard-bash.ps1" } ] }
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$b\"" } ] }
 ] } }
-'@
+"@
         $r = Test-RsPiiGuards -SettingsPath $p
         $r.ok      | Should -Be $false
         $r.bash    | Should -Be $true
@@ -844,13 +1106,15 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
     }
 
     It "acepta el matcher comodin" {
-        $p = New-Settings "comodin.json" @'
+        $b = $script:RutaBash.Replace('\', '\\')
+        $w = $script:RutaWrite.Replace('\', '\\')
+        $p = New-Settings "comodin.json" @"
 { "hooks": { "PreToolUse": [
   { "matcher": "*", "hooks": [
-      { "type": "command", "command": "powershell -File pii-guard-bash.ps1" },
-      { "type": "command", "command": "powershell -File pii-guard-write.ps1" } ] }
+      { "type": "command", "command": "powershell -File \"$b\"" },
+      { "type": "command", "command": "powershell -File \"$w\"" } ] }
 ] } }
-'@
+"@
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $true
     }
 
@@ -866,5 +1130,247 @@ Describe "Test-RsPiiGuards (comprobacion estructural)" {
   "hooks": { "PreToolUse": [] } }
 '@
         (Test-RsPiiGuards -SettingsPath $p).ok | Should -Be $false
+    }
+
+    Context "la entrada existe pero el .ps1 no: registrada != efectiva" {
+        <#
+            Es el fallo silencioso que cierra este bloque. La ruta va cableada en absoluto
+            (en settings.json ${CLAUDE_PLUGIN_ROOT} no se expande), asi que basta con que el
+            plugin cambie de sitio para que la entrada apunte a un .ps1 que no esta. Claude
+            Code lanza el hook, powershell sale con error -- pero NO con codigo 2, el unico
+            que bloquea -- de modo que el bypass queda abierto mientras check_env decia
+            "registradas". Ese estado es peor que saberse en off, y era alcanzable sin que
+            nadie hiciera nada mal.
+        #>
+        It "una ruta absoluta que no existe no cuenta como registrada, y lo dice" {
+            $muerta = Join-Path $TestDrive "plugin-que-ya-no-esta\hooks\pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "muerta.json" -RutaBash $muerta)
+            $r.ok    | Should -Be $false
+            $r.bash  | Should -Be $false
+            $r.write | Should -Be $true
+            ($r.stale -join " ") | Should -Match "no existe"
+            ($r.stale -join " ") | Should -Match "pii-guard-bash"
+            # La ruta concreta va en el mensaje: sin ella no se sabe a que copia apuntaba.
+            ($r.stale -join " ") | Should -Match ([regex]::Escape($muerta))
+        }
+
+        It 'CLAUDE_PLUGIN_ROOT en settings.json no protege: llega literal' {
+            # Claude Code solo expande esa variable en .claude-plugin/plugin.json y .mcp.json.
+            # En settings.json queda tal cual y el hook apunta a una carpeta inexistente.
+            $conVar = '${CLAUDE_PLUGIN_ROOT}\hooks\pii-guard-bash.ps1'
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "var.json" -RutaBash $conVar)
+            $r.bash | Should -Be $false
+            ($r.stale -join " ") | Should -Match "variable sin expandir"
+        }
+
+        It "una ruta relativa no se puede verificar y tampoco cuenta" {
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "rel.json" -RutaBash "pii-guard-bash.ps1")
+            $r.bash | Should -Be $false
+            ($r.stale -join " ") | Should -Match "relativa"
+        }
+
+        It "una segunda entrada valida rescata a una rota" {
+            # Reinstalar deja la entrada vieja y anade la nueva. Mientras UNA dispare y
+            # exista, la guarda protege: no se puede reportar como rota.
+            $muerta = ($TestDrive + "\no-esta\pii-guard-bash.ps1").Replace('\', '\\')
+            $viva   = $script:RutaBash.Replace('\', '\\')
+            $w      = $script:RutaWrite.Replace('\', '\\')
+            $p = New-Settings "dos.json" @"
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$muerta\"" } ] },
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"$viva\"" } ] },
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"$w\"" } ] }
+] } }
+"@
+            $r = Test-RsPiiGuards -SettingsPath $p
+            $r.ok  | Should -Be $true
+            @($r.stale).Count | Should -Be 0
+        }
+    }
+
+    Context "-ManifestPath: desde 3.4.0 la fuente es el plugin, no el settings personal" {
+        <#
+            Las guardas se registraban a mano en ~/.claude/settings.json, donde
+            ${CLAUDE_PLUGIN_ROOT} NO se expande: habia que cablear la ruta absoluta. Y el cache
+            de plugins lleva la VERSION en la ruta
+            (~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/hooks/...), asi que CADA
+            actualizacion del plugin dejaba las dos entradas apuntando a un directorio
+            inexistente: las guardas morian fallando abiertas, en silencio. Declaradas en
+            plugin.json la variable si se expande y apunta siempre a la version en curso.
+        #>
+        BeforeAll {
+            function New-PluginPrueba {
+                param([string]$Nombre, [switch]$SinGuardas, [switch]$SinFicheros)
+                $root = Join-Path $TestDrive $Nombre
+                $pre = if ($SinGuardas) { "" } else { @'
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-bash.ps1\"" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard-write.ps1\"" } ] }
+    ],
+'@ }
+                $man = Join-Path $root ".claude-plugin/plugin.json"
+                New-Item -ItemType File -Path $man -Force | Out-Null
+                Set-Content -LiteralPath $man -Encoding UTF8 -Value ('{ "name": "x", "hooks": {' + $pre + ' "Stop": [] } }')
+                if (-not $SinFicheros) {
+                    foreach ($n in @("pii-guard-bash.ps1", "pii-guard-write.ps1")) {
+                        $p = Join-Path $root "hooks/$n"
+                        New-Item -ItemType File -Path $p -Force | Out-Null
+                        Set-Content -LiteralPath $p -Value "exit 0" -Encoding UTF8
+                    }
+                }
+                return $man
+            }
+        }
+
+        It "declaradas en plugin.json con los .ps1 en su sitio -> ok, y la fuente es el plugin" {
+            $r = Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-ok")
+            $r.ok           | Should -BeTrue
+            $r.source.bash  | Should -Be "plugin"
+            $r.source.write | Should -Be "plugin"
+            @($r.legacy).Count | Should -Be 0
+        }
+
+        It "un manifiesto que no las declara no cuenta" {
+            (Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-vacio" -SinGuardas)).ok | Should -BeFalse
+        }
+
+        It "declaradas pero sin los .ps1 -> no ok (instalacion incompleta), y lo dice" {
+            $r = Test-RsPiiGuards -SettingsPath "" -ManifestPath (New-PluginPrueba "plug-roto" -SinFicheros)
+            $r.ok | Should -BeFalse
+            ($r.stale -join " ") | Should -Match "plugin.json"
+        }
+
+        It "un resto manual muerto no impide que el plugin proteja, y se lista para retirarlo" {
+            # El caso real: ruta del cache con la version dentro, muerta tras actualizar.
+            $man = New-PluginPrueba "plug-con-resto"
+            $viejo = (Join-Path $TestDrive "cache/rs-enterprise-agent/3.2.1/hooks/pii-guard-bash.ps1").Replace('\', '\\')
+            $s = Join-Path $TestDrive "settings-resto.json"
+            Set-Content -LiteralPath $s -Encoding UTF8 -Value ('{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"' + $viejo + '\"" } ] }
+] } }')
+            $r = Test-RsPiiGuards -SettingsPath $s -ManifestPath $man
+            $r.ok              | Should -BeTrue
+            $r.source.bash     | Should -Be "plugin"
+            @($r.legacy).Count | Should -Be 1
+            ($r.legacy -join " ") | Should -Match "3\.2\.1"
+            # Ya no es 'stale': la guarda SI esta, solo que la aporta el plugin.
+            @($r.stale).Count  | Should -Be 0
+        }
+
+        It "un resto manual VIVO tambien se lista: duplicaria el hook" {
+            $man = New-PluginPrueba "plug-dup"
+            $vivo = (Join-Path $TestDrive "plug-dup/hooks/pii-guard-write.ps1").Replace('\', '\\')
+            $s = Join-Path $TestDrive "settings-dup.json"
+            Set-Content -LiteralPath $s -Encoding UTF8 -Value ('{ "hooks": { "PreToolUse": [
+  { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"' + $vivo + '\"" } ] }
+] } }')
+            ((Test-RsPiiGuards -SettingsPath $s -ManifestPath $man).legacy -join " ") | Should -Match "viva"
+        }
+    }
+
+    Context "-HooksDir: de que copia del plugin cuelga la guarda viva" {
+        It "avisa cuando la guarda protege desde otra copia, sin invalidar el registro" {
+            # El escenario de la v2.11.0: una copia vendorizada sigue protegiendo (por eso
+            # ok = true) pero no se actualiza con /plugin marketplace update.
+            $otra = Join-Path $script:HooksOtros "pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "ajena.json" -RutaBash $otra) `
+                                  -HooksDir $script:HooksReales
+            $r.ok | Should -Be $true
+            ($r.foreign -join " ") | Should -Match "otra copia"
+            ($r.foreign -join " ") | Should -Match "pii-guard-bash"
+        }
+
+        It "no marca como ajena la copia en uso" {
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "propia.json") -HooksDir $script:HooksReales
+            $r.ok | Should -Be $true
+            @($r.foreign).Count | Should -Be 0
+        }
+
+        It "sin -HooksDir no se pronuncia sobre la procedencia" {
+            $otra = Join-Path $script:HooksOtros "pii-guard-bash.ps1"
+            $r = Test-RsPiiGuards -SettingsPath (New-SettingsGuardas "sindir.json" -RutaBash $otra)
+            $r.ok | Should -Be $true
+            @($r.foreign).Count | Should -Be 0
+        }
+    }
+}
+
+Describe "cleanup-preplugin.ps1 retira las guardas PII registradas a mano" {
+    <#
+        Desde 3.4.0 las declara plugin.json. Las entradas manuales que quedan de antes no son
+        inofensivas: si su ruta sigue viva el hook corre DUPLICADO, y si esta muerta -- lo
+        habitual, porque la ruta del cache lleva la version del plugin -- falla en cada Bash y
+        cada Write sin bloquear nada. Y /plugin marketplace update no toca ~/.claude, asi que
+        la limpieza tiene que llegar por el hook SessionStart del propio plugin.
+    #>
+    BeforeAll {
+        $script:cleanup = Join-Path $PSScriptRoot ".." "scripts" "cleanup-preplugin.ps1"
+
+        function New-HomeConGuardas {
+            param([string]$Nombre)
+            $hogar = Join-Path $TestDrive $Nombre
+            $p = Join-Path $hogar ".claude/settings.json"
+            New-Item -ItemType File -Path $p -Force | Out-Null
+            # Replica de un settings.json real: las dos guardas con la ruta del cache (que
+            # lleva la version), mas configuracion ajena que NO se debe tocar.
+            Set-Content -LiteralPath $p -Encoding UTF8 -Value @'
+{
+  "permissions": { "allow": ["Bash(dotnet build:*)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\Users\\X\\.claude\\plugins\\cache\\rs-enterprise-agent\\rs-enterprise-agent\\3.2.1\\hooks\\pii-guard-bash.ps1\"" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "powershell -File \"C:\\Users\\X\\.claude\\plugins\\cache\\rs-enterprise-agent\\rs-enterprise-agent\\3.2.1\\hooks\\pii-guard-write.ps1\"" } ] }
+    ],
+    "Stop": [ { "hooks": [ { "type": "command", "command": "powershell -File C:\\otro\\hook.ps1" } ] } ]
+  }
+}
+'@
+            return $hogar
+        }
+
+        function Invoke-Cleanup {
+            param([string]$Hogar, [switch]$WhatIf)
+            $previo = $env:USERPROFILE
+            try {
+                $env:USERPROFILE = $Hogar
+                if ($WhatIf) { & $script:cleanup -WhatIf | Out-String }
+                else         { & $script:cleanup | Out-String }
+            } finally { $env:USERPROFILE = $previo }
+        }
+    }
+
+    It "las detecta y dice que las va a quitar" {
+        $h = New-HomeConGuardas "home-detecta"
+        (Invoke-Cleanup -Hogar $h -WhatIf) | Should -Match "guardas PII registradas a mano"
+    }
+
+    It "-WhatIf no toca el fichero" {
+        $h = New-HomeConGuardas "home-whatif"
+        $null = Invoke-Cleanup -Hogar $h -WhatIf
+        (Get-Content (Join-Path $h ".claude/settings.json") -Raw) | Should -Match "pii-guard-bash"
+    }
+
+    It "las retira, conserva lo ajeno y deja copia previa" {
+        $h = New-HomeConGuardas "home-retira"
+        $null = Invoke-Cleanup -Hogar $h
+        $s = Get-Content (Join-Path $h ".claude/settings.json") -Raw
+
+        $s | Should -Not -Match "pii-guard"
+        # Lo que NO es suyo se queda como estaba: permisos y el hook de otro proyecto. Se
+        # comprueba sobre el objeto, no sobre el texto: en el JSON las barras van escapadas
+        # (C:\\otro\\hook.ps1) y un -Match sobre el crudo daria un falso rojo.
+        $cfg = $s | ConvertFrom-Json
+        $cfg.permissions.allow | Should -Contain "Bash(dotnet build:*)"
+        "$($cfg.hooks.Stop[0].hooks[0].command)" | Should -Be "powershell -File C:\otro\hook.ps1"
+        # PreToolUse se queda vacio y por tanto desaparece, en vez de dejar una lista huerfana.
+        $cfg.hooks.PSObject.Properties.Name | Should -Not -Contain "PreToolUse"
+        # Nada se borra sin copia.
+        @(Get-ChildItem (Join-Path $h ".claude") -Filter "_backup-preplugin-*" -Directory).Count | Should -BeGreaterThan 0
+    }
+
+    It "es idempotente: una segunda pasada no encuentra nada" {
+        $h = New-HomeConGuardas "home-idempotente"
+        $null = Invoke-Cleanup -Hogar $h
+        (Invoke-Cleanup -Hogar $h) | Should -Match "Nada que limpiar"
     }
 }
