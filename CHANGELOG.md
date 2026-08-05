@@ -1,5 +1,30 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.3 — 2026-08-05
+
+### La suite invocaba las guardas de una forma en la que no pueden funcionar
+
+Los tests llamaban al hook con el operador de invocación (`| & $g`), dentro del mismo proceso.
+Pester fija `$ErrorActionPreference = 'Stop'` en cada `It`, y con eso el `Write-Error` con el que
+la guarda emite el bloqueo **lanza una excepción antes de llegar a su `exit 2`**: el test veía una
+`WriteErrorException` en vez del código de salida, y ni siquiera se ejecutaba la línea que fija ese
+código. Todos los casos "bloquea …" salían en rojo desde siempre, midiendo un artefacto del arnés.
+
+Claude Code no invoca así los hooks: los lanza como **proceso hijo** (`powershell -File`), donde
+`$ErrorActionPreference` vale `Continue`, el `Write-Error` escribe y el `exit 2` corre. La suite
+pasa a invocarlos igual. Reproducido y verificado con `$ErrorActionPreference = 'Stop'`:
+
+```
+invocacion directa: LANZA -> WriteErrorException
+proceso hijo:       exit 2
+```
+
+El intento anterior (`2>$null`, 3.4.2) no servía: redirigir el flujo de error no evita que un error
+terminante interrumpa el script. Se conserva porque mantiene limpia la salida del test.
+
+El caso que ya invocaba como proceso hijo —el del texto con acentos— es el único de esa familia que
+pasaba en verde, y era la pista.
+
 ## 3.4.2 — 2026-08-05
 
 ### La exclusión de `Instalador\`/`Actualizador\` no casaba con barras normales

@@ -544,27 +544,27 @@ Describe "pii-guard-bash.ps1" {
     }
 
     It "bloquea sqlplus" {
-        (New-EventoBash "sqlplus -S user/pass@DS @x.sql") | & $script:g 2>$null | Out-Null
+        (New-EventoBash "sqlplus -S user/pass@DS @x.sql") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea sqlcmd" {
-        (New-EventoBash 'sqlcmd -S srv -Q "SELECT 1"') | & $script:g 2>$null | Out-Null
+        (New-EventoBash 'sqlcmd -S srv -Q "SELECT 1"') | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite comandos normales" {
-        (New-EventoBash "dotnet build MiSolucion.sln") | & $script:g 2>$null | Out-Null
+        (New-EventoBash "dotnet build MiSolucion.sln") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite los scripts del propio plugin que usan sqlplus por dentro" {
-        (New-EventoBash "python installer-inserts.py C:\ws Proy out") | & $script:g 2>$null | Out-Null
+        (New-EventoBash "python installer-inserts.py C:\ws Proy out") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un evento no parseable (JSON invalido)" {
-        'esto no es json' | & $script:g 2>$null | Out-Null
+        'esto no es json' | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
@@ -577,7 +577,7 @@ Describe "pii-guard-bash.ps1" {
         # de PowerShell añade contexto "Line |" con la linea de codigo que invoco el
         # pipeline (aqui, la propia linea del test) al formatear para consola, que no
         # es el mensaje del guard y ensuciaria la comprobacion con el mismo secreto.
-        $salida = (New-EventoBash "sqlplus -S usuario/contrasena@ORCL") | & $script:g 2>&1
+        $salida = (New-EventoBash "sqlplus -S usuario/contrasena@ORCL") | & pwsh -NoProfile -File $script:g 2>&1
         $LASTEXITCODE | Should -Be 2
         $mensaje = [string]$salida
         $mensaje | Should -Not -Match "contrasena"
@@ -586,20 +586,20 @@ Describe "pii-guard-bash.ps1" {
 
     Context "sigue al modo del workspace (3.3.0)" {
         It "el MISMO comando no bloquea si el workspace esta en off" {
-            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:wsOff) | & $script:g 2>$null | Out-Null
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:wsOff) | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 0
         }
 
         It "no bloquea fuera de un workspace RS" {
             # Es lo que quita la friccion de alcance de maquina: la guarda vive en la
             # configuracion personal y afectaba a TODOS los proyectos del usuario.
-            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:fuera) | & $script:g 2>$null | Out-Null
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $script:fuera) | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 0
         }
 
         It "bloquea en audit, no solo en enforce" {
             $ws = New-RsWorkspacePii (Join-Path $TestDrive "bash-audit") "audit"
-            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g 2>$null | Out-Null
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 2
         }
 
@@ -613,7 +613,7 @@ Describe "pii-guard-bash.ps1" {
             Set-Content -LiteralPath $cfg -Encoding UTF8 -Value `
                 '{ "proyecto": "Demo", "conexiones": [ { "id": "o", "motor": "ORACLE", "cadena": "x", "model": "BD\\no-existe.json" } ] }'
 
-            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & $script:g 2>$null | Out-Null
+            (New-EventoBash "sqlplus -S user/pass@DS @x.sql" -Cwd $ws) | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 2
         }
     }
@@ -719,73 +719,73 @@ Describe "pii-guard-write.ps1" {
 
     It "bloquea contenido con DNI de letra de control valida" {
         # 12345678Z: 12345678 % 23 = 14 -> "TRWAGMYFPDXBNJZSQVHLCKE"[14] = "Z". Valido.
-        (New-EventoWrite "El deudor 12345678Z debe 300") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "El deudor 12345678Z debe 300") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea el mismo numero de DNI con letra de control incorrecta" {
         # 12345678A: la letra correcta es Z, no A. Misma forma, checksum invalido.
-        (New-EventoWrite "El deudor 12345678A debe 300") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "El deudor 12345678A debe 300") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "NO bloquea una fecha AAAAMMDD seguida de letra (falso positivo tipico del repo)" {
         # 20260803 % 23 = ... letra correcta es "B", no "A": no cuela como DNI valido.
-        (New-EventoWrite "Entrega 20260803A generada por el hook") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "Entrega 20260803A generada por el hook") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con NIE de letra de control valida" {
         # X1234567L: X->0, 01234567 % 23 -> "L". Valido (ejemplo clasico de NIE).
-        (New-EventoWrite "Cliente extranjero X1234567L") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567L") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "NO bloquea un NIE con letra de control incorrecta" {
-        (New-EventoWrite "Cliente extranjero X1234567A") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "Cliente extranjero X1234567A") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "bloquea contenido con IBAN" {
-        (New-EventoWrite "ES9121000418450200051332") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "ES9121000418450200051332") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "bloquea contenido con correo electronico" {
-        (New-EventoWrite "Contacto: ana.lopez@example.com") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "Contacto: ana.lopez@example.com") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 2
     }
 
     It "permite contenido sin datos personales" {
-        (New-EventoWrite "SELECT COUNT(*) FROM RDEUDORES") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "SELECT COUNT(*) FROM RDEUDORES") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un importe largo sin forma de DNI/NIE/IBAN/correo (telefono y tarjeta fuera de esta guarda)" {
-        (New-EventoWrite "Total acumulado: 1234567890123456 centimos") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "Total acumulado: 1234567890123456 centimos") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del instalador" {
         # Dentro del workspace en enforce a proposito: lo que se prueba es la exclusion de
         # ruta, no que la guarda estuviera dormida.
-        (New-EventoWrite "12345678Z" -Relativa "Instalador\Scripts\Inserts\x.sql") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "12345678Z" -Relativa "Instalador\Scripts\Inserts\x.sql") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite escribir en la carpeta del actualizador" {
-        (New-EventoWrite "12345678Z" -Relativa "Actualizador\DESA_20260803\Scripts\x.sql") | & $script:g 2>$null | Out-Null
+        (New-EventoWrite "12345678Z" -Relativa "Actualizador\DESA_20260803\Scripts\x.sql") | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     It "permite un evento no parseable (JSON invalido)" {
-        'esto no es json' | & $script:g 2>$null | Out-Null
+        'esto no es json' | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 
     Context "sigue al modo del workspace (3.3.0)" {
         It "el MISMO contenido no bloquea si el workspace del fichero esta en off" {
-            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsOff) | & $script:g 2>$null | Out-Null
+            (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsOff) | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 0
         }
 
@@ -793,7 +793,7 @@ Describe "pii-guard-write.ps1" {
             # La friccion que motivo el cambio: escribir un README con la direccion de
             # soporte en un proyecto que no es uCollect/RS quedaba bloqueado.
             (New-EventoWrite "Contacto: soporte@empresa.com" -Ruta (Join-Path $script:fuera "README.md")) |
-                & $script:g 2>$null | Out-Null
+                & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 0
         }
 
@@ -801,14 +801,14 @@ Describe "pii-guard-write.ps1" {
             # Sesion abierta en un workspace en off, escribiendo en uno en enforce: decide
             # el destino, que es de quien es la BD con datos reales.
             (New-EventoWrite "El deudor 12345678Z debe 300" -Workspace $script:wsEnf -Cwd $script:wsOff) |
-                & $script:g 2>$null | Out-Null
+                & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 2
         }
 
         It "usa el cwd cuando el evento no trae ruta de fichero" {
             $ev = @{ cwd = $script:wsEnf; tool_input = @{ content = "El deudor 12345678Z debe 300" } } |
                   ConvertTo-Json -Depth 5 -Compress
-            $ev | & $script:g 2>$null | Out-Null
+            $ev | & pwsh -NoProfile -File $script:g 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 2
         }
     }
