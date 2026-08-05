@@ -6,7 +6,7 @@
     Lista de procesos activos = docs\<proyecto>-instalador.json → campo "batch" (array de
     nombres de .sln sin extensión, bajo Batch\Soluciones\).
 
-    ⛔ POR QUÉ Rebuild + wipe + gate (regresión real B2Impact, StackOverflow al arrancar):
+    ⛔ POR QUÉ Rebuild + wipe + gate (regresión real en una instalación de cliente, StackOverflow al arrancar):
     con `dotnet build` incremental por-sln quedaban DLLs compartidas (Comun/BusComun/RSModel) de
     un build anterior junto a exes recompilados de otro día. Las DLLs no tienen strong-name y su
     AssemblyVersion es 1.0.* → el CLR enlaza por nombre simple → un exe viejo llama a un método con
@@ -106,7 +106,7 @@ foreach ($sln in $batch) {
 # ---------------------------------------------------------------------------------------------------
 # Paso B — AVISO trampa estructural: <Reference><HintPath>..\bin\Debug\X.dll de un proyecto cuya
 #          fuente (X.csproj) está en el workspace → se enlaza contra una DLL de otro build en vez de
-#          usar <ProjectReference>. Corregido en B2Impact r14970; aquí solo se avisa (advisory).
+#          usar <ProjectReference>. Corregido en r14970 del proyecto donde se detectó; aquí solo se avisa (advisory).
 # ---------------------------------------------------------------------------------------------------
 $wsCsprojNames = New-Object System.Collections.Generic.HashSet[string]
 Get-ChildItem $workspace -Recurse -Filter *.csproj -ErrorAction SilentlyContinue |

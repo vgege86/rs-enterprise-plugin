@@ -419,6 +419,16 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
 
+⛔ **Sin nombres de clientes, en ningún fichero del repo.** Ni en documentación, ni en el
+CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco sus derivados
+identificables: esquemas, usuarios de BD, nombres de solución que incluyan la marca, rutas de
+instalación. Un caso real se cita como "una instalación de cliente" o "el proyecto donde se
+detectó"; si hace falta la referencia concreta (una revisión, un ticket), va sin el nombre. Y
+en un documento dirigido a terceros, los valores reales viajan en un anexo aparte —el
+inventario de columnas del §6 de `docs/proteccion-pii-consultas-bd.md` es exactamente ese
+caso—. Esto **no** aplica a lo que los agentes escriben en el workspace del cliente: ahí los
+nombres propios son legítimos.
+
 ---
 
 ## 11. Inconsistencias conocidas

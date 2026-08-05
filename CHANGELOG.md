@@ -1,5 +1,30 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.1 — 2026-08-05
+
+### El repo llevaba el nombre de un cliente en 24 sitios
+
+`docs/proteccion-pii-consultas-bd.md` —que es un documento **dirigido al departamento de
+Sistemas**— nombraba al cliente 19 veces, y con él su esquema y su usuario de consulta reales.
+El CHANGELOG y `hooks/installer-batch.ps1` lo citaban en otras cinco, al documentar regresiones
+reales.
+
+El plugin es genérico y su repositorio se comparte, así que ahí no van nombres de clientes: ni en
+documentación, ni en el CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco
+sus derivados identificables — esquema, usuario de BD, nombres de solución que incluyan la marca.
+
+- El documento pasa a usar la notación que ya tenía para la credencial (`<USUARIO_CONSULTA>`) y
+  estrena `<ESQUEMA>`, con una nota explícita de que **los valores reales acompañan al documento
+  por otro canal, no dentro de él**. El §6 añade lo mismo sobre el inventario de columnas: es un
+  anexo, porque lleva nombres de tablas y columnas del cliente.
+- Las regresiones reales del instalador se citan como "una instalación de cliente" y "el proyecto
+  donde se detectó". Las referencias útiles (la revisión `r14970`) se conservan sin el nombre.
+
+La regla queda escrita donde se aplica: `skills/rs-plugin-dev/SKILL.md` (reglas globales) y §10 de
+`docs/plugin-architecture.md` (checklist de coherencia). Con una excepción explícita, porque la
+confusión es fácil: **no** aplica a lo que los agentes escriben en el workspace del cliente, donde
+los nombres propios son legítimos y necesarios.
+
 ## 3.4.0 — 2026-08-05
 
 ### Las guardas PII las declara el plugin: cada actualización las mataba en silencio
@@ -984,7 +1009,7 @@ las tools de BD/config para esas soluciones.
 - **Fix `workspace`:** para `.sln` fuera de `Batch\Soluciones\`/`OnLine\`, resuelve el workspace al
   `…\trunk` (antes = carpeta del `.sln`). Arregla la resolución de `docs\.rs-databases.json` y del
   modelo BD para RecBatchSvc **y** para todas las `.sln` de raíz. Verificado sin regresión en Batch
-  (IncDemaJudi) y Online (AgendaWebB2Impact).
+  (un batch) y Online (la Agenda Web).
 
 **Nueva rama de build `Servicio`** (`agents/rs-editor-build.md` + `hooks/service-build.ps1`):
 - Código (.NET Framework) con **MSBuild** (vía vswhere); instalador `.vdproj` con **devenv** (MSBuild
@@ -1359,7 +1384,7 @@ coinciden → se listan `config · assembly · newVersion vs real` y **exit 1**,
 ### Fix: `installer-batch.ps1` generaba frankenbuilds → StackOverflowException al arrancar
 
 `hooks/installer-batch.ps1` (etapa Batch de `/rs-instalador`). El hook compilaba con `dotnet build`
-**incremental**, por-sln y sin verificación final. En un caso real (B2Impact) dejó en `EXES` 8 exes
+**incremental**, por-sln y sin verificación final. En un caso real dejó en `EXES` 8 exes
 del build 07-20 15:33 junto a `Comun.dll`/`BusComun.dll`/`RsExtrae.exe` del 07-21 10:31.
 
 **Causa raíz**: las DLLs compartidas (`Comun`/`BusComun`/`RSModel`) **no tienen strong-name** y su
@@ -1384,7 +1409,7 @@ el straggler exacto observado.
   **exit 1**, nunca "OK".
 - **Aviso de la trampa estructural `HintPath`** — detecta `<Reference><HintPath>..\bin\Debug\X.dll`
   cuando existe `X.csproj` en el workspace (debería ser `<ProjectReference>`): se enlaza contra una DLL
-  de otro build. Advisory (no falla). Ya corregida en B2Impact r14970.
+  de otro build. Advisory (no falla). Ya corregida en r14970 del proyecto donde se detectó.
 
 ## 2.15.6 — 2026-07-22
 

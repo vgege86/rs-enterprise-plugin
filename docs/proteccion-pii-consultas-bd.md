@@ -33,13 +33,12 @@ En §3 se presentan **todas** las opciones técnicas disponibles, con y sin cost
 licencia, en igualdad de condiciones. Desarrollo no tiene visibilidad sobre las
 licencias contratadas ni sobre el presupuesto: **la elección corresponde a Sistemas.**
 
-**Punto de partida verificado.** En la instalación de **B2Impact** el plugin ya conecta
-con un usuario de consulta, `RSB2IMPACTQUERY`, que **no es el propietario** del esquema
-consultado (`RSB2IMPACT`). Eso significa que los mecanismos de redacción del §3.2 **sí
-pueden aplicarse a la credencial que ya está en uso**, y que el trabajo del §3.1 se
-reduce a reapuntar sus permisos en lugar de crear un usuario nuevo. La comprobación
-está hecha solo para B2Impact: **se pide a Sistemas que confirme si vale igual para el
-resto de proyectos y entornos** (§2.4).
+**Punto de partida verificado.** En la instalación comprobada, el plugin ya conecta con un
+usuario de consulta que **no es el propietario** del esquema consultado: son dos principales
+distintos. Eso significa que los mecanismos de redacción del §3.2 **sí pueden aplicarse a la
+credencial que ya está en uso**, y que el trabajo del §3.1 se reduce a reapuntar sus permisos
+en lugar de crear un usuario nuevo. La comprobación está hecha sobre **una sola instalación**:
+**se pide a Sistemas que confirme si vale igual para el resto de proyectos y entornos** (§2.4).
 
 **Hay una pregunta previa que decide el alcance de todo lo demás** y que solo Sistemas
 puede responder: **¿ese usuario de consulta lo utiliza algo más aparte de las
@@ -100,10 +99,10 @@ de **exposición**.
 
 ### 2.4 El usuario de conexión actual: qué habilita y qué no protege
 
-En la instalación de **B2Impact** —la única verificada al redactar este documento— el
-plugin **no conecta con el propietario del esquema**. La conexión declarada en
-`docs/.rs-databases.json` usa el usuario `RSB2IMPACTQUERY`, mientras que el esquema
-consultado es `RSB2IMPACT`: son dos principales distintos.
+En la instalación verificada —la única comprobada al redactar este documento— el plugin
+**no conecta con el propietario del esquema**. La conexión declarada en su configuración usa
+un usuario de consulta, `<USUARIO_CONSULTA>`, mientras que el esquema consultado es
+`<ESQUEMA>`: son dos principales distintos.
 
 Conviene decirlo con precisión, porque cambia qué medidas son aplicables:
 
@@ -131,11 +130,10 @@ Por eso el §3.1 no pide crear un usuario, sino **quitarle a este el camino dire
 tablas con datos personales** y dejarle únicamente el que pasa por el mecanismo de
 redacción que se elija.
 
-**Alcance de esta comprobación.** Lo anterior está verificado **únicamente** para la
-instalación de B2Impact. Este documento **no puede afirmar** que ocurra lo mismo en el
-resto de proyectos ni en el resto de entornos (desarrollo, test, producción) de este
-mismo proyecto: Desarrollo no tiene visibilidad sobre cómo se dieron de alta esas
-credenciales. **Se pide a Sistemas que lo confirme entorno por entorno.** Allí donde la
+**Alcance de esta comprobación.** Lo anterior está verificado **únicamente** sobre una
+instalación. Este documento **no puede afirmar** que ocurra lo mismo en el resto de proyectos
+ni en el resto de entornos (desarrollo, test, producción) de ese mismo proyecto: Desarrollo no
+tiene visibilidad sobre cómo se dieron de alta esas credenciales. **Se pide a Sistemas que lo confirme entorno por entorno.** Allí donde la
 conexión sí sea la del propietario del esquema, la advertencia original se mantiene
 íntegra: mientras se use esa credencial ninguna opción del §3.2 es efectiva, y lo
 primero es sustituirla.
@@ -150,9 +148,9 @@ primero es sustituirla.
 Desarrollo no puede responderla.** Se pide a Sistemas que la conteste antes que
 cualquier otra cosa.
 
-> **¿El usuario de conexión de las herramientas de desarrollo —en B2Impact,
-> `RSB2IMPACTQUERY`— lo utiliza algo más? ¿Informes, procesos batch, integraciones,
-> alguna aplicación, tareas programadas, cuadros de mando?**
+> **¿El usuario de conexión de las herramientas de desarrollo —`<USUARIO_CONSULTA>`— lo
+> utiliza algo más? ¿Informes, procesos batch, integraciones, alguna aplicación, tareas
+> programadas, cuadros de mando?**
 
 | Respuesta | Consecuencia |
 |---|---|
@@ -169,12 +167,13 @@ La pregunta se plantea por entorno y por proyecto, junto con la del §2.4.
 
 El objetivo de este paso no es disponer de una credencial nueva: es **que la credencial
 con la que conectan las herramientas no tenga camino directo a las columnas con datos
-personales**. En B2Impact esa credencial ya existe y ya no es la del propietario (§2.4),
-de modo que el trabajo se reduce a reapuntar sus permisos.
+personales**. En la instalación verificada esa credencial ya existe y ya no es la del
+propietario (§2.4), de modo que el trabajo se reduce a reapuntar sus permisos.
 
-> En lo que sigue, `<USUARIO_CONSULTA>` designa el usuario de conexión de las
-> herramientas de desarrollo en el entorno de que se trate. En B2Impact es
-> `RSB2IMPACTQUERY`, sobre el esquema `RSB2IMPACT`.
+> **Notación.** `<USUARIO_CONSULTA>` designa el usuario de conexión de las herramientas de
+> desarrollo en el entorno de que se trate, y `<ESQUEMA>` el esquema consultado. Este
+> documento no nombra proyectos, esquemas ni credenciales concretos: los valores reales de
+> cada entorno acompañan a este documento por el canal correspondiente, no dentro de él.
 
 La forma concreta depende del mecanismo que se elija en §3.2, y son dos familias:
 
@@ -197,11 +196,11 @@ SELECT * FROM DBA_SYS_PRIVS  WHERE GRANTEE = '<USUARIO_CONSULTA>'
                      'EXEMPT REDACTION POLICY');
 
 -- Con la Opción A (vistas redactadas): quitar el camino directo…
-REVOKE SELECT ON RSB2IMPACT.RDEUDORES FROM <USUARIO_CONSULTA>;
+REVOKE SELECT ON <ESQUEMA>.RDEUDORES FROM <USUARIO_CONSULTA>;
 --   …una sentencia por cada tabla base con datos personales (inventario del §6)…
 
 -- …y dejar solo el que pasa por la vista:
-GRANT SELECT ON RSB2IMPACT.V_RDEUDORES TO <USUARIO_CONSULTA>;
+GRANT SELECT ON <ESQUEMA>.V_RDEUDORES TO <USUARIO_CONSULTA>;
 
 -- Con las Opciones C o D no se revoca el SELECT de la tabla base: basta con
 -- asegurar que el usuario NO tiene EXEMPT ACCESS POLICY ni EXEMPT REDACTION POLICY.
@@ -723,8 +722,12 @@ que elija en §3.2, cualquiera que sea.
 
 | Solución | Estado | Fichero |
 |---|---|---|
-| ⚠️ *(pendiente de nombrar la solución antes de enviar este documento)* | **Generado** — la medida está en `enforce` | `docs/inventario-pii.md` de su workspace |
+| Primera solución desplegada | **Generado** — la medida está en `enforce` | `docs/inventario-pii.md` de su workspace |
 | Resto de soluciones | Pendiente | — |
+
+El inventario de cada solución **es un anexo, no parte de este documento**: contiene nombres
+de tablas y columnas del cliente. Se entrega por separado, junto con la identificación del
+proyecto al que corresponde.
 
 Formato del fichero:
 
@@ -780,9 +783,9 @@ haya salido del motor** y es evitable por varias vías documentadas en §5.2.
 
 El control efectivo consta de dos piezas: un **usuario de conexión que no pueda llegar
 a la columna original** de las tablas con datos personales (§3.1) y un **mecanismo de
-redacción en el motor** (§3.2). La primera pieza está a medio camino: en B2Impact la
-conexión ya usa un usuario de consulta que no es el propietario del esquema, de modo
-que basta con reapuntar sus permisos en lugar de crear uno nuevo. Lo que sigue faltando
+redacción en el motor** (§3.2). La primera pieza está a medio camino: en la instalación
+verificada la conexión ya usa un usuario de consulta que no es el propietario del esquema, de
+modo que basta con reapuntar sus permisos en lugar de crear uno nuevo. Lo que sigue faltando
 es que ese usuario **pierda el `SELECT` directo**: ser de solo lectura no impide
 devolver un DNI en claro. Para la segunda pieza existen seis opciones, con y sin coste
 de licencia, comparadas en §3.3. Desarrollo las expone todas y **no recomienda
@@ -793,7 +796,7 @@ Se solicita a Sistemas:
 
 1. **Responder de inmediato la pregunta previa del §3** —si el usuario de consulta lo usa
    algo más que las herramientas de desarrollo— y confirmar, entorno por entorno, lo
-   que §2.4 solo ha podido verificar en B2Impact. No depende de ninguna decisión
+   que §2.4 solo ha podido verificar en una instalación. No depende de ninguna decisión
    pendiente, no consume jornadas de desarrollo y determina si el §3.1 se resuelve
    reapuntando permisos o exige crear un usuario dedicado.
 2. **Reapuntar los permisos** de ese usuario según el §3.1, de modo que pierda el acceso
