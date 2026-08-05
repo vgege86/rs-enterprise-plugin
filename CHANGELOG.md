@@ -1,5 +1,30 @@
 # RS Enterprise Agent — Changelog
 
+## 3.4.2 — 2026-08-05
+
+### La exclusión de `Instalador\`/`Actualizador\` no casaba con barras normales
+
+`pii-guard-write.ps1` excluía las rutas de entrega con `'\\(Instalador|Actualizador)\\'` — barra
+invertida a los dos lados. La ruta la trae el evento tal cual la escribió quien llama, así que una
+con barras normales (`C:/AIS/<proyecto>/Instalador/x.sql`) **no quedaba excluida y se bloqueaba**:
+justo la escritura que la guarda debe permitir, porque ahí el volcado de datos reales es el
+propósito del fichero. Ahora es `[\\/](Instalador|Actualizador)[\\/]`.
+
+Lo destapó el CI, no una lectura del código: el runner es Linux y ahí **todas** las rutas llevan
+`/`, así que los dos tests de exclusión —que hasta 3.3.0 nunca habían llegado a ejercitar la guarda
+por vivir fuera de un workspace— pasaron a fallar en cuanto se les dio un workspace en `enforce`.
+
+### La suite de guardas contaba como fallo un bloqueo correcto
+
+Las guardas emiten el bloqueo con `Write-Error` y salen con código 2. Los tests invocaban el hook
+sin redirigir el flujo de error, así que Pester recogía ese `ErrorRecord` como fallo del test aunque
+el comportamiento fuera el correcto: **todos** los casos "bloquea ..." salían en rojo. Con `2>$null`
+la aserción mira el código de salida, que es el contrato real del hook. El único caso que inspecciona
+el texto del mensaje sigue usando `2>&1` y no cambia.
+
+Esto explica parte del rojo histórico del CI: la suite lleva tiempo fallando por cómo mide, no por
+lo que mide.
+
 ## 3.4.1 — 2026-08-05
 
 ### El repo llevaba el nombre de un cliente en 24 sitios

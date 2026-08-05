@@ -51,7 +51,11 @@ $estado = Get-RsPiiEstadoGuarda $(if ($ruta) { $ruta } else { $cwd })
 if (-not $estado.activa) { exit 0 }
 
 # Entrega al cliente: el volcado de datos reales es intencionado.
-if ($ruta -match '\\(Instalador|Actualizador)\\') { exit 0 }
+# [\\/] a los dos lados, no solo \: la ruta la trae el evento tal cual la escribio quien llama,
+# y una con barras normales (C:/AIS/.../Instalador/x.sql) no casaba -- la guarda bloqueaba una
+# escritura que es justo la que debe permitir. Lo destapo el CI: el runner es Linux y ahi TODAS
+# las rutas llevan /.
+if ($ruta -match '[\\/](Instalador|Actualizador)[\\/]') { exit 0 }
 
 # Test-DniNieChecksum viene de lib-pii.ps1 (dot-sourced arriba).
 
