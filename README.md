@@ -41,7 +41,23 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
 
 ## Instalación
 
-Plugin de Claude Code, publicado como marketplace Git:
+**1. Dependencia Python del MCP server** (en una terminal, *antes* de instalar el plugin):
+
+```bash
+pip install "mcp>=1.2.0,<2"
+```
+
+Nadie la instala por ti: el plugin no ejecuta ningún `pip`. Sin ella el servidor MCP `rs-workspace`
+no arranca y las tools no responden.
+
+> ⛔ El tope `<2` no es cosmético: `mcp` 2.0.0 **eliminó** `mcp.server.fastmcp`, que es justo lo que
+> importa el servidor. Un `pip install mcp` a secas arrastra 2.x y rompe el arranque.
+>
+> ⛔ Tiene que quedar en **el mismo Python que resuelve `python` en el PATH** — `.mcp.json` invoca
+> literalmente `python`. Con varios Python o un venv de por medio, comprobar con
+> `python -c "import mcp; print(mcp.__file__)"`.
+
+**2. El plugin**, publicado como marketplace Git:
 
 ```
 /plugin marketplace add https://github.com/vgege86/rs-enterprise-plugin.git
@@ -56,7 +72,8 @@ Con origen Git, Claude Code clona el marketplace en `~/.claude/plugins/marketpla
 
 > ⚠️ Si tenías el marketplace anterior de tipo `directory` (ruta local/red), quítalo antes con `/plugin marketplace remove rs-enterprise-agent`. Si no, conviven dos orígenes.
 
-**Tras instalar: reiniciar Claude Code.**
+**Tras instalar: reiniciar Claude Code.** Después, `/rs-env` para validar la máquina y `/rs-help`
+como prueba de que el MCP responde (si el paso 1 falló, se nota ahí).
 
 Para actualizar tras una versión nueva:
 
@@ -66,7 +83,7 @@ Para actualizar tras una versión nueva:
 
 …y reiniciar.
 
-**Requisitos** (detalle abajo): Python 3.11+, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
+**Requisitos** (detalle abajo): Python 3.11+ **con el paquete `mcp`**, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
 
 > 💡 **Menos tokens por sesión (ya automático)**: Claude Code **difiere por defecto** los schemas de
 > las tools MCP de `rs-workspace` — solo se cargan bajo demanda vía tool-search cuando una tarea las
@@ -446,7 +463,7 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 
 | Componente | Para qué |
 |------------|----------|
-| Python 3.11+ | MCP server |
+| Python 3.11+ + `pip install "mcp>=1.2.0,<2"` | MCP server. El paquete **no se instala solo** y sin él `rs-workspace` no arranca; el tope `<2` es obligatorio (`mcp` 2.0.0 eliminó `mcp.server.fastmcp`). Debe quedar en el Python que resuelve `python` en el PATH |
 | .NET SDK | `dotnet build` / `dotnet test` |
 | PowerShell 7+ | Hooks |
 | Visual Studio + MSBuild | Builds Online (vía vswhere) |

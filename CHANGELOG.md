@@ -1,5 +1,28 @@
 # RS Enterprise Agent — Changelog
 
+## 3.7.2 — 2026-08-06
+
+### La instalación documentada no dejaba el plugin funcionando
+
+Al preparar el traspaso a otra máquina salió el hueco: el README pedía "Python 3.11+" y nada más,
+pero **nadie instala el paquete `mcp`**. No hay ningún `pip install` en los hooks ni en los scripts
+del repo, y `check-env.ps1` tampoco comprueba que el paquete sea importable. Siguiendo el README al
+pie de la letra, el servidor MCP `rs-workspace` no arranca y las 48 tools no responden.
+
+El README pasa a abrir la instalación con ese paso, antes del `/plugin marketplace add`, y con los
+dos avisos que hacen falta para que salga bien a la primera:
+
+- El tope `<2` es obligatorio: `mcp` 2.0.0 eliminó `mcp.server.fastmcp`, que es lo que importa el
+  servidor. Un `pip install mcp` a secas arrastra 2.x y rompe el arranque. Ya estaba en
+  `requirements.txt`, pero nadie llega a ese fichero desde el README.
+- Tiene que quedar en el Python que resuelve `python` en el PATH, porque `.mcp.json` invoca
+  literalmente `python`. Con varios Python o un venv por medio, `python -c "import mcp"` lo delata.
+
+Se añade también la verificación posterior (`/rs-env` y `/rs-help` como prueba de que el MCP
+responde) y la fila de requisitos de Python queda con el paquete y el porqué del tope.
+
+Ficheros: `README.md`.
+
 ## 3.7.1 — 2026-08-06
 
 ### Los gates del instalador no eran ejecutables sin un cliente delante, así que nadie los probaba
