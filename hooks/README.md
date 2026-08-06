@@ -43,7 +43,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `installer-batch.ps1 <workspace> <destino>` | Rebuild Release de los batch activos → `<destino>\EXES` + gate de coherencia |
 | `installer-agendaweb.ps1 <workspace> <destino>` | Publish FileSystem de la Agenda Web → `<destino>\AgendaWeb` |
 | `installer-servicemanager.ps1 <workspace> <destino>` | `dotnet publish` host net8 + DLL de módulos → `<destino>\ServiceManager[\Modulos]` |
-| `installer-scripts.ps1 <workspace> <destino>` | DDL + objetos + inserts paramétricas → `<destino>\Scripts` |
+| `installer-scripts.ps1 <workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <;-sep>]` | DDL + objetos + inserts paramétricas → `<destino>\Scripts`. Config de BD resuelta una vez (`RS_DB_CONFIG_JSON`, sin password); `-Solo`/`-Tablas` para regenerar solo una parte tras un fallo puntual |
 | `actualizador-build.ps1 <workspace> <destino> <manifiesto.json>` | Delta: batch afectados + AgendaWeb completa + DLL de módulos afectados; excluye la config funcional del cliente (`web.config`, `<proceso>.xml`, `appsettings*.json`) y conserva los `*.config` del binario |
 | `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor] [-Soluciones <;-sep>]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`); en `Instalacion`, además el DDL de `RVERSIONES` y `Scripts\PorEntorno\99-RVERSIONES-<E>.sql` por entorno. ⛔ `scripts.json.tpl` **no** se copia: es la referencia del formato del manifiesto, lo escribe `/rs-actualizador` con nombres reales |
 

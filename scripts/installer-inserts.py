@@ -21,12 +21,34 @@ reconstruyen en el INSERT (HEXTORAW / literal 0x) — TO_CHAR sobre RAW da ORA-0
 binarios (BLOB/LONG RAW/IMAGE) no son inlineables: se emiten como NULL y se avisa en la
 cabecera del .sql generado.
 
+RENDIMIENTO
+    El coste de esta etapa NO está en formatear los INSERT, está en el cliente SQL:
+    1. Una sesión por CHUNK de tablas, no por tabla. Cada arranque de sqlplus/sqlcmd paga
+       spawn de proceso + login; con decenas de tablas paramétricas (todas pequeñas) eso
+       domina el reloj. Las tablas de un chunk se piden en UNA sesión, separadas por el
+       marcador @@TBL:<TABLA>@@ que emite PROMPT (Oracle) / PRINT (SQL Server), y la salida
+       se trocea por ese marcador. El aislamiento de error se mantiene: ni sqlplus ni sqlcmd
+       abortan la sesión ante un error de una sentencia, así que un ORA-/Msg queda dentro
+       del bloque de SU tabla y las demás del chunk se generan igual.
+    2. VARCHAR2 en vez de CLOB cuando la fila cabe. Envolver la concatenación en TO_CLOB
+       siempre es caro (concatenación LOB por fila + fetch de LOB); solo hace falta si la
+       fila de salida puede pasar de 4000. Se estima el ancho con los tipos del model.json
+       y, si la estimación se queda corta, el ORA-01489 se reintenta con TO_CLOB.
+    3. ARRAYSIZE alto: el default de sqlplus es 15 filas por roundtrip.
+    4. Config de BD cacheada: si el hook exporta RS_DB_CONFIG_JSON no se vuelve a lanzar
+       PowerShell para releer get-config.ps1.
+
 Uso: python installer-inserts.py <workspace> <proyecto> <out_dir> [ORACLE|SQLSERVER]
+     Variables de entorno opcionales:
+       RS_DB_CONFIG_JSON  ruta a la salida ya cacheada de hooks/get-config.ps1
+       RS_INSERTS_TABLAS  lista `T1;T2` — regenera solo esas tablas paramétricas
 """
 
 import sys
 import os
+import re
 import json
+import time
 import subprocess
 import tempfile
 import concurrent.futures
@@ -53,6 +75,31 @@ ROWEND  = "@@ROWEND@@" # terminador de fila: se añade al final de cada fila en 
 # en UNA sola línea física, sin truncado) y Python los revierte a saltos reales en el literal SQL.
 LFTOK   = "@@LF@@"     # CHR(10) / \n
 CRTOK   = "@@CR@@"     # CHR(13) / \r
+
+# Marcador de tabla dentro de una sesión multi-tabla: `@@TBL:<TABLA>@@`, emitido con PROMPT
+# (Oracle) / PRINT (SQL Server) antes de cada SELECT. Es lo que permite pedir varias tablas
+# en una sola sesión y seguir sabiendo qué filas son de quién.
+TBLMARK     = "@@TBL:"
+TBLMARK_FIN = "@@"
+
+# Filas por roundtrip del cliente Oracle (default 15). Sube el throughput de las tablas
+# paramétricas con muchas filas sin coste apreciable de memoria.
+ARRAYSIZE = 200
+
+# Máximo de tablas por sesión SQL. Acota el pico de memoria: en vuelo hay como mucho
+# `workers` chunks, cada uno con la salida de hasta CHUNK_MAX tablas.
+CHUNK_MAX = 12
+
+# Ancho de fila por debajo del cual la concatenación se queda en VARCHAR2 (sin TO_CLOB).
+# El límite duro de VARCHAR2 en SQL es 4000 **bytes**, y aquí se estima en caracteres a
+# partir del model.json: el margen hasta 4000 cubre tanto los tokens @@CR@@/@@LF@@ como
+# los acentos (2 bytes en UTF-8). Si aun así se queda corto, Oracle da ORA-01489 y main()
+# reintenta esa tabla con TO_CLOB — la estimación no puede producir un fichero incorrecto.
+VARCHAR_SAFE_WIDTH = 3000
+ANCHO_ILIMITADO    = 10 ** 6   # centinela: tipo sin longitud conocida -> forzar CLOB
+
+# Prefijos con los que los clientes SQL anuncian un error en stdout (returncode 0 incluido).
+ERR_PREFIXES = ("ORA-", "SP2-", "PLS-", "Msg ", "Sqlcmd:", "HResult")
 
 NUMERIC_BASES = {
     'NUMBER', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT',
@@ -127,13 +174,26 @@ def _read_password(workspace: str) -> str:
 def read_db_config(workspace: str, model: dict) -> dict:
     """Obtiene la config de conexión llamando a get-config.ps1 (el mismo parser que usa db_query),
     para tolerar dataSource en formato connection-string ODP.NET. El password se lee aparte
-    (get-config.ps1 lo omite deliberadamente)."""
-    hook = Path(__file__).resolve().parent.parent / "hooks" / "get-config.ps1"
-    r = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(hook), workspace],
-        capture_output=True)
-    out = (r.stdout or b"").decode("utf-8", errors="replace").strip()
+    (get-config.ps1 lo omite deliberadamente).
+
+    Si el hook ya resolvió la config y exportó su ruta en RS_DB_CONFIG_JSON, se lee de ahí:
+    arrancar PowerShell cuesta ~1s y esta función se llama una vez por cada script Python de
+    la etapa. ⛔ Ese fichero NO contiene la password (get-config.ps1 no la emite); la password
+    la sigue leyendo _read_password del .rs-databases.json."""
+    out = ""
+    cache = os.environ.get("RS_DB_CONFIG_JSON", "")
+    if cache and Path(cache).exists():
+        try:
+            out = Path(cache).read_text(encoding="utf-8-sig").strip()
+        except Exception:
+            out = ""
+    if not out:
+        hook = Path(__file__).resolve().parent.parent / "hooks" / "get-config.ps1"
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-File", str(hook), workspace],
+            capture_output=True)
+        out = (r.stdout or b"").decode("utf-8", errors="replace").strip()
     try:
         cfg = json.loads(out)
     except Exception:
@@ -154,11 +214,29 @@ def read_db_config(workspace: str, model: dict) -> dict:
             "user": user, "password": password}
 
 
+def read_max_paralelo(workspace: str, proyecto: str, default: int = 8) -> int:
+    """`parametricas.max_paralelo` del JSON de config del instalador — cap de sesiones BD
+    simultáneas. Lo comparten esta etapa y la extracción de objetos (installer-objects.py):
+    es una sola palanca para el Oracle del cliente, no una por script."""
+    cfg_path = Path(workspace) / "docs" / f"{proyecto}-instalador.json"
+    if not cfg_path.exists():
+        return default
+    try:
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            p = (json.load(f).get("parametricas", {}) or {})
+        return max(1, int(p.get("max_paralelo", default)))
+    except (TypeError, ValueError):
+        print(f"AVISO: parametricas.max_paralelo no es un entero — usando {default}")
+    except Exception as e:
+        print(f"AVISO: no se pudo leer {cfg_path}: {e}")
+    return default
+
+
 def parametric_tables(model: dict, workspace: str, proyecto: str) -> tuple:
     """Devuelve (lista_tablas, nombre_vista, max_paralelo) a partir de subviews + config del instalador."""
     vista = "Parametricas"
     excluir, incluir_extra = [], []
-    max_paralelo = 8   # cap de tablas generadas en paralelo (= conexiones BD simultáneas)
+    max_paralelo = read_max_paralelo(workspace, proyecto)
     cfg_path = Path(workspace) / "docs" / f"{proyecto}-instalador.json"
     if cfg_path.exists():
         try:
@@ -168,10 +246,6 @@ def parametric_tables(model: dict, workspace: str, proyecto: str) -> tuple:
             vista = p.get("vista", vista)
             excluir = [t.upper() for t in p.get("excluir", [])]
             incluir_extra = p.get("incluir_extra", [])
-            try:
-                max_paralelo = max(1, int(p.get("max_paralelo", max_paralelo)))
-            except (TypeError, ValueError):
-                print(f"AVISO: parametricas.max_paralelo no es un entero — usando {max_paralelo}")
         except Exception as e:
             print(f"AVISO: no se pudo leer {cfg_path}: {e}")
 
@@ -204,13 +278,46 @@ def base_type(col_type: str) -> str:
     return (col_type or "").split("(")[0].strip().upper()
 
 
-def build_select(table: str, columns: list, schema: str, motor: str) -> str:
+def _col_width(cdef: dict) -> int:
+    """Ancho máximo estimado, en caracteres, del texto que la columna aporta al SELECT.
+    Devuelve ANCHO_ILIMITADO si el tipo no acota la longitud (CLOB, o tipo desconocido):
+    ante la duda se fuerza CLOB, que es el camino correcto aunque sea el lento."""
+    bt = base_type(cdef.get("type"))
+    if bt in BLOB_BASES:
+        return len(NULLTOK)                     # se emite el centinela, no el contenido
+    if bt in ("CLOB", "NCLOB", "LONG", "TEXT", "NTEXT", "XMLTYPE"):
+        return ANCHO_ILIMITADO
+    m = re.search(r"\((\d+)", cdef.get("type") or "")
+    n = int(m.group(1)) if m else 0
+    if bt in RAW_BASES:
+        return n * 2 if n else ANCHO_ILIMITADO  # se extrae en hexadecimal: 2 chars por byte
+    if bt in NUMERIC_BASES:
+        return 45                               # signo + dígitos + separador + exponente
+    if bt in ("DATE", "TIMESTAMP", "DATETIME", "DATETIME2", "SMALLDATETIME"):
+        return 30
+    return n if n else ANCHO_ILIMITADO
+
+
+def _est_row_width(columns: list) -> int:
+    """Ancho estimado de la fila completa de salida (columnas + separadores + terminador)."""
+    total = len(ROWEND)
+    for _, cdef in columns:
+        w = _col_width(cdef)
+        if w >= ANCHO_ILIMITADO:
+            return ANCHO_ILIMITADO
+        total += w + len(DELIM)
+    return total
+
+
+def build_select(table: str, columns: list, schema: str, motor: str, force_clob: bool = False) -> str:
     """SELECT con cada columna envuelta en CASE para detectar NULL y forzar texto.
 
     El SELECT se emite con una expresión POR LÍNEA: sqlplus corta la entrada por longitud
     de línea y una concatenación de 30+ columnas en una sola línea revienta con SP2-0341.
-    La primera expresión va envuelta en TO_CLOB para que toda la concatenación sea CLOB
-    (VARCHAR2 se queda en 4000 y da ORA-01489 en tablas anchas).
+    En Oracle, la primera expresión va envuelta en TO_CLOB **solo si la fila puede pasar de
+    4000** (VARCHAR2 se queda ahí y da ORA-01489 en tablas anchas): la concatenación LOB es
+    bastante más cara en servidor, y la mayoría de tablas paramétricas son estrechas. Con
+    `force_clob` se fuerza el camino CLOB — es lo que hace el reintento tras un ORA-01489.
     Los binarios cortos (RAW) se extraen en hexadecimal; los LOB binarios se emiten NULL.
     """
     exprs = []
@@ -245,7 +352,8 @@ def build_select(table: str, columns: list, schema: str, motor: str) -> str:
         # Codificar CR/LF -> tokens para que cada fila salga en UNA línea física (sqlplus trunca
         # el valor en el 1er CHR(10) interno; sin esto se pierde el resto del dato y el ROWEND).
         exprs = [f"REPLACE(REPLACE({e}, CHR(13), '{CRTOK}'), CHR(10), '{LFTOK}')" for e in exprs]
-        exprs[0] = f"TO_CLOB({exprs[0]})"
+        if force_clob or _est_row_width(columns) > VARCHAR_SAFE_WIDTH:
+            exprs[0] = f"TO_CLOB({exprs[0]})"
         concat = f"\n    || '{DELIM}' || ".join(exprs)
         concat += f"\n    || '{ROWEND}'"   # terminador de fila (sobrevive porque ya no hay '\n')
         return f"SELECT\n    {concat}\nFROM {tbl}"
@@ -270,15 +378,29 @@ def _decode(b: bytes) -> str:
     return b.decode("utf-8", errors="replace")
 
 
-def run_query_oracle(sql: str, cfg: dict) -> list:
+def run_chunk_oracle(chunk: list, cfg: dict) -> str:
+    """Ejecuta en UNA sola sesión sqlplus el SELECT de cada tabla del chunk `[(tabla, sql)]`,
+    precedido de su marcador `@@TBL:<TABLA>@@`. Devuelve la salida completa: el troceo por
+    tabla lo hace _split_tables y la detección de error por tabla, _find_error.
+
+    ⛔ A propósito NO se pone `WHENEVER SQLERROR EXIT`: un error en una tabla no debe tumbar
+    las demás del chunk. Con una sesión por tabla ese aislamiento lo daba el proceso; aquí lo
+    da que sqlplus sigue con la sentencia siguiente y el error queda dentro del bloque de su
+    tabla. Solo se lanza excepción si el proceso mismo falla (sqlplus ausente, etc.)."""
     connect = f"CONNECT {cfg['user']}/{cfg['password']}@{cfg['datasource']}\n" if cfg['password'] else ""
     conn_arg = "/nolog" if cfg['password'] else f"{cfg['user']}/@{cfg['datasource']}"
     schema_line = (f"ALTER SESSION SET CURRENT_SCHEMA = {cfg['schema']};\n"
                    if cfg['schema'] and cfg['schema'] != cfg['user'] else "")
+    cuerpo = []
+    for tabla, sql in chunk:
+        cuerpo.append(f"PROMPT {TBLMARK}{tabla}{TBLMARK_FIN}")
+        cuerpo.append(f"{sql};")
     script = (
         "SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON TERMOUT ON\n"
         "SET LINESIZE 32767 LONG 60000 LONGCHUNKSIZE 60000 WRAP OFF\n"
-        f"{connect}{schema_line}{sql};\nEXIT;\n"
+        "SET DEFINE OFF\n"                       # un '&' en el texto del script no es variable
+        f"SET ARRAYSIZE {ARRAYSIZE}\n"           # default 15 filas/roundtrip = red innecesaria
+        f"{connect}{schema_line}" + "\n".join(cuerpo) + "\nEXIT;\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False, encoding="utf-8")
     tmp.write(script); tmp.close()
@@ -291,19 +413,26 @@ def run_query_oracle(sql: str, cfg: dict) -> list:
         os.unlink(tmp.name)
     out, err = _decode(r.stdout), _decode(r.stderr)
     if r.returncode != 0:
-        raise RuntimeError((err or out).strip())
-    # sqlplus vuelca errores ORA-/SP2- en stdout aun con returncode 0
-    for ln in out.splitlines():
-        if ln.startswith("ORA-") or ln.startswith("SP2-"):
-            raise RuntimeError(ln.strip())
-    return out   # texto completo; el troceado en filas lo hace _split_rows (por ROWEND, no por \n)
+        raise RuntimeError(_mensaje_fallo(err, out))
+    return out
 
 
-def run_query_sqlserver(sql: str, cfg: dict) -> list:
-    full = f"SET NOCOUNT ON; {sql}"
+def run_chunk_sqlserver(chunk: list, cfg: dict) -> str:
+    """Equivalente a run_chunk_oracle para sqlcmd, con el marcador emitido por PRINT."""
+    lineas = ["SET NOCOUNT ON;", "GO"]   # SET NOCOUNT es de conexión: persiste entre lotes
+    for tabla, sql in chunk:
+        # Un GO por tabla, por dos razones: (1) dentro de un mismo lote el flujo de mensajes
+        # (PRINT) y el de resultados (SELECT) no llegan necesariamente intercalados en orden,
+        # y el marcador dejaría de identificar sus filas; (2) da aislamiento de error —
+        # sqlcmd sigue con el lote siguiente aunque uno falle.
+        lineas.append(f"PRINT '{TBLMARK}{tabla}{TBLMARK_FIN}';")
+        lineas.append(f"{sql};")
+        lineas.append("GO")
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False, encoding="utf-8")
+    tmp.write("\n".join(lineas) + "\n"); tmp.close()
     # -f 65001 → codepage UTF-8 de entrada/salida (SQL Server 2016+)
     cmd = ["sqlcmd", "-S", cfg["datasource"], "-d", cfg["schema"],
-           "-Q", full, "-h", "-1", "-W", "-y", "0", "-Y", "0", "-f", "65001"]
+           "-i", tmp.name, "-h", "-1", "-W", "-y", "0", "-Y", "0", "-f", "65001"]
     entorno = os.environ
     if cfg["user"]:
         # Password por variable de entorno SQLCMDPASSWORD, no como -P en argv (visible en la lista de
@@ -312,11 +441,60 @@ def run_query_sqlserver(sql: str, cfg: dict) -> list:
         entorno = {**os.environ, "SQLCMDPASSWORD": cfg["password"]}
     else:
         cmd += ["-E"]  # autenticación integrada
-    r = subprocess.run(cmd, capture_output=True, env=entorno)  # bytes
+    try:
+        r = subprocess.run(cmd, capture_output=True, env=entorno)  # bytes
+    finally:
+        os.unlink(tmp.name)
     out, err = _decode(r.stdout), _decode(r.stderr)
     if r.returncode != 0:
-        raise RuntimeError((err or out).strip())
-    return out   # texto completo; el troceado en filas lo hace _split_rows (por ROWEND, no por \n)
+        raise RuntimeError(_mensaje_fallo(err, out))
+    return out
+
+
+def _mensaje_fallo(err: str, out: str) -> str:
+    """Mensaje útil cuando el cliente SQL termina con exit code de fallo. La primera línea de
+    stdout suele ser el banner ("SQL*Plus: Release 19.0.0.0.0 - Production"), que no dice nada
+    y es lo que se reportaba antes: se prefiere la primera línea que parezca un error y, si no
+    hay ninguna, la última con texto. Importa porque un fallo de proceso se atribuye a TODAS las
+    tablas de la sesión, y un mensaje inútil multiplicado por 12 tablas no es diagnosticable."""
+    for texto in (out, err):
+        e = _find_error(texto or "")
+        if e:
+            return e
+    for texto in (err, out):
+        lineas = [l.strip() for l in (texto or "").splitlines() if l.strip()]
+        if lineas:
+            return lineas[-1][:300]
+    return "el cliente SQL terminó con error y sin salida"
+
+
+def _split_tables(out: str) -> tuple:
+    """Trocea la salida de una sesión multi-tabla por el marcador `@@TBL:<TABLA>@@`.
+    Devuelve `(preambulo, {TABLA: cuerpo})` — el preámbulo es lo emitido antes del primer
+    marcador (salida del CONNECT / ALTER SESSION), donde aparece un fallo de conexión."""
+    partes = out.split(TBLMARK)
+    bloques = {}
+    for p in partes[1:]:
+        nombre, sep, cuerpo = p.partition(TBLMARK_FIN)
+        if sep:
+            bloques[nombre.strip().upper()] = cuerpo
+    return partes[0], bloques
+
+
+def _find_error(texto: str) -> str:
+    """Primera línea de error del cliente SQL en un texto, o "" si no hay. Los clientes
+    vuelcan los errores en stdout con returncode 0, así que esto es lo único que distingue
+    una tabla que falló de una tabla vacía. En SQL Server el mensaje legible va en la línea
+    siguiente al `Msg NNN, Level ...`, así que se adjunta."""
+    lineas = texto.splitlines()
+    for i, ln in enumerate(lineas):
+        s = ln.strip()
+        if s.startswith(ERR_PREFIXES):
+            if s.startswith("Msg "):
+                detalle = next((x.strip() for x in lineas[i + 1:] if x.strip()), "")
+                return f"{s} {detalle}"[:300]
+            return s[:300]
+    return ""
 
 
 def _split_rows(out: str) -> list:
@@ -351,19 +529,10 @@ def format_value(raw: str, cdef: dict, motor: str) -> str:
     return "'" + raw.replace("'", "''") + "'"
 
 
-def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tuple:
-    columns = list(model["tables"][table].get("columns", {}).items())
+def write_table_file(table: str, columns: list, rows_raw: str, cfg: dict, out_dir: Path) -> tuple:
+    """Formatea el bloque de salida ya obtenido de la BD y escribe `<TABLA>.sql`.
+    No toca la BD: la consulta la hace run_chunk_* para todo el chunk de una vez."""
     col_names = [c for c, _ in columns]
-    sql = build_select(table, columns, cfg["schema"], cfg["motor"])
-
-    try:
-        if cfg["motor"] == "ORACLE":
-            rows_raw = run_query_oracle(sql, cfg)
-        else:
-            rows_raw = run_query_sqlserver(sql, cfg)
-    except Exception as e:
-        return ("ERROR", 0, str(e).splitlines()[0] if str(e) else "error desconocido")
-
     out_path = out_dir / f"{table}.sql"
     lines = [
         f"-- Inserts tabla paramétrica {table}",
@@ -410,6 +579,57 @@ def generate_table_file(table: str, model: dict, cfg: dict, out_dir: Path) -> tu
     with open(out_path, "w", encoding="utf-8-sig") as f:
         f.write("\n".join(lines) + "\n")
     return ("OK", n, "")
+
+
+def split_chunks(tablas: list, workers: int) -> list:
+    """Reparte las tablas en chunks (= sesiones SQL). Objetivo: el menor número de sesiones
+    posible —cada una cuesta un spawn de proceso y un login— sin que un chunk crezca tanto que
+    su salida en memoria se dispare. Con pocas tablas sale un chunk por worker; con muchas,
+    chunks de CHUNK_MAX que el executor va encolando."""
+    if not tablas:
+        return []
+    por_chunk = min(CHUNK_MAX, max(1, -(-len(tablas) // workers)))   # ceil sin importar math
+    return [tablas[i:i + por_chunk] for i in range(0, len(tablas), por_chunk)]
+
+
+def generar_chunk(chunk: list, model: dict, cfg: dict, out_dir: Path, force_clob: bool = False) -> tuple:
+    """Genera los `<TABLA>.sql` de un chunk con UNA sola sesión SQL.
+    Devuelve `({tabla: (status, filas, mensaje)}, segundos)`."""
+    t0 = time.perf_counter()
+    consultas = []
+    columnas = {}
+    for t in chunk:
+        columnas[t] = list(model["tables"][t].get("columns", {}).items())
+        consultas.append((t, build_select(t, columnas[t], cfg["schema"], cfg["motor"], force_clob)))
+
+    try:
+        if cfg["motor"] == "ORACLE":
+            out = run_chunk_oracle(consultas, cfg)
+        else:
+            out = run_chunk_sqlserver(consultas, cfg)
+    except Exception as e:
+        msg = str(e).splitlines()[0] if str(e) else "error desconocido"
+        return {t: ("ERROR", 0, msg) for t in chunk}, time.perf_counter() - t0
+
+    preambulo, bloques = _split_tables(out)
+    err_conexion = _find_error(preambulo)
+    if err_conexion:
+        # Fallo antes de la primera tabla (CONNECT / ALTER SESSION): es de toda la sesión, y
+        # reportar la causa raíz vale más que el SP2-0640 "not connected" de cada SELECT.
+        return {t: ("ERROR", 0, err_conexion) for t in chunk}, time.perf_counter() - t0
+
+    resultados = {}
+    for t in chunk:
+        cuerpo = bloques.get(t.upper())
+        if cuerpo is None:
+            resultados[t] = ("ERROR", 0, "la sesión SQL no devolvió salida para esta tabla")
+            continue
+        err = _find_error(cuerpo)
+        if err:
+            resultados[t] = ("ERROR", 0, err)
+            continue
+        resultados[t] = write_table_file(t, columnas[t], cuerpo, cfg, out_dir)
+    return resultados, time.perf_counter() - t0
 
 
 def write_master_script(out_dir: Path, tables: list, motor: str, proyecto: str) -> Path:
@@ -474,20 +694,51 @@ def main():
         print(f"ERROR: motor no soportado: {cfg['motor']}")
         sys.exit(1)
 
+    t_total = time.perf_counter()
     tablas, vista, max_paralelo = parametric_tables(model, workspace, proyecto)
+
+    # Regeneración selectiva (RS_INSERTS_TABLAS / -Tablas del hook): reprocesar solo unas
+    # tablas concretas tras un error puntual, en vez de toda la etapa.
+    subconjunto = [t.strip().upper() for t in os.environ.get("RS_INSERTS_TABLAS", "").split(";") if t.strip()]
+    if subconjunto:
+        desconocidas = [t for t in subconjunto if t not in tablas]
+        for t in desconocidas:
+            print(f"AVISO: '{t}' no es una tabla paramétrica de la vista '{vista}' — se ignora")
+        tablas = [t for t in tablas if t in subconjunto]
+        if not tablas:
+            print("ERROR: ninguna de las tablas pedidas está en la vista paramétrica")
+            sys.exit(1)
+
     workers = max(1, min(max_paralelo, len(tablas))) if tablas else 1
-    print(f"Vista paramétrica: '{vista}' → {len(tablas)} tablas | Motor: {cfg['motor']} | {workers} en paralelo")
+    chunks = split_chunks(tablas, workers)
+    print(f"Vista paramétrica: '{vista}' → {len(tablas)} tablas | Motor: {cfg['motor']} | "
+          f"{len(chunks)} sesión(es) SQL, {workers} en paralelo")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generación en paralelo: cada tabla abre su propia conexión y escribe un fichero distinto
-    # (<TABLA>.sql), sin estado compartido mutable → thread-safe. El cap `workers` limita las
-    # conexiones BD simultáneas. Los resultados se recolectan y se imprimen en orden de `tablas`
-    # para una salida determinista, no entrelazada.
-    resultados = {}
+    # Generación en paralelo por CHUNK: cada chunk abre UNA conexión y escribe los ficheros de
+    # sus tablas (<TABLA>.sql), sin estado compartido mutable → thread-safe. El cap `workers`
+    # limita las conexiones BD simultáneas. Los resultados se recolectan y se imprimen en orden
+    # de `tablas` para una salida determinista, no entrelazada.
+    resultados, tiempos = {}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(generate_table_file, t, model, cfg, out_dir): t for t in tablas}
+        futs = {ex.submit(generar_chunk, ch, model, cfg, out_dir): i for i, ch in enumerate(chunks)}
         for fut in concurrent.futures.as_completed(futs):
-            resultados[futs[fut]] = fut.result()
+            res, segs = fut.result()
+            resultados.update(res)
+            tiempos[futs[fut]] = segs
+
+    # Reintento de las tablas cuya fila resultó más ancha de lo estimado: se rehacen forzando
+    # TO_CLOB. Es la red de seguridad del camino VARCHAR2 de build_select.
+    anchas = [t for t in tablas if resultados[t][0] == "ERROR" and "ORA-01489" in resultados[t][2]]
+    if anchas:
+        print(f"\nReintentando {len(anchas)} tabla(s) con TO_CLOB (fila más ancha de lo estimado): "
+              f"{', '.join(anchas)}")
+        rechunks = split_chunks(anchas, workers)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(workers, len(rechunks)))) as ex:
+            futs = [ex.submit(generar_chunk, ch, model, cfg, out_dir, True) for ch in rechunks]
+            for fut in concurrent.futures.as_completed(futs):
+                res, _ = fut.result()
+                resultados.update(res)
 
     total_rows, errores = 0, []
     for t in tablas:
@@ -499,11 +750,17 @@ def main():
             errores.append((t, msg))
             print(f"  ERR {t}: {msg}")
 
+    for i, ch in enumerate(chunks):
+        print(f"  ~ sesión {i + 1}/{len(chunks)}: {len(ch)} tabla(s) en {tiempos.get(i, 0):.1f}s")
     print(f"\nResumen: {len(tablas) - len(errores)}/{len(tablas)} tablas OK, "
-          f"{total_rows} filas, {len(errores)} errores")
+          f"{total_rows} filas, {len(errores)} errores en {time.perf_counter() - t_total:.1f}s")
 
     ok_tablas = [t for t in tablas if resultados[t][0] == "OK"]
-    if ok_tablas:
+    if subconjunto:
+        # ⛔ El master lista TODAS las paramétricas: reescribirlo con un subconjunto dejaría el
+        # instalador cargando solo esas tablas, en silencio.
+        print("AVISO: regeneración selectiva — _run_all.sql se deja como estaba (lista completa)")
+    elif ok_tablas:
         master = write_master_script(out_dir, ok_tablas, cfg["motor"], proyecto)
         print(f"Master: {master.name} → ejecuta las {len(ok_tablas)} tablas OK de golpe")
 

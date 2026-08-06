@@ -1,5 +1,65 @@
 # RS Enterprise Agent — Changelog
 
+## 3.6.0 — 2026-08-06
+
+### La etapa de scripts de `/rs-instalador` pagaba un login de BD por cada tabla
+
+El reloj de esa etapa no se lo llevaba consultar, se lo llevaba **conectar**. Tres cosas lo
+provocaban, y las tres estaban repartidas por igual entre el hook y los scripts Python:
+
+1. `installer-inserts.py` arrancaba **un proceso `sqlplus`/`sqlcmd` por tabla paramétrica**. Con
+   decenas de tablas —todas pequeñas, que es lo normal en paramétricas— el spawn del proceso más
+   el login dominaban el total. El cap `max_paralelo` limitaba las simultáneas, así que se pagaba
+   una tanda de logins por ronda.
+2. `installer-objects.py` recorría sus 6 tipos de objeto (secuencias, vistas, funciones,
+   procedimientos, triggers, sinónimos) en un `for` **secuencial**: 6 spawns + 6 logins uno detrás
+   de otro, cuando son independientes y cada uno escribe su propio fichero.
+3. `read_db_config` lanzaba **PowerShell** para releer `get-config.ps1`, una vez por cada script
+   Python de la etapa.
+
+Ahora:
+
+- **Una sesión SQL por chunk de tablas, no por tabla.** Las tablas de un chunk se piden en la misma
+  sesión, separadas por el marcador `@@TBL:<TABLA>@@` que emite `PROMPT` (Oracle) / `PRINT` (SQL
+  Server), y la salida se trocea por ese marcador. El aislamiento de error se mantiene: ni `sqlplus`
+  ni `sqlcmd` abortan la sesión ante el error de una sentencia (a propósito **no** se pone
+  `WHENEVER SQLERROR EXIT`), así que un `ORA-`/`Msg` queda dentro del bloque de *su* tabla y el
+  resto del chunk se genera igual. En SQL Server cada tabla va en su propio lote (`GO`) porque
+  dentro de un mismo lote el flujo de mensajes y el de resultados no llegan necesariamente
+  intercalados en orden, y el marcador dejaría de identificar sus filas.
+- **`VARCHAR2` en vez de `CLOB` cuando la fila cabe.** El `SELECT` envolvía siempre la primera
+  expresión en `TO_CLOB` para no topar con el límite de 4000; eso hace la concatenación LOB por fila
+  y añade fetch de LOB, y la mayoría de tablas paramétricas son estrechas. Ahora el ancho se estima
+  con los tipos del `model.json` y solo se usa `TO_CLOB` si hace falta. La estimación es en
+  caracteres y el límite es en bytes, así que el umbral deja margen (3000) y, si aun así se queda
+  corta, el `ORA-01489` se reintenta con `TO_CLOB`: **la estimación no puede producir un fichero
+  incorrecto, solo un reintento**.
+- **`ARRAYSIZE 200`** en las sesiones Oracle: el default de `sqlplus` son 15 filas por roundtrip.
+- **Los 6 tipos de objeto se extraen en paralelo.** Las consultas van concurrentes, pero la
+  escritura de ficheros y todo el log se hacen después, en el orden de las etapas: la salida sigue
+  siendo determinista y comparable entre ejecuciones.
+- **Config de BD resuelta una sola vez** en `installer-scripts.ps1` y pasada a los Python por
+  `RS_DB_CONFIG_JSON`. ⛔ Ese fichero **no** contiene la password (`get-config.ps1` no la emite
+  nunca); cada script la sigue leyendo del `docs\.rs-databases.json`. Si la cachea falla, se avisa y
+  cada script la resuelve por su cuenta — el camino de antes.
+- **`parametricas.max_paralelo` pasa a ser el cap único de sesiones BD de la etapa**: gobierna
+  inserts *y* objetos. Sigue siendo una sola palanca para el Oracle del cliente, no una por script.
+
+Y para no repetir la etapa entera por un fallo puntual, `installer-scripts.ps1` acepta
+**`-Solo todo|ddl|objetos|inserts`** y **`-Tablas "T1;T2"`** (implica `-Solo inserts`). ⛔ Con
+`-Tablas`, `Inserts\_run_all.sql` **no** se reescribe: hacerlo lo dejaría cargando solo ese
+subconjunto, y en silencio. El script lo avisa.
+
+Todo el camino emite **tiempos** (`~ sesión k/N ... en X.Xs`, `Tiempo: X.Xs`, `OK — Scripts en …
+(X.Xs)`), y el agente `rs-instalador` los incluye ahora en el SUMMARY: es lo único que permite ver
+si la etapa se degrada y decidir si toca ajustar `max_paralelo`. La mejora en segundos depende del nº
+de tablas y de la latencia contra el Oracle del cliente, así que no se afirma aquí ningún múltiplo:
+la medición sale del propio log.
+
+Ficheros: `scripts/installer-inserts.py`, `scripts/installer-objects.py`,
+`hooks/installer-scripts.ps1`, `agents/rs-instalador.md`, `references/hooks.md`, `hooks/README.md`,
+`docs/plugin-architecture.md`.
+
 ## 3.5.1 — 2026-08-05
 
 ### La suite entera fallaba con Windows PowerShell 5.1, que es el intérprete de los hooks

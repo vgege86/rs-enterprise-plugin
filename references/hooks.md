@@ -22,12 +22,16 @@ config por cliente de `docs\<Proyecto>-instalador.json`.
 | `hooks/installer-batch.ps1` | `<workspace> <destino>` | **Rebuild** Release (msbuild `/t:Rebuild`, wipe previo de bin/obj) de los csproj-exe de los batch activos (JSON `batch`) → copia EXEs a `<destino>\EXES`, con **gate de coherencia** (todos los .exe + DLLs compartidas del mismo build) |
 | `hooks/installer-agendaweb.ps1` | `<workspace> <destino>` | Publish FileSystem (msbuild `DeployTarget=WebPublish` + `PublishProfile` del JSON) de la Agenda Web → `<destino>\AgendaWeb` |
 | `hooks/installer-servicemanager.ps1` | `<workspace> <destino>` | `dotnet publish` host net8 → `<destino>\ServiceManager`; DLL de módulos activos → `\Modulos` |
-| `hooks/installer-scripts.ps1` | `<workspace> <destino>` | Llama a `scripts/installer-ddl.py` + `scripts/installer-inserts.py` → `<destino>\Scripts` |
+| `hooks/installer-scripts.ps1` | `<workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <lista ;-sep>]` | Llama a `scripts/installer-ddl.py` + `installer-objects.py` + `installer-inserts.py` → `<destino>\Scripts`. Resuelve la config de BD **una vez** y la pasa por `RS_DB_CONFIG_JSON` (sin password). `-Solo`/`-Tablas` regeneran una parte o unas tablas concretas tras un fallo puntual (`-Tablas` implica `-Solo inserts` y **no** reescribe `Inserts\_run_all.sql`) |
 | `hooks/instalacion-paquete.ps1` | `<workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor] [-Soluciones <lista ;-sep>]` | Copia el paquete de instalación en cliente desde `assets\instalacion\` (`Instalar.ps1`, `Ejecutar-Scripts.ps1` — copia literal, no generada), materializa `rutas.json` (incluidos `bd.autenticacion`/`tnsAdmin`/`schema` para wallet Oracle o autenticación integrada) desde el bloque `entornos` del JSON del proyecto (o plantilla + aviso) y, en modo `Instalacion`, el DDL de `RVERSIONES` **y su fila base por entorno** (`Scripts\PorEntorno\99-RVERSIONES-<E>.sql`, idempotente, motor por entorno; soluciones de `-Soluciones` o deducidas del JSON). Compartido por `/rs-instalador` y `/rs-actualizador` |
 | `hooks/actualizador-build.ps1` | `<workspace> <destino> <manifiesto.json>` | Actualizador: Rebuild de las **soluciones batch afectadas** → `<destino>\Exes` (mismo gate de coherencia que `installer-batch`), AgendaWeb **completa** (delega en `installer-agendaweb.ps1`), DLL recién compiladas de los módulos afectados → `<destino>\ServiceManager\Modulos`, y **exclusión de la configuración funcional del cliente** (`web.config`, `<proceso>.xml` de cada batch, `appsettings*.json`, wildcards de `excluirEntrega`); los `*.config` del binario sí viajan |
 
-Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `model.json`) y
-`scripts/installer-inserts.py` (inserts por tabla paramétrica desde `subviews["Parametricas"]`).
+Scripts Python asociados: `scripts/installer-ddl.py` (DDL sin schema desde `model.json`, sin BD),
+`scripts/installer-objects.py` (secuencias/vistas/funciones/procs/triggers/sinónimos desde la BD
+viva, los 6 tipos **en paralelo**) y `scripts/installer-inserts.py` (inserts por tabla paramétrica
+desde `subviews["Parametricas"]`, **agrupando tablas por sesión SQL** — el coste está en el login,
+no en la consulta). Cap común de sesiones simultáneas: `parametricas.max_paralelo` del
+`docs\<proyecto>-instalador.json` (default 8).
 
 ⛔ Reglas de estos hooks (violarlas ya ha roto el instalador en real):
 - **Batch (frankenbuild → StackOverflow)**: NUNCA `dotnet build` incremental. Las DLLs compartidas

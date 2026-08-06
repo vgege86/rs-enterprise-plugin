@@ -222,10 +222,16 @@ un workspace nuevo (config BD + andamiaje docs + primer modelo), sin sobrescribi
 `rs-instalador` (`/rs-instalador`, opus) genera el instalador completo de cliente en
 `C:\AIS\<Proyecto>\Instalador` (EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL).
 Orquesta 4 hooks `installer-*.ps1` vía `runner/runner.ps1` (patrón `batch-build`/`online-publish`,
-sin tool MCP) y 2 scripts Python (`installer-ddl.py`, `installer-inserts.py`). Config por cliente en
-`docs\<Proyecto>-instalador.json`; tablas paramétricas desde `subviews["Parametricas"]` del model.json.
-Los inserts por tabla se generan en paralelo (`ThreadPoolExecutor`), con cap configurable
-`parametricas.max_paralelo` (default 8 = conexiones BD simultáneas).
+sin tool MCP) y 3 scripts Python (`installer-ddl.py`, `installer-objects.py`, `installer-inserts.py`).
+Config por cliente en `docs\<Proyecto>-instalador.json`; tablas paramétricas desde
+`subviews["Parametricas"]` del model.json. La etapa de scripts está optimizada alrededor de que el
+coste real es el **login del cliente SQL**, no la consulta: los inserts se piden agrupando tablas por
+sesión (una sesión por chunk, marcador `@@TBL:<TABLA>@@` para trocear la salida sin perder el
+aislamiento de error por tabla), los 6 tipos de objeto se extraen en paralelo, el SELECT evita
+`TO_CLOB` cuando la fila cabe en `VARCHAR2` (con reintento automático si sale `ORA-01489`) y la
+config de BD se resuelve una vez en el hook y viaja por `RS_DB_CONFIG_JSON` (sin password). Cap
+común de sesiones simultáneas: `parametricas.max_paralelo` (default 8), que gobierna inserts y
+objetos. `installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte.
 
 `rs-actualizador` (`/rs-actualizador`, opus, v2.28.0) es su hermano **incremental**: genera la entrega
 delta de un entorno (`DESA`/`TEST`/`PROD`) en `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>`.

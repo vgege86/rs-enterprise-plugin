@@ -33,6 +33,15 @@ SIN schema
     `"<ESQUEMA>".`) de todo el DDL emitido: el instalador se ejecuta ya dentro del
     schema destino del cliente.
 
+RENDIMIENTO
+    Los 6 tipos de objeto son independientes entre sí y cada uno escribe su propio fichero,
+    así que se extraen EN PARALELO: en serie se pagaban 6 spawns de sqlplus + 6 logins uno
+    detrás de otro, y el reloj lo dominaba eso, no la consulta. El cap de sesiones simultáneas
+    es el mismo `parametricas.max_paralelo` del JSON de config que usan los inserts — una sola
+    palanca para el Oracle del cliente. Las consultas van en paralelo pero la escritura de
+    ficheros y todo el log se hacen después, en el orden de las etapas: la salida sigue siendo
+    determinista y comparable entre ejecuciones.
+
 Uso: python installer-objects.py <workspace> <proyecto> <out_dir>
 """
 
@@ -40,9 +49,11 @@ import sys
 import os
 import re
 import json
+import time
 import subprocess
 import tempfile
 import importlib.util
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 
@@ -92,7 +103,8 @@ def run_sqlplus(cfg: dict, body: str) -> str:
         os.unlink(tmp.name)
     out, err = _ins._decode(r.stdout), _ins._decode(r.stderr)
     if r.returncode != 0:
-        raise RuntimeError((err or out).strip()[:500])
+        # Mismo criterio que los inserts: la 1ª línea de stdout es el banner de sqlplus, no el error
+        raise RuntimeError(_ins._mensaje_fallo(err, out))
     for ln in out.splitlines():
         s = ln.strip()
         if s.startswith("ORA-") or s.startswith("SP2-") or s.startswith("PLS-"):
@@ -349,14 +361,33 @@ def main():
         ("06", "Sinonimos",       "SINÓNIMOS",       lambda: gen_sinonimos(cfg)),
     ]
 
+    # --- extracción en paralelo (una sesión sqlplus por tipo de objeto) ---
+    workers = max(1, min(len(etapas), _ins.read_max_paralelo(workspace, proyecto)))
+    print(f"Extracción: {len(etapas)} tipos de objeto, hasta {workers} sesión(es) sqlplus en paralelo")
+    t_total = time.perf_counter()
+
+    def _extraer(etapa):
+        """Solo consulta — no escribe ficheros ni imprime (eso va después, en orden)."""
+        t0 = time.perf_counter()
+        try:
+            return etapa[0], etapa[3](), "", time.perf_counter() - t0
+        except Exception as e:
+            return etapa[0], None, (str(e).splitlines()[0] if str(e) else "error desconocido"), \
+                   time.perf_counter() - t0
+
+    salidas = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        for fut in concurrent.futures.as_completed([ex.submit(_extraer, e) for e in etapas]):
+            num, res, err, segs = fut.result()
+            salidas[num] = (res, err, segs)
+
     ficheros = []
     for num, fname, titulo, fn in etapas:
-        print(f"\n== {titulo} ==")
-        try:
-            res = fn()
-        except Exception as e:
-            print(f"   ERROR: {e}")
-            errores.append((titulo, str(e).splitlines()[0]))
+        res, err, segs = salidas[num]
+        print(f"\n== {titulo} == ({segs:.1f}s)")
+        if res is None:
+            print(f"   ERROR: {err}")
+            errores.append((titulo, err))
             resumen.append((titulo, "ERROR"))
             continue
 
@@ -416,6 +447,7 @@ def main():
     for titulo, n in resumen:
         print(f"   {titulo:<16} {n}")
     print(f"   Maestro: {maestro.name}")
+    print(f"   Tiempo:  {time.perf_counter() - t_total:.1f}s")
 
     if errores:
         sys.exit(2)

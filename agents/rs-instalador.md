@@ -84,9 +84,12 @@ texto del alias y el troceo por `/` y `@` produce un ORA-12154 que parece de red
 `Ejecutar-Scripts.ps1` lo rechaza antes de conectar. `tnsAdmin` es la carpeta del wallet y `schema`
 el `CURRENT_SCHEMA`, para cuando el usuario de conexión no es el dueño de las tablas.
 
-`parametricas.max_paralelo` (opcional, default `8`): nº de tablas cuyos inserts se generan en
-paralelo — es también el nº de conexiones BD simultáneas. Bajar si el Oracle del cliente tiene pocas
-sesiones disponibles; subir para acelerar en servidores holgados.
+`parametricas.max_paralelo` (opcional, default `8`): **cap único de sesiones BD simultáneas de la
+etapa de scripts** — gobierna tanto los inserts paramétricos como la extracción de objetos
+(secuencias/vistas/funciones/procs/triggers/sinónimos, que se extraen en paralelo). Bajar si el
+Oracle del cliente tiene pocas sesiones disponibles; subir para acelerar en servidores holgados.
+Las tablas no se piden de una en una: se agrupan en sesiones (una sesión por chunk), porque el
+coste real está en el login, no en la consulta.
 
 **Si NO existe** → crearlo con interacción:
 - Detectar candidatos para sugerir (no inventar):
@@ -121,6 +124,13 @@ inline con el runner usando `plugin_root`, y **verificar evidencia** antes de pa
 `;`. Son las que se registran en `RVERSIONES`. Si se omite, el hook las deduce del JSON de config;
 pasarlas explícitamente evita registrar algo que al final no se entregó.
 
+**Reintento parcial de la etapa 5** (no repetir las tres partes por un fallo puntual):
+`installer-scripts.ps1 "<workspace>" "<destino>" -Solo ddl|objetos|inserts` y
+`-Tablas "TABLA1;TABLA2"` (implica `-Solo inserts`). Úsalo cuando la etapa 5 dé exit 2 por unas
+tablas concretas. ⛔ Con `-Tablas` el maestro `Inserts\_run_all.sql` **no** se reescribe (se dejaría
+cargando solo ese subconjunto); el propio script lo avisa. La primera generación de una entrega va
+siempre completa, sin `-Solo`.
+
 Patrón de ejecución (Bash → PowerShell), usando el `plugin_root` recibido:
 
 ```powershell
@@ -149,6 +159,11 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
   (los ejecuta `Ejecutar-Scripts.ps1` como segunda tanda; sin eso las paramétricas quedarían vacías).
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD → reportarlo como AVISO,
     no como éxito silencioso.
+  - El log trae los tiempos (`~ sesión k/N: ... en X.Xs`, `Tiempo: X.Xs`, `OK — Scripts en ... (X.Xs)`):
+    **inclúyelos en el SUMMARY**. Son la única forma de saber si esta etapa se está degradando, y
+    de decidir si toca ajustar `parametricas.max_paralelo`.
+  - `Reintentando N tabla(s) con TO_CLOB` en el log **no es un error**: es la red de seguridad del
+    camino rápido de generación del SELECT; esas tablas acaban OK en el reintento.
 - **Paquete:** `OK — paquete de instalacion preparado en <destino>` + existen `Instalar.ps1`,
   `Ejecutar-Scripts.ps1`, `rutas.json`, `Scripts\00-RVERSIONES.sql` y un
   `Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql` por entorno declarado.
