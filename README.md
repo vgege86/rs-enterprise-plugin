@@ -105,6 +105,20 @@ AgendaWeb.sln - modificar lógica de pedidos
 
 **2. Slash commands** — `/rs-*` (catálogo completo abajo):
 
+> ⛔ **Todos van con el prefijo del plugin**: `/rs-enterprise-agent:rs-audit`, no `/rs-audit`.
+> Claude Code namespacea **siempre** lo que aporta un plugin, para que dos plugins puedan traer un
+> comando con el mismo nombre sin pisarse. El prefijo es el campo `name` de
+> `.claude-plugin/plugin.json`.
+>
+> En la práctica no hace falta teclearlo entero: escribe `/rs-audit`, el selector lo encuentra por
+> coincidencia parcial y lo completa. Lo que **no** funciona es enviar `/rs-audit` literal, sin
+> pasar por el selector.
+>
+> Por eso el pipeline principal se invoca `/rs-enterprise-agent:rs-enterprise-agent`: el plugin y el
+> skill del pipeline se llaman igual, así que el nombre sale repetido. No es una errata.
+>
+> ⚠️ Las tablas del catálogo omiten el prefijo por legibilidad. Añádelo mentalmente a todas.
+
 ```
 /rs-audit AgendaWeb.sln
 /rs-impacto RCLIENTES en RSProcIN.sln
@@ -170,6 +184,10 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 45 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
 > El catálogo de abajo lista 48 comandos: los 45 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+
+> ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
+> es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
+> el nombre corto y dejar que el selector lo complete.
 
 ### 1. Pipeline principal
 

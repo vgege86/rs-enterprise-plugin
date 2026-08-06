@@ -1,5 +1,32 @@
 # RS Enterprise Agent — Changelog
 
+## 3.7.4 — 2026-08-06
+
+### El README documentaba una forma de invocar los comandos que no existe
+
+98 referencias a `/rs-*` en el README, **cero** con el prefijo del plugin, y ni una sola mención de
+que el prefijo exista. Claude Code namespacea **siempre** lo que aporta un plugin
+(`/rs-enterprise-agent:rs-audit`), precisamente para que dos plugins puedan traer un comando con el
+mismo nombre sin pisarse; el prefijo es el campo `name` de `.claude-plugin/plugin.json`. Un `/rs-audit`
+literal no resuelve.
+
+Ha pasado desapercibido porque el selector de comandos hace coincidencia parcial: tecleas `rs-audit`,
+te ofrece `rs-enterprise-agent:rs-audit` y funciona. Quien lo teclea entero y lo envía, no.
+
+Se explica **una vez**, en dos sitios, y las tablas se dejan con el nombre corto: prefijar 98
+entradas las volvería ilegibles y el nombre corto es justo lo que se teclea en el selector.
+
+- § *Cómo se usa (activación)* — bloque nuevo con la regla, de dónde sale el prefijo, que basta
+  teclear el nombre corto, y por qué el pipeline queda como `/rs-enterprise-agent:rs-enterprise-agent`
+  (el plugin y el skill del pipeline se llaman igual — no es una errata).
+- § *Catálogo de comandos* — aviso de que las tablas omiten el prefijo por legibilidad, con enlace a
+  la explicación.
+
+Mismo tipo de agujero que el `pip install` de la 3.7.2: la guía no dejaba el plugin usable siguiendo
+sus pasos al pie de la letra.
+
+Ficheros: `README.md`.
+
 ## 3.7.3 — 2026-08-06
 
 ### Fuera la doble vida del origen del marketplace
