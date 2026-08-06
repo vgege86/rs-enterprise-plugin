@@ -1,5 +1,61 @@
 # RS Enterprise Agent — Changelog
 
+## 3.8.0 — 2026-08-06
+
+### El XML de configuración de un proceso viajaba en el paquete si no se llamaba como su .exe
+
+`actualizador-build.ps1` identificaba el `<proceso>.xml` a excluir cruzándolo **solo** contra los
+nombres de los `.exe` entregados. Los que no coincidían caían en `$xmlHuerfanos`, que **únicamente
+avisa**: si nadie leía el aviso, el XML se quedaba en la entrega y al instalar machacaba la
+configuración del cliente.
+
+El supuesto de fondo era falso. No todo proceso lee un XML que se llame como él: los hay que reciben
+la ruta del suyo **por línea de comandos** (`cGlobales.XMLProceso = args[0]`), así que el `.exe` y su
+`.xml` tienen nombres distintos por diseño. En una instalación de cliente hay un proceso cuyo XML se
+llama de otra forma, y salía en cada entrega.
+
+El JSON del proyecto ya declaraba esa correspondencia en `batch_config`, pero el hook no lo miraba.
+Ahora sí: el cruce pasa a tener tres ramas — coincidencia de nombre con un `.exe`, declaración en
+`batch_config`, y solo lo que no encaja en ninguna sigue generando aviso.
+
+```json
+"batch_config": {
+  "RSProcIN":    "Batch\\RSProcIN\\RSProcIN.xml",
+  "RSMultihilo": "Batch\\RSMultihilo\\RSTareas.xml",
+  "_comun":      "Batch\\XMLConfig.xml"
+}
+```
+
+Tres decisiones de implementación, cada una por un motivo concreto:
+
+- **Se lee de los dos JSON** del proyecto (`-instalador` y `-actualizador`) y se unifican: el bloque
+  se mantiene indistintamente en cualquiera de ellos.
+- **Se cruza por el nombre de fichero del valor**, no por la ruta: el valor es relativo al workspace
+  y la comparación ocurre contra `<destino>\Exes`.
+- **El filtro es por la extensión del valor, no por el nombre de la clave.** Las claves con `_` no son
+  equivalentes entre sí: `_comun` es un XML compartido **real** que también debe excluirse, mientras
+  `_comentario` es una frase. Descartar toda clave con `_` habría dejado el XML común dentro del
+  paquete.
+
+Los excluidos por declaración se listan **aparte** en el output (`-- De esos, N excluidos por
+'batch_config' --`) en vez de desaparecer en silencio: que un XML salga o no del paquete es
+exactamente lo que decide si la instalación pisa los ajustes del cliente. El texto del aviso de
+huérfanos pasa a distinguir las dos salidas — `batch_config` si es el XML de arranque de un proceso,
+`excluirEntrega` si es otra cosa.
+
+⚠️ **Tres nombres parecidos, tres cosas distintas**, desambiguado en la documentación: `batch_config`
+es el mapa proceso → XML de **ejecución** del cliente; `check_batch_config` (tool MCP) y
+`references/batch-config.md` son la configuración **centralizada de compilación**
+(`App.Batch.config` + `Directory.Build.targets`).
+
+Verificado ejecutando el helper real —extraído del hook por AST, sin duplicar código— contra copias
+de los dos JSON de un proyecto vivo: 13 XML resueltos, el del proceso que recibe la ruta por
+argumentos entre ellos, `_comun` incluido, `_comentario` fuera, y JSON ausente/sin bloque/malformado
+resueltos a vacío sin romper.
+
+Ficheros: `hooks/actualizador-build.ps1`, `references/actualizador.md`, `references/hooks.md`,
+`hooks/README.md`, `agents/rs-actualizador.md`, `agents/rs-instalador.md`.
+
 ## 3.7.4 — 2026-08-06
 
 ### El README documentaba una forma de invocar los comandos que no existe

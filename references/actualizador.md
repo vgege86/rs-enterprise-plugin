@@ -89,8 +89,33 @@ seguir siendo legítimo.
 Triple defensa sobre la segunda:
 
 1. `actualizador-build.ps1` la excluye del paquete y la lista. El `<proceso>.xml` se identifica por
-   coincidencia de nombre base con un `.exe` entregado; los `.xml` de `Exes\` que **no** coinciden se
-   dejan y se avisa (revisar y, si son configuración, añadirlos a `excluirEntrega` del JSON).
+   **dos** vías, y hacen falta las dos:
+   - **Coincidencia de nombre** con un `.exe` entregado (`rsprocin.exe` → `rsprocin.xml`).
+   - **Declaración en `batch_config`** del JSON del proyecto. ⛔ No todo proceso lee un XML que se
+     llame como él: hay batch que reciben la ruta del suyo **por línea de comandos**
+     (`cGlobales.XMLProceso = args[0]`), así que el nombre no coincide. Sin esta segunda vía ese XML
+     se colaba en el paquete y la instalación machacaba la configuración del cliente.
+
+   Los `.xml` de `Exes\` que no salen por ninguna de las dos se dejan y se avisa.
+
+   ```json
+   "batch_config": {
+     "Motor":       "Batch\\Motor\\RSCore.xml",
+     "RSProcIN":    "Batch\\RSProcIN\\RSProcIN.xml",
+     "RSMultihilo": "Batch\\RSMultihilo\\RSTareas.xml",
+     "_comun":      "Batch\\XMLConfig.xml",
+     "_comentario": "texto libre, se ignora"
+   }
+   ```
+
+   Mapa `<proceso>` → `<ruta del XML relativa al workspace>`. Se lee de los **dos** JSON del proyecto
+   (`-instalador.json` y `-actualizador.json`) y se unifica. El cruce usa el **nombre de fichero** del
+   valor, y se queda con las entradas cuyo valor acaba en `.xml`: así entra `_comun` (un XML
+   compartido real) y queda fuera `_comentario`, sin listas de claves especiales que mantener.
+
+   ⚠️ No confundir con la tool MCP `check_batch_config` ni con `references/batch-config.md`: esos
+   tratan de la configuración **centralizada de compilación** (`App.Batch.config` +
+   `Directory.Build.targets`). `batch_config` es el mapa proceso → XML de **ejecución** del cliente.
 2. `Instalar.ps1 -Modo Actualizacion` aborta si encuentra alguno.
 3. Los parámetros nuevos se documentan en `readme.txt` (punto 3) con nombre, valor y fichero destino,
    para que el cliente los añada a su propia configuración.

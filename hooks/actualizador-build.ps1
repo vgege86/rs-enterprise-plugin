@@ -248,6 +248,7 @@ if ($modulos.Count -gt 0) {
 #      - web.config (a cualquier nivel de AgendaWeb)
 #      - <proceso>.xml  — el XML de configuracion de cada batch (rsprocin.exe + rsprocin.xml)
 #      - appsettings*.json — configuracion del host/modulos net8
+#      - los XML declarados en "batch_config" del JSON del proyecto (ver mas abajo)
 #      - lo que anada el JSON del proyecto en "excluirEntrega" (wildcards)
 # ---------------------------------------------------------------------------------------------------
 $excluidos = New-Object System.Collections.Generic.List[System.IO.FileInfo]
@@ -256,15 +257,66 @@ Get-ChildItem $destino -Recurse -File -ErrorAction SilentlyContinue | Where-Obje
     $_.Name -ieq 'web.config' -or $_.Name -like 'appsettings*.json'
 } | ForEach-Object { $excluidos.Add($_) }
 
-# XML de configuracion de proceso: mismo nombre base que un .exe entregado
+# ---------------------------------------------------------------------------------------------------
+# XML declarados en "batch_config" del JSON del proyecto.
+#
+# ⛔ POR QUE NO BASTA CRUZAR POR NOMBRE CONTRA LOS .EXE. No todo proceso lee un XML que se llame como
+# el: hay batch que reciben la ruta del suyo POR LINEA DE COMANDOS (cGlobales.XMLProceso = args[0]),
+# asi que <Exe>.exe y <otro-nombre>.xml no coinciden. Ese XML caia en $xmlHuerfanos, solo se avisaba
+# de el y se quedaba EN EL PAQUETE: al instalar, machaca la configuracion del cliente. El JSON del
+# proyecto ya declara que XML corresponde a cada proceso, asi que aqui se consulta.
+#
+# Formato: mapa <proceso> -> <ruta del XML relativa al workspace>. Se lee de los DOS JSON
+# (-instalador y -actualizador) y se unifica: el bloque se mantiene indistintamente en cualquiera.
+#
+# ⛔ El filtro es por la EXTENSION DEL VALOR, no por el nombre de la clave. Hay claves meta que
+# empiezan por '_' y no son equivalentes: "_comun" es un XML compartido REAL que tambien debe
+# excluirse, mientras que "_comentario" es una frase. Descartar toda clave con '_' dejaria el XML
+# comun dentro del paquete.
+#
+# ⚠️ No confundir con: la tool MCP `check_batch_config` (configuracion CENTRALIZADA de compilacion,
+# App.Batch.config + Directory.Build.targets) ni con references\batch-config.md, que documenta esa
+# otra cosa. Aqui "batch_config" es el mapa proceso -> XML de ejecucion del cliente.
+# ---------------------------------------------------------------------------------------------------
+function Get-XmlDeclarados($rutasJson) {
+    $set = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($p in $rutasJson) {
+        if (-not $p -or !(Test-Path $p)) { continue }
+        try { $c = Get-Content $p -Raw -Encoding UTF8 | ConvertFrom-Json } catch {
+            Write-Host "AVISO: no se pudo leer $p para resolver batch_config — $($_.Exception.Message)"
+            continue
+        }
+        if (-not $c.batch_config) { continue }
+        foreach ($prop in $c.batch_config.PSObject.Properties) {
+            $v = "$($prop.Value)"
+            if ($v -and $v.ToLower().EndsWith('.xml')) {
+                [void]$set.Add(([IO.Path]::GetFileName($v)).ToLower())
+            }
+        }
+    }
+    return $set
+}
+
+$jsonAct       = Join-Path $workspace "docs\$proyecto-actualizador.json"
+$xmlDeclarados = Get-XmlDeclarados @($jsonInst, $jsonAct)
+
+# XML de configuracion de proceso: por coincidencia de nombre con un .exe entregado, o por
+# declaracion explicita en batch_config.
 $exesFin = Join-Path $destino "Exes"
-$xmlHuerfanos = @()
+$xmlHuerfanos      = @()
+$xmlPorDeclaracion = @()
 if (Test-Path $exesFin) {
     $exeNames = @(Get-ChildItem $exesFin -File -Filter *.exe -ErrorAction SilentlyContinue |
                   ForEach-Object { $_.BaseName.ToLower() })
     foreach ($xml in @(Get-ChildItem $exesFin -Recurse -File -Filter *.xml -ErrorAction SilentlyContinue)) {
-        if ($exeNames -contains $xml.BaseName.ToLower()) { $excluidos.Add($xml) }
-        else { $xmlHuerfanos += $xml }
+        if ($exeNames -contains $xml.BaseName.ToLower()) {
+            $excluidos.Add($xml)
+        } elseif ($xmlDeclarados.Contains($xml.Name.ToLower())) {
+            $excluidos.Add($xml)
+            $xmlPorDeclaracion += $xml
+        } else {
+            $xmlHuerfanos += $xml
+        }
     }
 }
 
@@ -288,9 +340,17 @@ if ($purgados.Count -gt 0) {
     }
     Write-Host "  -> si alguno lleva parametros NUEVOS, documentalos en readme.txt (el cliente los anade a su copia)."
 }
+if ($xmlPorDeclaracion.Count -gt 0) {
+    # Se listan aparte y no en silencio: que un XML salga o no del paquete es justo lo que decide si
+    # la instalacion machaca la configuracion del cliente.
+    Write-Host "`n-- De esos, $($xmlPorDeclaracion.Count) excluidos por 'batch_config' (su nombre NO coincide con el .exe) --"
+    $xmlPorDeclaracion | ForEach-Object { Write-Host "  $($_.Name)" }
+}
 if ($xmlHuerfanos.Count -gt 0) {
-    Write-Host "`nAVISO: .xml en Exes que NO coinciden con ningun .exe entregado — se quedan en el paquete."
-    Write-Host "       Revisa si alguno es configuracion del cliente; si lo es, anadelo a 'excluirEntrega' del JSON:"
+    Write-Host "`nAVISO: .xml en Exes que no coinciden con ningun .exe entregado NI estan declarados en 'batch_config' — se quedan en el paquete."
+    Write-Host "       Revisa si alguno es configuracion del cliente. Si lo es:"
+    Write-Host "         - es el XML de arranque de un proceso -> declaralo en 'batch_config' del JSON (proceso -> ruta del XML)"
+    Write-Host "         - es otra cosa                        -> anadelo a 'excluirEntrega' del JSON"
     $xmlHuerfanos | ForEach-Object { Write-Host "  $($_.FullName.Substring($destino.Length + 1))" }
 }
 

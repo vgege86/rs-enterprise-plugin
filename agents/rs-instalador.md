@@ -75,6 +75,7 @@ Estructura:
   "proyecto": "<Proyecto>",
   "destino": "C:\\AIS\\<Proyecto>\\Instalador",
   "batch": ["RSProcIN", "RSProcOUT"],
+  "batch_config": { "RSProcIN": "Batch\\RSProcIN\\RSProcIN.xml", "_comun": "Batch\\XMLConfig.xml" },
   "agendaweb": { "sln": "AgendaWeb<Proyecto>.sln", "publishProfile": "" },
   "servicemanager": { "modulos": ["AIS.RS.<Proyecto>.API"] },
   "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 },
@@ -85,6 +86,14 @@ Estructura:
   }
 }
 ```
+
+`batch_config` (opcional) declara el **XML de arranque de cada proceso**: mapa `<proceso>` → ruta del
+XML relativa al workspace. Lo consume `/rs-actualizador` para sacar del paquete la configuración del
+cliente. Hace falta porque no todo proceso lee un XML que se llame como él: algunos reciben la ruta
+**por línea de comandos**, y sin declararlo ese XML viajaría y machacaría los ajustes del destino.
+Admite claves `_` (`_comun` para el XML compartido); las entradas cuyo valor no acabe en `.xml` se
+ignoran, así que sirve `_comentario` como nota. ⚠️ Nada que ver con `check_batch_config` /
+`references/batch-config.md`, que son la configuración **centralizada de compilación**.
 
 `entornos` (opcional pero recomendado) alimenta el `rutas.json` que viaja al cliente: rutas de
 instalación por módulo, ruta de backup y datos de conexión **sin password**. Si falta, el paquete

@@ -95,6 +95,11 @@ generan y `Batch\App.Batch.config` es fuente de compilación, no desplegable
 }
 ```
 
+- `batch_config` (opcional) = mapa `<proceso>` → ruta del XML de arranque, relativa al workspace
+  (`"RSMultihilo": "Batch\\RSMultihilo\\RSTareas.xml"`). Sirve para que ese XML **no viaje** en el
+  paquete cuando su nombre no coincide con el `.exe` — pasa cuando el proceso recibe la ruta por
+  línea de comandos. Se lee de este JSON **y** del de instalador, unificados. Admite `_comun`;
+  las entradas cuyo valor no acabe en `.xml` se ignoran.
 - `control.conexion` = id de conexión de `.rs-databases.json` donde vive **nuestra** `RVERSIONES`
   (BD de control). Vacío = conexión principal.
 - `entornos.*` alimenta el `rutas.json` que viaja al cliente (rutas de instalación y backup, y datos
@@ -182,8 +187,13 @@ Remove-Item $tmp -Force
 - `N DLL copiadas a Modulos` por módulo; `0 DLL nuevas` es un aviso a revisar, no un OK.
 - La línea `Configuracion del cliente excluida del paquete` con la lista: cada fichero ahí es
   candidato a párrafo en el readme (parámetros que el cliente debe añadir a mano).
-- `AVISO: .xml en Exes que NO coinciden con ningun .exe` → revisarlos: si alguno es configuración del
-  cliente, añadirlo a `excluirEntrega` en `docs\<proyecto>-instalador.json` y regenerar.
+- `-- De esos, N excluidos por 'batch_config' --` → normal: son los XML cuyo nombre **no** coincide
+  con su `.exe` porque el proceso recibe la ruta por línea de comandos, y salen del paquete gracias a
+  la declaración del JSON. Van también al readme como parámetros del cliente.
+- `AVISO: .xml en Exes que no coinciden con ningun .exe entregado NI estan declarados en 'batch_config'`
+  → revisarlos, porque **se quedan en el paquete** y pueden machacar la configuración del cliente:
+  - es el XML de arranque de un proceso → declararlo en `batch_config` (`<proceso>` → ruta del XML) y regenerar;
+  - es otra cosa → `excluirEntrega` en `docs\<proyecto>-instalador.json` y regenerar.
 
 Si el hook sale con exit ≠ 0 → detener, reportar el error y no continuar.
 
