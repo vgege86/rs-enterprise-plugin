@@ -1,5 +1,56 @@
 # RS Enterprise Agent — Changelog
 
+## 3.7.1 — 2026-08-06
+
+### Los gates del instalador no eran ejecutables sin un cliente delante, así que nadie los probaba
+
+La 3.7.0 arregló dos fallos del gate de binding redirects: auditaba una sola de las dos carpetas de
+despliegue, y sus `catch` hacían `AVISO` + `continue`, de modo que un `.exe.config` ilegible se
+saltaba la comprobación y el script acababa imprimiendo `Gate de binding redirects OK`. Los dos
+vivieron desde la 2.15.8 sin que saltara nada.
+
+La causa de fondo no era el código, era su forma. Los tres gates estaban soldados dentro de
+`installer-batch.ps1`, mezclados con sus `Write-Host` y sus `exit`. Para que se ejecutara la
+comprobación había que ejecutar antes las 258 líneas anteriores: `vswhere`, `msbuild`, un workspace
+de cliente con sus `.sln`, el JSON del proyecto y un Rebuild completo. Eso no existe en CI.
+**Una comprobación cuya corrección no es observable no protege de nada.**
+
+`hooks/lib-deploy-gates.ps1` (nuevo) se queda con la parte que **decide**; el hook conserva la que
+**presenta**. Mismo patrón que `lib-crypto.ps1`, `lib-dbconfig.ps1` y `lib-pii.ps1`:
+
+- `Test-RsCoherenciaBuild` — stragglers de otro build (frankenbuild → StackOverflow, CHANGELOG 2.15.7)
+- `Test-RsBindingRedirects` — `newVersion` vs `AssemblyVersion` real, sobre N carpetas
+- `Test-RsOdpDependencies` — satélites presentes junto a `Oracle.ManagedDataAccess.dll`
+- `Get-RsDllConfigHuerfanos` — residuos del mecanismo anterior
+
+Ninguna imprime ni termina el proceso: devuelven el veredicto y las líneas de detalle ya
+formateadas. Los `Write-Host` y los `exit 1` siguen en `installer-batch.ps1` palabra por palabra, así
+que **el comportamiento observable no cambia**: mismas líneas por pantalla, mismos exit codes.
+
+⚠️ Único matiz: el aviso de `.dll` no gestionado ahora se imprime junto al resto de avisos, antes de
+los errores, en vez de intercalado en mitad del recorrido. Mismo texto, distinto orden.
+
+### Los tests que la 3.7.0 no pudo escribir
+
+`tests/DeployGates.Tests.ps1` — 20 tests, un segundo, sin Visual Studio. Los assemblies de prueba
+son copias renombradas de una DLL gestionada real del runtime: `GetAssemblyName` necesita metadatos
+válidos y un fichero de relleno no sirve. No dependen de ningún workspace de cliente.
+
+Cubren, entre otros, los dos fallos de la 3.7.0: que un `.exe.config` ilegible **no** reporte OK, y
+que al auditar dos carpetas el hallazgo lleve la etiqueta de la correcta. Más la excepción legítima
+—`BadImageFormatException`: un nativo que coincide en nombre con la identidad del redirect no es el
+assembly al que apunta, así que saltarlo es correcto y el gate sigue en OK—, el `newVersion` no
+parseable, el redirect cuyo DLL no está desplegado (se resuelve del GAC), y las DLL compartidas
+frente a las de terceros en el gate de coherencia.
+
+**Verificados por mutación**: se reintrodujeron los cinco fallos —el `continue` del XML ilegible, el
+recorrido de una sola carpeta, el gate ODP que deja de mirar, la coherencia que ignora las DLL
+compartidas y `BadImageFormatException` dejando de ser excepción— y cada uno lo caza el test que le
+corresponde. Sin esa comprobación, una suite en verde no dice nada.
+
+Ficheros: `hooks/lib-deploy-gates.ps1` (nuevo), `tests/DeployGates.Tests.ps1` (nuevo),
+`hooks/installer-batch.ps1`, `references/hooks.md`, `hooks/README.md`.
+
 ## 3.7.0 — 2026-08-06
 
 ### El gate de binding redirects miraba una sola de las dos carpetas de despliegue
