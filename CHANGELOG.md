@@ -1,5 +1,46 @@
 # RS Enterprise Agent — Changelog
 
+## 3.6.1 — 2026-08-06
+
+### Las tres propiedades que sostienen la etapa de scripts del instalador eran un comentario
+
+La 3.6.0 hizo que las tablas paramétricas se pidan agrupadas en una sola sesión SQL. Eso apoya el
+resultado en propiedades que no estaban probadas, y las tres fallan **en silencio**: el instalador no
+petardea, genera los ficheros igual con datos de menos, y eso solo se ve en el servidor del cliente
+cargando paramétricas incompletas.
+
+`tests/test_installer_inserts.py` (44 tests, pytest) las fija:
+
+- **Aislamiento de error dentro de la sesión compartida** — un `ORA-` de una tabla no contamina a las
+  vecinas del chunk. Incluye que el script enviado **no** lleve `WHENEVER SQLERROR EXIT` (con él, la
+  primera tabla mala se lleva por delante a las siguientes) y que en SQL Server cada tabla cierre su
+  lote con `GO` (sin eso, `PRINT` y resultados se desordenan y el marcador deja de identificar filas).
+- **Troceo por marcador y por `ROWEND`, nunca por `\n`** — un valor con saltos de línea partiría la
+  fila y se perdería.
+- **La decisión `VARCHAR2`/`TO_CLOB`** y su red de seguridad: el reintento existe porque reconoce el
+  `ORA-01489`, así que una estimación corta cuesta un reintento, nunca un fichero incorrecto.
+
+Más el formateo del `.sql` (comilla doblada, `NULL` vs cadena vacía, numéricos sin comillas, `commit`
+final, `RAW` reconstruido con `HEXTORAW`, aviso de BLOB no inlineable, fila corrupta descartada) y dos
+propiedades de diagnóstico y de higiene: que un fallo de proceso reporte el error real y no el banner
+`SQL*Plus: Release…` (se atribuye a **todas** las tablas de la sesión, así que el banner multiplicado
+por 12 no es diagnosticable), y que la password de `sqlcmd` viaje por `SQLCMDPASSWORD` y no por `argv`.
+
+Los tests no tocan BD ni necesitan cliente SQL instalado: `subprocess.run` se sustituye por un doble
+que captura el script enviado, así que también corren en el CI. **Verificados por mutación**: se
+rompieron a mano las 10 propiedades una a una y cada una la caza un test — un `44 passed` de un test
+que no muerde no vale de nada.
+
+### Doc obsoleta corregida (`docs/plugin-architecture.md`)
+
+Decía que los `*.Tests.ps1` hay que correrlos con `pwsh` y **no** con `powershell` 5.1 "que falla al
+enlazar el 3.er arg". Eso lo arregló la 3.5.1: hoy la suite pasa con los dos, y tiene que pasar con
+los dos —`pwsh` 7 es el del CI (sobre `ubuntu-latest`, donde 5.1 no existe) y `powershell` 5.1 es el
+que ejecuta los hooks de verdad—. Tal como estaba, la doc canónica invitaba a no probar nunca con el
+intérprete de producción.
+
+Ficheros: `tests/test_installer_inserts.py` (nuevo), `docs/plugin-architecture.md`.
+
 ## 3.6.0 — 2026-08-06
 
 ### La etapa de scripts de `/rs-instalador` pagaba un login de BD por cada tabla

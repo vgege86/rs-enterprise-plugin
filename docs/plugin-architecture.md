@@ -199,9 +199,16 @@ elemento en lenguaje natural; `rs-doc-drift` (sonnet) doc funcional vs delta de 
 (haiku) ejecuta `run_tests` como modo suelto; `rs-format` (opus) auto-fix de convenciones con **gate**
 (solo formato/naming, deriva renombrados públicos a `rs-rename`). Esta versión añade además la primera
 **suite de tests del plugin** (`tests/`: pytest de funciones puras del MCP + Pester de las guardas de
-`db-query.ps1` y `mantis-cli.ps1`, cableados en CI). ⚠️ Los `*.Tests.ps1` usan `Join-Path` con varios
-`ChildPath` (`-AdditionalChildPath`), disponible solo en **PowerShell 7** — correrlos con `pwsh`
-(el intérprete del CI, `shell: pwsh`), **no** con `powershell` (5.1), que falla al enlazar el 3.er arg.
+`db-query.ps1` y `mantis-cli.ps1`, cableados en CI). Desde la 3.6.1 el pytest cubre además el
+generador de inserts paramétricos del instalador (`tests/test_installer_inserts.py`: reparto de
+tablas en sesiones SQL, **aislamiento de error por tabla dentro de una sesión compartida**, decisión
+`VARCHAR2`/`TO_CLOB` y formateo del `.sql`; sin BD ni cliente instalado —`subprocess.run` se
+sustituye—, así que corre igual en el CI). ⚠️ Los `*.Tests.ps1` tienen que pasar con **los dos
+intérpretes**: `pwsh` 7, que es el del CI (`shell: pwsh` sobre `ubuntu-latest`, donde 5.1 no existe),
+y `powershell` 5.1, que es el que ejecuta los hooks de verdad (`plugin.json` los lanza con
+`powershell -NoProfile ... -File`). Hasta la 3.5.1 solo pasaban con 7 —usaban `Join-Path` con varios
+`ChildPath` (`-AdditionalChildPath`), que no existe en 5.1—, y una suite que solo pasa en el
+intérprete que no ejecuta nada en producción no prueba lo que hace falta probar.
 
 Segunda tanda de modos directos (v2.20.0), todos **agente-solo** (sin hooks/tools nuevos): `rs-cobertura`
 (sonnet) mapa de cobertura de tests; `rs-dead-code` (sonnet) inverso de `rs-impacto`, símbolos sin
