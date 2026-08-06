@@ -883,6 +883,12 @@ def check_env(workspace: Workspace) -> str:
     return json.dumps(_run_ps("check-env.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Informa de si la configuración de los batch .NET Framework del workspace está CENTRALIZADA (Batch\\App.Batch.config + Batch\\Directory.Build.targets) o sigue con un app.config por proyecto. SOLO LECTURA. Clasifica cada proyecto en centralizable | excepcion (lleva probing privatePath o loadFromRemoteSources: MSBuild no puede autogenerarlos, no se tocan) | revisar (secciones propias que se perderían), y resuelve los HintPath de las dependencias ODP.NET. Devuelve status OK|NEEDS_ACTION|BLOCKED. ⛔ La centralización efectiva NO se expone como tool: la aplica hooks/batch-centralizar.ps1 -Aplicar, que escribe en el workspace y exige confirmación humana. Convención: references/batch-config.md.")
+def check_batch_config(workspace: Workspace) -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    return json.dumps(_run_ps("batch-centralizar.ps1", workspace), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Genera DDL SQL desde el modelo BD → escribe C:\\AIS\\<proyecto>\\scripts\\<proyecto>-ddl-<motor>.sql. Con motor vacío usa motores[] de .rs-databases.json: si hay más de uno, genera un fichero por motor y devuelve {motores, resultados[]}; si el resultado es único (un motor), devuelve el objeto {path, motor, line_count} sin envolver. El SQL no entra en contexto.")
 def generate_sql(workspace: Workspace, motor: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)

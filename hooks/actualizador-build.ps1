@@ -238,10 +238,11 @@ if ($modulos.Count -gt 0) {
 # ---------------------------------------------------------------------------------------------------
 # 4. EXCLUSION de la configuracion FUNCIONAL del cliente
 #
-#    SI viajan los *.config que acompanan al binario (RSProcIN.exe.config y las DLL .config): llevan
-#    los binding redirects, y si no coinciden con las DLL desplegadas da FileLoadException ->
-#    StackOverflow (es justo lo que vigila el gate de binding redirects de installer-batch.ps1).
-#    Separarlos del binario que los necesita seria introducir esa regresion.
+#    SI viaja el <Exe>.exe.config que acompana al binario (RSProcIN.exe.config): lleva los binding
+#    redirects, y si no coinciden con las DLL desplegadas da FileLoadException -> StackOverflow (es
+#    justo lo que vigila el gate de binding redirects de installer-batch.ps1). Separarlo del binario
+#    que lo necesita seria introducir esa regresion. Lo genera MSBuild en bin\<Config>\: esa es la
+#    unica copia valida (ver references\batch-config.md). Los <proyecto>.dll.config ya no se generan.
 #
 #    NO viaja la configuracion funcional del entorno del cliente:
 #      - web.config (a cualquier nivel de AgendaWeb)

@@ -397,7 +397,7 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **47 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **48 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
@@ -477,7 +477,7 @@ skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-
 agents/           51 subagentes: pipeline y modos directos
 commands/         49 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 47 tools
+mcp/              servidor MCP con 48 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

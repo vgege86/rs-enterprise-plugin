@@ -42,9 +42,12 @@ batch (`rsprocin.exe` + `rsprocin.xml`) y `appsettings*.json`. El hook los exclu
 `Instalar.ps1` aborta si los encuentra; los parámetros nuevos se documentan en `readme.txt` para que
 el cliente los añada a su propia configuración.
 
-✅ **Los `*.config` del binario SÍ viajan** (`RSProcIN.exe.config`, `<dll>.config`): llevan los
-binding redirects, y entregar la DLL sin su `.config` alineado provoca `FileLoadException` →
-`StackOverflow` en arranque. No los retires del paquete.
+✅ **El `<Exe>.exe.config` SÍ viaja siempre** (`RSProcIN.exe.config`): lleva los binding redirects, y
+entregar la DLL sin su `.config` alineado provoca `FileLoadException` → `StackOverflow` en arranque.
+No lo retires del paquete. Lo genera MSBuild en `bin\<Config>\` — esa es la única copia válida:
+⛔ nunca lo reconstruyas ni lo copies desde el árbol de fuentes. Los `<proyecto>.dll.config` ya no se
+generan y `Batch\App.Batch.config` es fuente de compilación, no desplegable
+(ver `references/batch-config.md`).
 
 ⛔ No modifica código fuente. No ejecuta ningún SQL: los genera.
 
@@ -59,6 +62,19 @@ binding redirects, y entregar la DLL sin su `.config` alineado provoca `FileLoad
    **descarta desarrollos posteriores**).
 5. `destino = C:\AIS\<proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>` (AAAAMMDD = fecha de corte).
    Si ya existe → preguntar: regenerar encima o crear `<...>_2`. No borrar sin confirmación.
+6. **Configuración de los batch centralizada** → `check_batch_config(workspace)` (fallback
+   `hooks\batch-centralizar.ps1 "<workspace>"`, modo informe, no escribe nada). Solo si la entrega
+   incluye alguna solución de tipo `batch`.
+   - `status: OK` → seguir.
+   - `status: NEEDS_ACTION` → ⛔ **PARADA**. Decide qué lleva el paquete: sin centralizar, cada
+     `.exe.config` se mantiene a mano y sus bindingRedirects se desalinean del DLL entregado
+     (`FileLoadException` → `StackOverflow` en el cliente). Presentar el reparto
+     (`centralizable` / `excepcion` / `revisar`) y **proponer centralizar antes de compilar**. Solo
+     tras confirmación explícita: `.\hooks\batch-centralizar.ps1 "<workspace>" -Aplicar`. Si el
+     usuario declina, continuar y **decirlo en el SUMMARY**.
+   - `status: BLOCKED` → reportar el motivo y no centralizar (el hook no escribe nada en ese estado).
+   - ⛔ Los proyectos `excepcion` conservan su `app.config`: no proponer nunca unificarlos.
+     Convención: `references/batch-config.md`.
 
 # PASO 1 — Config  `docs\<proyecto>-actualizador.json`
 

@@ -2,7 +2,7 @@
 name: rs-editor-build
 description: Etapa final del pipeline RS Enterprise Agent — compila, genera artefactos y despliega en AIS. Mecánica pero cara si reporta OK sin evidencia real. Invocado por el orquestador tras validator + tester OK (paso 9), nunca por el usuario.
 model: haiku
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, Read, Bash, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, mcp__plugin_rs-enterprise-agent_rs-workspace__check_batch_config, Read, Bash, Glob
 ---
 
 > Problemas comunes de build/deploy: `references/troubleshooting.md`
@@ -49,6 +49,20 @@ Antes de ejecutar:
 4. Copiar a AIS: `C:\ais\<proyecto>\Procesos\Exes\`
 
 COMMAND: `.\hooks\batch-build.ps1 <Solution> "<workspace>"`
+
+### Configuración centralizada de los batch (detectar y PROPONER, nunca aplicar aquí)
+
+Tras el build, y **solo en `tipo=Batch`**: `check_batch_config(workspace)` (solo lectura).
+Si devuelve `status: NEEDS_ACTION`, este workspace sigue con un `app.config` por proyecto en vez de
+`Batch\App.Batch.config` + `Batch\Directory.Build.targets`. Eso es lo que hace que los
+bindingRedirects se mantengan a mano y acaben desalineados del DLL desplegado
+(`FileLoadException` → `StackOverflow`), y lo que deja `*.dll.config` huérfanos en las carpetas de
+despliegue. Convención: `references/batch-config.md`.
+
+⛔ **No centralizar desde aquí.** Esta etapa **solo informa**: devolver el campo `BATCH_CONFIG` del
+contrato con el reparto (`centralizable` / `excepcion` / `revisar`) y dejar que el orquestador lo
+proponga al usuario. Escribir en el workspace exige confirmación humana, igual que `NEW_PATTERN`.
+`status: OK` o `BLOCKED`, o solución no-Batch → `BATCH_CONFIG` vacío.
 
 ## Online
 
@@ -110,7 +124,9 @@ Si falta la evidencia → STATUS=FAIL con las últimas líneas de error. ⛔ Nun
 
 ```
 FILES_CHANGED:
+BATCH_CONFIG: <vacío | "NO_CENTRALIZADO: N centralizable(s), M excepcion(es), K a revisar">
 SUMMARY: <1 línea, incluir evidencia concreta: "exit 0, copiado a C:\ais\...\Exes" o "MSBuild 0 Error(s)">
 STATUS: OK|FAIL
 ```
 `FILES_CHANGED` queda vacío — esta etapa no edita código fuente (genera binarios/artefactos fuera del repo).
+`BATCH_CONFIG` no vacío = **propuesta**, no acción: la centralización la confirma el usuario.

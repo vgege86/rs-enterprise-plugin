@@ -205,6 +205,43 @@ $readme = Join-Path $destino "readme.txt"
 if (!(Test-Path $readme)) {
     $titulo = if ($modo -eq 'Instalacion') { "INSTALACION LIMPIA" } else { "ACTUALIZADOR" }
     $ent    = if ($entorno) { " - entorno $entorno" } else { "" }
+    # Nota de configuracion: son DOS bloques OPUESTOS y antes iban en el mismo saco. El
+    # <Exe>.exe.config acompana a su binario y lleva los bindingRedirects — si no viaja, el destino
+    # conserva el config viejo y el EXE revienta con FileLoadException; es lo que ya hace bien
+    # actualizador-build.ps1 y lo que vigila el gate de binding redirects de installer-batch.ps1.
+    # La configuracion del entorno del cliente es justo lo contrario: si viajara, machacaria los
+    # ajustes del destino. Esto es lo que lee Operaciones para decidir que copia.
+    $notaConfig = if ($modo -eq 'Actualizacion') {
+        @(
+            "NOTA SOBRE LOS FICHEROS DE CONFIGURACION",
+            "",
+            "   SI VIAJA SIEMPRE:",
+            "     <Exe>.exe.config   Acompana a su binario y lleva los bindingRedirects. Si no se",
+            "                        copia, el destino conserva el config viejo y el proceso falla",
+            "                        al arrancar con FileLoadException. Va junto al .exe, siempre;",
+            "                        no se separa de el ni se reconstruye a mano.",
+            "",
+            "   NO VIAJA NUNCA (es configuracion del entorno del cliente):",
+            "     web.config         a cualquier nivel de AgendaWeb",
+            "     appsettings*.json  configuracion del host y de los modulos",
+            "     <proceso>.xml      el XML de configuracion de cada batch (RSCore.xml, RSActBD.xml,",
+            "                        Mul2Bane.xml, RSProcOut.xml, ...)",
+            "",
+            "   Estos ultimos se modifican A MANO en el destino: llevan las cadenas de conexion,",
+            "   rutas y credenciales del cliente. Los parametros nuevos van en el punto 3."
+        )
+    } else {
+        @(
+            "NOTA SOBRE LOS FICHEROS DE CONFIGURACION",
+            "",
+            "   En una instalacion limpia viaja TODO, incluida la configuracion: el cliente no tiene",
+            "   nada previo que pisar. Pero los valores son de desarrollo — revisar el punto 3 y",
+            "   ajustar cadenas de conexion, rutas y credenciales antes de arrancar nada.",
+            "",
+            "   El <Exe>.exe.config lo genera MSBuild en cada build y lleva los bindingRedirects: la",
+            "   copia valida es la que acompana al binario. No reconstruirlo ni editarlo a mano."
+        )
+    }
     @(
         "$titulo - $proyecto$ent",
         "Generado: $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
@@ -219,8 +256,7 @@ if (!(Test-Path $readme)) {
         "3. PARAMETROS DE CONFIGURACION",
         "   (pendiente de completar)",
         "",
-        "NOTA: los ficheros de configuracion (web.config, *.exe.config) NO viajan en el paquete",
-        "      cuando es un actualizador: los parametros nuevos se anaden a mano segun el punto 3."
+        $notaConfig
     ) | Set-Content $readme -Encoding UTF8
     $copiados += "readme.txt (esqueleto)"
 }

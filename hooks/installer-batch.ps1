@@ -18,10 +18,17 @@
 
 .PARAMETER workspace  Ruta trunk del proyecto (ej. C:\SVN\RS\<Proyecto>\trunk)
 .PARAMETER destino    Carpeta Instalador (ej. C:\AIS\<Proyecto>\Instalador)
+.PARAMETER OmitirProcesosExes  No auditar C:\ais\<Proyecto>\Procesos\Exes en los gates de binding
+                      redirects y ODP.NET. Salida de emergencia: por defecto esa carpeta SI se
+                      audita (ver Paso F).
+.PARAMETER LimpiarDllConfig    Borra los *.dll.config huerfanos de las carpetas de despliegue en
+                      vez de solo listarlos. Opt-in: es destructivo sobre carpetas compartidas.
 #>
 param(
     [Parameter(Mandatory=$true)][string]$workspace,
-    [Parameter(Mandatory=$true)][string]$destino
+    [Parameter(Mandatory=$true)][string]$destino,
+    [switch]$OmitirProcesosExes,
+    [switch]$LimpiarDllConfig
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -45,6 +52,30 @@ if ($batch.Count -eq 0) {
 # DLLs compartidas que se enlazan por nombre simple y provocan frankenbuilds si quedan de otro build.
 # Override por JSON (sharedAssemblies); default = las tres del stack RS.
 $sharedAssemblies = if ($cfg.sharedAssemblies) { @($cfg.sharedAssemblies) } else { @('Comun','BusComun','RSModel') }
+
+# ---------------------------------------------------------------------------------------------------
+# Paso 0 — ¿Está centralizada la configuración de los batch en este workspace?
+#          Centralizada = Batch\App.Batch.config + Batch\Directory.Build.targets (ver
+#          references\batch-config.md). Con ese mecanismo, MSBuild GENERA cada <Exe>.exe.config en
+#          bin\<Config>\ con los bindingRedirects al día; sin él, cada app.config por proyecto se
+#          mantiene a mano y se desincroniza del DLL desplegado — justo lo que caza el gate F.
+#          Advisory, no bloqueante: los workspaces que aún no lo han adoptado deben seguir compilando.
+# ---------------------------------------------------------------------------------------------------
+$batchDir        = Join-Path $workspace "Batch"
+$appBatchConfig  = Join-Path $batchDir "App.Batch.config"
+$dirBuildTargets = Join-Path $batchDir "Directory.Build.targets"
+$centralizado    = (Test-Path $appBatchConfig) -and (Test-Path $dirBuildTargets)
+if (-not $centralizado) {
+    Write-Host ""
+    Write-Host "AVISO ⚠ la configuración de los batch NO está centralizada en este workspace:"
+    if (!(Test-Path $appBatchConfig))  { Write-Host "  falta Batch\App.Batch.config" }
+    if (!(Test-Path $dirBuildTargets)) { Write-Host "  falta Batch\Directory.Build.targets" }
+    Write-Host "  -> con app.config por proyecto, los bindingRedirects se mantienen a mano y acaban"
+    Write-Host "     desalineados con el DLL desplegado (FileLoadException -> StackOverflow al arrancar)."
+    Write-Host "  -> informe:      .\hooks\batch-centralizar.ps1 `"$workspace`""
+    Write-Host "     centralizar:   .\hooks\batch-centralizar.ps1 `"$workspace`" -Aplicar"
+    Write-Host "     convención:    references\batch-config.md"
+}
 
 # --- Localizar msbuild via vswhere (VS2022; no está en PATH) — mismo patrón que installer-agendaweb ---
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -205,50 +236,169 @@ if ($stragglers.Count -gt 0) {
 Write-Host "`nGate de coherencia OK — $exeCount .exe + DLLs compartidas ($($sharedAssemblies -join '/')) de este build."
 
 # ---------------------------------------------------------------------------------------------------
+# Carpetas de despliegue que auditan los gates F y G. Son DOS carpetas compartidas con dueños
+# distintos y ambas sufren last-writer-wins:
+#   <destino>\EXES                     la que produce esta ejecución
+#   C:\ais\<Proyecto>\Procesos\Exes    la carpeta viva, que escribe batch-build.ps1 en cada desarrollo
+# Auditar solo la primera dejaba pasar el desalineo de la segunda, que es donde los procesos corren
+# de verdad. -OmitirProcesosExes es la salida de emergencia para generar el paquete con la carpeta
+# viva sucia.
+# ---------------------------------------------------------------------------------------------------
+$carpetasDeploy = @([pscustomobject]@{ Etiqueta = "paquete"; Ruta = $exesDir })
+$procesosExes   = "C:\ais\$proyecto\Procesos\Exes"   # misma convencion que batch-build.ps1
+if ($OmitirProcesosExes) {
+    Write-Host "`nAVISO: -OmitirProcesosExes — los gates NO auditan $procesosExes."
+} elseif (Test-Path $procesosExes) {
+    $carpetasDeploy += [pscustomobject]@{ Etiqueta = "carpeta viva"; Ruta = $procesosExes }
+} else {
+    Write-Host "`nAVISO: no existe $procesosExes — los gates solo auditan la carpeta del paquete."
+}
+Write-Host "Carpetas auditadas por los gates:"
+$carpetasDeploy | ForEach-Object { Write-Host ("  {0}: {1}" -f $_.Etiqueta, $_.Ruta) }
+
+# ---------------------------------------------------------------------------------------------------
 # Paso F — GATE DE BINDING REDIRECTS (bloqueante). En carpeta de deploy compartida, last-writer-wins
 #          puede dejar un <exe>.exe.config viejo (bindingRedirect newVersion=X) junto a una
 #          System.*.dll/tercero nueva (AssemblyVersion=Y). El redirect apunta a una versión que ya no
 #          existe → FileLoadException en bucle → StackOverflow (RSActBD/RSCore). "Terceros
 #          version-pinned = OK" es FALSO en carpeta compartida. Para cada redirect cuyo DLL está
 #          físicamente desplegado, newVersion debe == AssemblyName.Version real del DLL.
+#
+#          ⛔ Un gate que NO puede evaluar no reporta OK. Todo fallo de lectura (XML ilegible,
+#          SelectNodes roto, versión de DLL no leíble) se acumula en $bindingNoEvaluable y hace
+#          exit 1, en vez de saltarse la comprobación con un AVISO y acabar imprimiendo "OK".
+#          Única excepción legítima: BadImageFormatException = el fichero no es un assembly
+#          gestionado (un nativo que coincide en nombre con la identidad del redirect), así que ese
+#          redirect no aplica a ese fichero y saltarlo es correcto.
 # ---------------------------------------------------------------------------------------------------
 $asmNs = 'urn:schemas-microsoft-com:asm.v1'
-$bindingMismatch = @()
-foreach ($cfgFile in @(Get-ChildItem $exesDir -File -Filter "*.exe.config" -ErrorAction SilentlyContinue)) {
-    try { $xml = [xml](Get-Content $cfgFile.FullName -Raw) } catch {
-        Write-Host "AVISO: no se pudo parsear $($cfgFile.Name) — se omite del gate de binding."
-        continue
-    }
-    $nsm = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
-    $nsm.AddNamespace('a', $asmNs)
-    foreach ($dep in @($xml.SelectNodes('//a:dependentAssembly', $nsm))) {
-        $ident    = $dep.SelectSingleNode('a:assemblyIdentity', $nsm)
-        $redirect = $dep.SelectSingleNode('a:bindingRedirect', $nsm)
-        if (-not $ident -or -not $redirect) { continue }
-        $name = $ident.name
-        $newVer = $redirect.newVersion
-        if (-not $name -or -not $newVer) { continue }
-
-        $dll = Join-Path $exesDir "$name.dll"
-        if (!(Test-Path $dll)) { continue }  # no desplegada → se resuelve de GAC, no aplica
-
-        try { $realVer = [System.Reflection.AssemblyName]::GetAssemblyName($dll).Version } catch {
-            Write-Host "AVISO: no se pudo leer la versión de $name.dll — se omite."
+$bindingMismatch    = @()
+$bindingNoEvaluable = @()
+foreach ($carpeta in $carpetasDeploy) {
+    foreach ($cfgFile in @(Get-ChildItem $carpeta.Ruta -File -Filter "*.exe.config" -ErrorAction SilentlyContinue)) {
+        try { $xml = [xml](Get-Content $cfgFile.FullName -Raw) } catch {
+            $bindingNoEvaluable += ("  {0} · {1}: XML ilegible — {2}" -f $carpeta.Etiqueta, $cfgFile.Name, $_.Exception.Message)
             continue
         }
-        try { $cfgVer = [version]$newVer } catch { $cfgVer = $null }
-        if ($cfgVer -eq $null -or $realVer -ne $cfgVer) {
-            $bindingMismatch += ("  {0} · {1}: config newVersion={2} != DLL AssemblyVersion={3}" -f $cfgFile.Name, $name, $newVer, $realVer)
+        $nsm = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+        $nsm.AddNamespace('a', $asmNs)
+        try { $deps = @($xml.SelectNodes('//a:dependentAssembly', $nsm)) } catch {
+            $bindingNoEvaluable += ("  {0} · {1}: SelectNodes falló — {2}" -f $carpeta.Etiqueta, $cfgFile.Name, $_.Exception.Message)
+            continue
+        }
+        foreach ($dep in $deps) {
+            $ident    = $dep.SelectSingleNode('a:assemblyIdentity', $nsm)
+            $redirect = $dep.SelectSingleNode('a:bindingRedirect', $nsm)
+            if (-not $ident -or -not $redirect) { continue }
+            $name = $ident.name
+            $newVer = $redirect.newVersion
+            if (-not $name -or -not $newVer) { continue }
+
+            $dll = Join-Path $carpeta.Ruta "$name.dll"
+            if (!(Test-Path $dll)) { continue }  # no desplegada → se resuelve de GAC, no aplica
+
+            try { $realVer = [System.Reflection.AssemblyName]::GetAssemblyName($dll).Version }
+            catch [System.BadImageFormatException] {
+                Write-Host "AVISO: $($carpeta.Etiqueta) · $name.dll no es un assembly gestionado — el redirect no aplica a ese fichero."
+                continue
+            }
+            catch {
+                $bindingNoEvaluable += ("  {0} · {1}: no se pudo leer la versión de {2}.dll — {3}" -f $carpeta.Etiqueta, $cfgFile.Name, $name, $_.Exception.Message)
+                continue
+            }
+            try { $cfgVer = [version]$newVer } catch { $cfgVer = $null }
+            if ($cfgVer -eq $null -or $realVer -ne $cfgVer) {
+                $bindingMismatch += ("  {0} · {1} · {2}: config newVersion={3} != DLL AssemblyVersion={4}" -f $carpeta.Etiqueta, $cfgFile.Name, $name, $newVer, $realVer)
+            }
         }
     }
+}
+if ($bindingNoEvaluable.Count -gt 0) {
+    Write-Host "`nERROR: gate de binding redirects — NO SE PUDO EVALUAR (un gate que no evalúa no reporta OK):"
+    $bindingNoEvaluable | ForEach-Object { Write-Host $_ }
+    Write-Host "  -> revisar esos ficheros. NO desplegar hasta que el gate pueda ejecutarse entero."
+    exit 1
 }
 if ($bindingMismatch.Count -gt 0) {
     Write-Host "`nERROR: gate de binding redirects — config y DLL desalineados (FileLoadException → StackOverflow):"
     $bindingMismatch | ForEach-Object { Write-Host $_ }
     Write-Host "  -> el .exe.config apunta a una versión de assembly que no está desplegada. NO desplegar."
+    Write-Host "  -> el .exe.config válido es el que MSBuild genera en bin\<Config>\; nunca se reconstruye a mano."
     exit 1
 }
-Write-Host "Gate de binding redirects OK — newVersion de cada .exe.config coincide con el DLL desplegado."
+Write-Host "Gate de binding redirects OK — $($carpetasDeploy.Count) carpeta(s): newVersion de cada .exe.config coincide con el DLL desplegado."
+
+# ---------------------------------------------------------------------------------------------------
+# Paso G — GATE DE DEPENDENCIAS ODP.NET (bloqueante). Fallo silencioso en build, explosivo en
+#          ejecución: Comun.dll no referencia System.Text.Json & cía en su IL — quien las usa es
+#          Oracle.ManagedDataAccess.dll. Al compilar un EXE, MSBuild sigue la cadena
+#          Comun.dll -> Oracle.ManagedDataAccess.dll -> System.Text.Json <ver>, no encuentra esa
+#          versión en packages y DESCARTA la referencia SIN NINGÚN WARNING. El bin queda sin esas DLL
+#          y el proceso muere en el primer acceso a BD con un TypeInitializationException de
+#          OracleCommand. Aquí se exige presencia FÍSICA junto a Oracle.ManagedDataAccess.dll.
+#          Override por JSON (odpDependencies); default = los 7 satélites del stack.
+# ---------------------------------------------------------------------------------------------------
+$odpDependencies = if ($cfg.odpDependencies) { @($cfg.odpDependencies) } else { @(
+    'System.Text.Json', 'System.Diagnostics.DiagnosticSource', 'System.Text.Encodings.Web',
+    'System.Collections.Immutable', 'System.IO.Pipelines', 'System.Formats.Asn1',
+    'Microsoft.Bcl.AsyncInterfaces') }
+$odpFaltan   = @()
+$odpAuditadas = 0
+foreach ($carpeta in $carpetasDeploy) {
+    if (!(Test-Path (Join-Path $carpeta.Ruta "Oracle.ManagedDataAccess.dll"))) { continue }
+    $odpAuditadas++
+    foreach ($d in $odpDependencies) {
+        if (!(Test-Path (Join-Path $carpeta.Ruta "$d.dll"))) {
+            $odpFaltan += ("  {0}: falta {1}.dll" -f $carpeta.Etiqueta, $d)
+        }
+    }
+}
+if ($odpFaltan.Count -gt 0) {
+    Write-Host "`nERROR: gate de dependencias ODP.NET — Oracle.ManagedDataAccess.dll desplegado sin sus satélites:"
+    $odpFaltan | ForEach-Object { Write-Host $_ }
+    Write-Host "  -> MSBuild descartó esas referencias en silencio (sin warning) al no encontrar la versión"
+    Write-Host "     que pide Oracle.ManagedDataAccess.dll. El proceso arranca bien y muere en el primer"
+    Write-Host "     acceso a BD con: 'Se produjo una excepción en el inicializador de tipo de"
+    Write-Host "     Oracle.ManagedDataAccess.Client.OracleCommand'."
+    Write-Host "  -> declararlas en Batch\Directory.Build.targets con HintPath y <Private>true</Private>"
+    Write-Host "     (ver references\batch-config.md). NO desplegar."
+    exit 1
+}
+if ($odpAuditadas -gt 0) {
+    Write-Host "Gate de dependencias ODP.NET OK — $($odpDependencies.Count) satélites presentes en $odpAuditadas carpeta(s)."
+} else {
+    Write-Host "Gate de dependencias ODP.NET: no aplica — Oracle.ManagedDataAccess.dll no está desplegado."
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Paso H — *.dll.config huérfanos (advisory; barrido solo con -LimpiarDllConfig).
+#          Con la configuración centralizada ya no se generan: el CLR no lee <dll>.config para
+#          binding y eran ruido. Los que quedan en las carpetas de despliegue son residuos de builds
+#          anteriores. Solo se comprueba si el workspace ESTÁ centralizado: sin centralizar, un
+#          <dll>.config puede seguir siendo legítimo.
+# ---------------------------------------------------------------------------------------------------
+if ($centralizado) {
+    $dllConfigs = @()
+    foreach ($carpeta in $carpetasDeploy) {
+        Get-ChildItem $carpeta.Ruta -File -Filter "*.dll.config" -ErrorAction SilentlyContinue |
+            ForEach-Object { $dllConfigs += [pscustomobject]@{ Etiqueta = $carpeta.Etiqueta; File = $_ } }
+    }
+    if ($dllConfigs.Count -gt 0) {
+        Write-Host ""
+        if ($LimpiarDllConfig) {
+            Write-Host "Barrido de *.dll.config huérfanos ($($dllConfigs.Count)):"
+            foreach ($x in $dllConfigs) {
+                Remove-Item $x.File.FullName -Force -ErrorAction SilentlyContinue
+                Write-Host ("  borrado  {0} · {1}" -f $x.Etiqueta, $x.File.Name)
+            }
+        } else {
+            Write-Host "AVISO ⚠ $($dllConfigs.Count) *.dll.config huérfanos (la configuración centralizada ya no los genera):"
+            $dllConfigs | ForEach-Object { Write-Host ("  {0} · {1}" -f $_.Etiqueta, $_.File.Name) }
+            Write-Host "  -> el CLR no los lee para binding; son residuos de builds anteriores."
+            Write-Host "  -> para borrarlos: repetir con -LimpiarDllConfig."
+        }
+    }
+}
 
 Write-Host "`n== Resumen BATCH: $($batch.Count - $fallos.Count)/$($batch.Count) OK =="
 if ($fallos.Count -gt 0) {

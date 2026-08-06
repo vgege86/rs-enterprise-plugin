@@ -105,7 +105,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 | `plan-check` | `rs-enterprise-agent:rs-editor-plan-check` | `plan`, `FILES_CHANGED` | `STATUS: OK\|INCOMPLETE` + `MISSING` |
 | `validator` | `rs-enterprise-agent:rs-editor-validator` | `FILES_CHANGED` | `STATUS: OK\|FAIL` + `ERRORS` |
 | `tester` | `rs-enterprise-agent:rs-editor-tester` | `FILES_CHANGED`, `IDIOMAS_HINT`, confirmación Validator PASS | `STATUS: OK\|FAIL\|NEEDS_TESTS` |
-| `build` | `rs-enterprise-agent:rs-editor-build` | `tipo`, `workspace` | `SUMMARY` con evidencia de copia a AIS |
+| `build` | `rs-enterprise-agent:rs-editor-build` | `tipo`, `workspace` | `SUMMARY` con evidencia de copia a AIS + `BATCH_CONFIG` |
 | `db-modeler` | `rs-enterprise-agent:rs-editor-db-modeler` | `TABLES_TOUCHED`, `FILES_CHANGED` (modo incremental) | `SUMMARY` |
 | `documentar` | `rs-enterprise-agent:rs-documentar` (UpdateDocs) | `CONTEXT`, `FILES_CHANGED`, `SUMMARY`, `NEW_PATTERN` | funcional + resumen actualizados + `TECNICA_PROPUESTA` (o vacío) |
 
@@ -118,6 +118,7 @@ Control de flujo (vive en el orquestador):
 - **build** solo si validator PASS + tester OK (o tester no estaba en `STAGES`) + sin dudas abiertas.
 - **Red de seguridad db-modeler:** si `core` devuelve `TABLES_TOUCHED` no vacío y `db-modeler` NO estaba en `STAGES` → ejecutarlo igualmente y anotarlo (única corrección empírica permitida sobre `STAGES`).
 - **Manual técnico (patrón nuevo):** si `core` devuelve `NEW_PATTERN` no vacío, asegurar que `documentar` corre (si no estaba en `STAGES`, ejecutarlo). `documentar` **propone** el cambio al manual de convenciones (`TECNICA_PROPUESTA`) — ⛔ **no se escribe** en `tecnica/`. El orquestador surface la propuesta en el reporte final: `⚠️ Patrón nuevo → propuesta de manual técnico: <fichero/sección/diff>. Confirma para aplicar.` Solo tras "confirmo" del usuario se aplica (turno siguiente).
+- **Configuración de los batch sin centralizar:** si `build` devuelve `BATCH_CONFIG` no vacío, el workspace sigue con un `app.config` por proyecto en lugar de `Batch\App.Batch.config` + `Batch\Directory.Build.targets` — de ahí salen los bindingRedirects desalineados (`FileLoadException` → `StackOverflow`) y los `*.dll.config` huérfanos. Mismo idioma que `NEW_PATTERN`: la etapa **propone**, ⛔ **no escribe**. El orquestador surface en el reporte final: `⚠️ Batch sin configuración centralizada → propuesta: centralizar N proyecto(s) (M excepción(es) se conservan). Confirma para aplicar.` Solo tras "confirmo" se ejecuta `.\hooks\batch-centralizar.ps1 "<workspace>" -Aplicar` (turno siguiente), y después hay que recompilar. Convención: `references/batch-config.md`.
 
 **4. Checklist final** → **Gate B** (`references/gates.md`). ⛔ Verificar evidencia real antes de reportar éxito.
 **5. Log** → **siempre** (`references/gates.md`), con `agents=<etapas de STAGES ejecutadas>`.

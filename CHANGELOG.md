@@ -1,5 +1,87 @@
 # RS Enterprise Agent — Changelog
 
+## 3.7.0 — 2026-08-06
+
+### El gate de binding redirects miraba una sola de las dos carpetas de despliegue
+
+`installer-batch.ps1` audita `<destino>\EXES`, la carpeta que produce él mismo. Pero los batch se
+despliegan a **dos** carpetas compartidas con dueños distintos: esa y `C:\ais\<Proyecto>\Procesos\Exes`,
+que escribe `batch-build.ps1` en cada desarrollo. Las dos sufren last-writer-wins y la segunda es
+donde los procesos corren de verdad, así que un `.exe.config` viejo junto a un DLL nuevo allí rompe el
+entorno **aunque el paquete esté impecable**. En una instalación de cliente había desalineos en las dos
+a la vez y el gate solo podía ver los de una. Ahora audita ambas; `-OmitirProcesosExes` excluye la
+carpeta viva como salida de emergencia.
+
+Segundo agujero en el mismo gate: los `catch` reportaban `AVISO` y hacían `continue`. Un `.exe.config`
+ilegible o un DLL cuya versión no se puede leer se saltaban la comprobación y el script terminaba
+imprimiendo `Gate de binding redirects OK`. **Un gate que no puede evaluar no reporta OK**: ahora todo
+fallo de lectura acumula y hace `exit 1`. Única excepción, `BadImageFormatException` — el fichero no es
+un assembly gestionado, luego ese redirect no le aplica y saltarlo es correcto.
+
+### Gate nuevo: dependencias de ODP.NET presentes junto a `Oracle.ManagedDataAccess.dll`
+
+Fallo silencioso en build y explosivo en ejecución. `Comun.dll` no referencia `System.Text.Json` y
+compañía en su IL — quien las usa es `Oracle.ManagedDataAccess.dll`. Al compilar un EXE, MSBuild sigue
+la cadena `Comun.dll → Oracle.ManagedDataAccess.dll → System.Text.Json <ver>`, no encuentra esa versión
+en `packages` y **descarta la referencia sin ningún warning**. El `bin` queda sin esas DLL, el proceso
+arranca con normalidad y muere en el primer acceso a BD con `Se produjo una excepción en el
+inicializador de tipo de 'Oracle.ManagedDataAccess.Client.OracleCommand'`.
+
+El gate exige presencia física de los 7 satélites en cada carpeta de despliegue donde esté ODP.NET
+(`odpDependencies` en el JSON del proyecto para ampliar la lista).
+
+### La nota del readme metía en el mismo saco dos cosas opuestas
+
+`instalacion-paquete.ps1` escribía *"los ficheros de configuracion (web.config, \*.exe.config) NO
+viajan en el paquete"*. El `<Exe>.exe.config` **sí viaja siempre**: acompaña a su binario y lleva los
+bindingRedirects; si no viaja, el destino conserva el config viejo y el EXE revienta con
+`FileLoadException`. Es lo que ya hacía bien `actualizador-build.ps1`, con el que la nota se
+contradecía. Lo que no viaja nunca es la configuración del entorno del cliente: `web.config`,
+`appsettings*.json` y los XML de configuración de proceso.
+
+La nota se reescribe en dos bloques separados y depende del modo (en instalación limpia viaja todo,
+pero con valores de desarrollo). Es texto del readme, no había exclusión funcional mal — pero es lo que
+lee Operaciones para decidir qué copia.
+
+### Configuración centralizada de los batch: convención, detección y adopción
+
+Los batch .NET 4.8/4.8.1 pueden sustituir el `app.config` por proyecto por dos ficheros en `Batch\`:
+`App.Batch.config` (configuración común, **sin** bloque `<runtime>`) y `Directory.Build.targets`
+(asigna `<AppConfig>`, activa `AutoGenerateBindingRedirects` y declara las dependencias de ODP.NET con
+`HintPath` y `<Private>true</Private>`). El plugin no lo conocía. Consecuencias que ahora refleja:
+
+- El `<Exe>.exe.config` **ya no existe como fuente**: lo genera MSBuild y la única copia válida es la
+  de `bin\<Config>\`. Nunca reconstruirlo ni copiarlo del árbol de fuentes.
+- `Batch\App.Batch.config` **no es desplegable**: es fuente de compilación.
+- Los `<proyecto>.dll.config` ya no se generan — el CLR no los lee para binding. `installer-batch.ps1`
+  avisa de los huérfanos y con `-LimpiarDllConfig` los barre.
+- **Excepción por proyecto**: `<AppConfig>` solo se asigna si no hay `app.config` propio. Los procesos
+  que hospedan un AppDomain hijo conservan el suyo por `<probing privatePath>`, `loadFromRemoteSources`
+  y sus bindingRedirect, que MSBuild no puede autogenerar. ⛔ No unificarlos.
+- `batch-build.ps1` usa `dotnet build`: verificado que aplica el `Directory.Build.targets` y genera el
+  `.exe.config` completo. No se cambia.
+
+**Nuevo** `hooks/batch-centralizar.ps1 <workspace> [-Aplicar]` + tool MCP `check_batch_config`
+(informe, solo lectura — centralizar no se expone como tool porque escribe en el workspace). Clasifica
+cada proyecto en `centralizable` / `excepcion` / `revisar` y **solo retira los primeros**. Los
+`HintPath` del `.targets` se derivan de los `<Reference>` que ya existen: si alguno no se resuelve
+devuelve `BLOCKED` y **no escribe nada**, porque un `.targets` a medias no arregla el descarte
+silencioso de referencias. Plantillas versionadas en `assets/batch/`.
+
+Se propone en dos momentos, y en los dos lo **confirma una persona**: `/rs-instalador` y
+`/rs-actualizador` lo comprueban en el PASO 0 (cambia qué lleva el paquete), y en el pipeline la etapa
+`build` devuelve `BATCH_CONFIG` y el orquestador surface la propuesta — mismo idioma que `NEW_PATTERN`.
+
+`tests/BatchCentralizar.Tests.ps1` (13 tests Pester) fija la clasificación, que el modo informe no
+escriba, la idempotencia y que `BLOCKED` no deje nada a medias.
+
+Ficheros: `hooks/installer-batch.ps1`, `hooks/instalacion-paquete.ps1`, `hooks/batch-centralizar.ps1`
+(nuevo), `hooks/actualizador-build.ps1`, `assets/batch/*.tpl` (nuevos), `references/batch-config.md`
+(nuevo), `references/actualizador.md`, `references/hooks.md`, `references/mcp.md`, `hooks/README.md`,
+`agents/rs-instalador.md`, `agents/rs-actualizador.md`, `agents/rs-editor-build.md`,
+`skills/rs-enterprise-agent/SKILL.md`, `mcp/rs-workspace-server.py`, `docs/plugin-architecture.md`,
+`README.md`, `tests/BatchCentralizar.Tests.ps1` (nuevo).
+
 ## 3.6.1 — 2026-08-06
 
 ### Las tres propiedades que sostienen la etapa de scripts del instalador eran un comentario

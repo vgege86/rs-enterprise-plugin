@@ -76,8 +76,15 @@ Hay que distinguir dos cosas que ambas "son .config":
 
 | Qué | En un actualizador | Por qué |
 |-----|--------------------|---------|
-| `*.config` **del binario** — `RSProcIN.exe.config`, `<dll>.config` | ✅ **viaja** | Llevan los binding redirects. Entregar la DLL sin su `.config` alineado da `FileLoadException` → `StackOverflow` en arranque (es lo que vigila el gate de binding redirects de `installer-batch.ps1`) |
+| `<Exe>.exe.config` **del binario** — `RSProcIN.exe.config` | ✅ **viaja siempre** | Lleva los binding redirects. Entregar la DLL sin su `.config` alineado da `FileLoadException` → `StackOverflow` en arranque (es lo que vigila el gate de binding redirects de `installer-batch.ps1`). Lo **genera MSBuild** en `bin\<Config>\`: esa es la única copia válida, nunca se reconstruye a mano ni se copia del árbol de fuentes |
 | **Configuración funcional del entorno** — `web.config` de la web, `<proceso>.xml` de cada batch (`rsprocin.exe` → `rsprocin.xml`), `appsettings*.json` | ⛔ **no viaja** | Es del cliente: tiene sus cadenas de conexión, rutas y credenciales. Pisarla rompe su instalación |
+| `Batch\App.Batch.config` | ⛔ **no viaja** | Es **fuente de compilación**, no configuración de ejecución: nadie la lee en el destino |
+| `<proyecto>.dll.config` — `Comun.dll.config`, … | ⛔ **ya no se generan** | El CLR no los lee para binding. Los que queden en las carpetas de despliegue son residuos; `installer-batch.ps1` los avisa y con `-LimpiarDllConfig` los barre |
+
+⚠️ Los dos últimos son consecuencia de la **configuración centralizada de los batch**
+(`Batch\App.Batch.config` + `Batch\Directory.Build.targets`): convención completa en
+`references/batch-config.md`. En un workspace que aún no la haya adoptado, un `<dll>.config` puede
+seguir siendo legítimo.
 
 Triple defensa sobre la segunda:
 

@@ -40,7 +40,8 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 
 | Script | Uso |
 |--------|-----|
-| `installer-batch.ps1 <workspace> <destino>` | Rebuild Release de los batch activos → `<destino>\EXES` + gate de coherencia |
+| `installer-batch.ps1 <workspace> <destino> [-OmitirProcesosExes] [-LimpiarDllConfig]` | Rebuild Release de los batch activos → `<destino>\EXES` + tres gates: coherencia, binding redirects y dependencias ODP.NET. Los dos últimos auditan también `C:\ais\<Proyecto>\Procesos\Exes` (`-OmitirProcesosExes` la excluye) |
+| `batch-centralizar.ps1 <workspace> [-Aplicar]` | Informe (JSON, no escribe) de si la configuración de los batch está centralizada — `Batch\App.Batch.config` + `Batch\Directory.Build.targets` — y con `-Aplicar` la centraliza. Convención: `references/batch-config.md`. Tool MCP equivalente **solo del informe**: `check_batch_config` |
 | `installer-agendaweb.ps1 <workspace> <destino>` | Publish FileSystem de la Agenda Web → `<destino>\AgendaWeb` |
 | `installer-servicemanager.ps1 <workspace> <destino>` | `dotnet publish` host net8 + DLL de módulos → `<destino>\ServiceManager[\Modulos]` |
 | `installer-scripts.ps1 <workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <;-sep>]` | DDL + objetos + inserts paramétricas → `<destino>\Scripts`. Config de BD resuelta una vez (`RS_DB_CONFIG_JSON`, sin password); `-Solo`/`-Tablas` para regenerar solo una parte tras un fallo puntual |

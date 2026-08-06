@@ -19,7 +19,8 @@ config por cliente de `docs\<Proyecto>-instalador.json`.
 
 | Script | Parámetros | Descripción |
 |--------|-----------|-------------|
-| `hooks/installer-batch.ps1` | `<workspace> <destino>` | **Rebuild** Release (msbuild `/t:Rebuild`, wipe previo de bin/obj) de los csproj-exe de los batch activos (JSON `batch`) → copia EXEs a `<destino>\EXES`, con **gate de coherencia** (todos los .exe + DLLs compartidas del mismo build) |
+| `hooks/installer-batch.ps1` | `<workspace> <destino> [-OmitirProcesosExes] [-LimpiarDllConfig]` | **Rebuild** Release (msbuild `/t:Rebuild`, wipe previo de bin/obj) de los csproj-exe de los batch activos (JSON `batch`) → copia EXEs a `<destino>\EXES`. Tres gates bloqueantes: **coherencia** (todos los .exe + DLLs compartidas del mismo build), **binding redirects** y **dependencias ODP.NET**; los dos últimos auditan `<destino>\EXES` **y** `C:\ais\<Proyecto>\Procesos\Exes` |
+| `hooks/batch-centralizar.ps1` | `<workspace> [-Aplicar]` | Informa de si la configuración de los batch está centralizada (`Batch\App.Batch.config` + `Batch\Directory.Build.targets`) y con `-Aplicar` la centraliza. Fallback 1:1 de `check_batch_config` **solo en modo informe**: `-Aplicar` escribe en el workspace y exige confirmación humana. Ver `references/batch-config.md` |
 | `hooks/installer-agendaweb.ps1` | `<workspace> <destino>` | Publish FileSystem (msbuild `DeployTarget=WebPublish` + `PublishProfile` del JSON) de la Agenda Web → `<destino>\AgendaWeb` |
 | `hooks/installer-servicemanager.ps1` | `<workspace> <destino>` | `dotnet publish` host net8 → `<destino>\ServiceManager`; DLL de módulos activos → `\Modulos` |
 | `hooks/installer-scripts.ps1` | `<workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <lista ;-sep>]` | Llama a `scripts/installer-ddl.py` + `installer-objects.py` + `installer-inserts.py` → `<destino>\Scripts`. Resuelve la config de BD **una vez** y la pasa por `RS_DB_CONFIG_JSON` (sin password). `-Solo`/`-Tablas` regeneran una parte o unas tablas concretas tras un fallo puntual (`-Tablas` implica `-Solo inserts` y **no** reescribe `Inserts\_run_all.sql`) |
@@ -49,6 +50,23 @@ no en la consulta). Cap común de sesiones simultáneas: `parametricas.max_paral
   (`AssemblyVersion=Y`) → `FileLoadException` en bucle → StackOverflow. El hook verifica que, para cada
   redirect cuyo DLL está desplegado, `newVersion` == `AssemblyName.Version` real del DLL; si no → `exit
   1`. "Terceros version-pinned = OK" es falso en carpeta compartida.
+  ⛔ **Un gate que no puede evaluar no reporta OK**: XML ilegible, `SelectNodes` roto o versión de DLL
+  no leíble → `exit 1`, no un AVISO que se salta la comprobación. Única excepción, `BadImageFormatException`:
+  el fichero no es un assembly gestionado, así que ese redirect no le aplica.
+  ⛔ Audita **dos carpetas**, no una: `<destino>\EXES` (la que produce la ejecución) y
+  `C:\ais\<Proyecto>\Procesos\Exes` (la carpeta viva que escribe `batch-build.ps1`). Ambas son
+  compartidas y ambas sufren last-writer-wins; auditar solo la primera dejaba pasar el desalineo de
+  la segunda, que es donde los procesos corren de verdad. `-OmitirProcesosExes` la excluye.
+  Tercer gate (dependencias ODP.NET): si `Oracle.ManagedDataAccess.dll` está desplegado, exige la
+  presencia física de sus satélites (`System.Text.Json`, `System.Diagnostics.DiagnosticSource`,
+  `System.Text.Encodings.Web`, `System.Collections.Immutable`, `System.IO.Pipelines`,
+  `System.Formats.Asn1`, `Microsoft.Bcl.AsyncInterfaces`; override por JSON `odpDependencies`).
+  `Comun.dll` no las referencia en su IL — las usa `Oracle.ManagedDataAccess.dll` —, así que MSBuild
+  sigue la cadena, no encuentra la versión en `packages` y **descarta la referencia sin warning**: el
+  proceso arranca y muere en el primer acceso a BD con un `TypeInitializationException` de
+  `OracleCommand`. Ver `references/batch-config.md`.
+  Además avisa de los `*.dll.config` huérfanos (la configuración centralizada ya no los genera) y con
+  `-LimpiarDllConfig` los barre; y avisa —sin bloquear— si el workspace aún no está centralizado.
 - **AgendaWeb**: `DeployOnBuild` sin `DeployTarget=WebPublish` hace que msbuild empaquete
   (`obj\Release\Package\<app>.zip`) en vez de publicar a carpeta. `publishUrl` se pasa siempre como
   propiedad global para ganar al `PublishUrl` del `.pubxml`, que apunta al AIS **en vivo**.

@@ -335,7 +335,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**47 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**48 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -407,13 +407,14 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD |
-| `references/mcp.md` | Catálogo completo de las 47 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 48 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |
 | `references/troubleshooting.md` | Fallos comunes (p.ej. MSB4019) |
 | `references/jira.md` | Setup de la integración Jira (skill `rs-jira`): `.jira-dev-config.json`, credenciales, herramientas |
 | `references/actualizador.md` | Entregas a cliente: tabla `RVERSIONES`, cálculo del delta, qué se empaqueta en instalador vs actualizador, exclusión de configuración, `rutas.json`, orden de instalación |
+| `references/batch-config.md` | Configuración centralizada de los batch .NET Framework (`Batch\App.Batch.config` + `Batch\Directory.Build.targets`): qué es fuente y qué artefacto, excepciones por proyecto, dependencias de ODP.NET, adopción en un workspace |
 
 ---
 

@@ -51,6 +51,21 @@ aun así no aparecen, detener y pedir la raíz al usuario. Nunca asumir una vers
    - Si `model_exists` es false → detener: el DDL y los inserts necesitan `BD\<proyecto>-model.json`
      (sugerir `/rs-erd` para generarlo primero).
 2. Fijar `destino = C:\AIS\<proyecto>\Instalador`.
+3. **Configuración de los batch centralizada** → `check_batch_config(workspace)` (fallback
+   `hooks\batch-centralizar.ps1 "<workspace>"`, modo informe, no escribe nada).
+   - `status: OK` → seguir.
+   - `status: NEEDS_ACTION` → ⛔ **PARADA**. Cambia qué lleva el paquete: sin centralizar, cada
+     `.exe.config` se mantiene a mano y sus bindingRedirects se desalinean del DLL desplegado
+     (`FileLoadException` → `StackOverflow`), y quedan `*.dll.config` huérfanos que ya no genera
+     nadie. Presentar el reparto que devuelve el informe (`centralizable` / `excepcion` / `revisar`)
+     y **proponer centralizar antes de compilar**. Solo tras confirmación explícita del usuario:
+     `.\hooks\batch-centralizar.ps1 "<workspace>" -Aplicar` vía runner. Si el usuario declina,
+     continuar y **decirlo en el SUMMARY** — el paquete se genera con el mecanismo antiguo.
+   - `status: BLOCKED` → reportar el motivo (típicamente HintPath de ODP.NET sin resolver: hay que
+     restaurar paquetes) y no centralizar; el hook no escribe nada en ese estado.
+   - ⛔ Los proyectos `excepcion` (con `probing privatePath` / `loadFromRemoteSources`) **conservan su
+     `app.config`**: hospedan un AppDomain hijo y MSBuild no puede autogenerar esos bloques. No
+     proponer nunca unificarlos. Convención completa: `references/batch-config.md`.
 
 # PASO 1 — Gestión del JSON de config  `docs\<proyecto>-instalador.json`
 
@@ -146,13 +161,24 @@ El runner imprime el output del hook y termina con el exit code del hook.
 
 Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
 
-- **Batch:** `Gate de coherencia OK — ...` **Y** `Gate de binding redirects OK — ...` **Y** `Resumen
-  BATCH: N/N OK` + `<destino>\EXES` con `.exe`.
+- **Batch:** `Gate de coherencia OK — ...` **Y** `Gate de binding redirects OK — ...` **Y** `Gate de
+  dependencias ODP.NET OK — ...` (o `no aplica`) **Y** `Resumen BATCH: N/N OK` + `<destino>\EXES` con `.exe`.
   - `ERROR: gate de coherencia — ...` (exes/DLLs de otra fecha, o ningún .exe) = frankenbuild → **NO
     desplegar**, reportar los ficheros straggler que lista el hook.
   - `ERROR: gate de binding redirects — ...` (config newVersion != AssemblyVersion del DLL desplegado)
-    = FileLoadException → StackOverflow → **NO desplegar**, reportar el desalineo config/DLL.
-  - Un `Resumen ... OK` sin las dos líneas de gate no es evidencia suficiente.
+    = FileLoadException → StackOverflow → **NO desplegar**, reportar el desalineo config/DLL **y en qué
+    carpeta está** (`paquete` o `carpeta viva`): el gate audita `<destino>\EXES` y
+    `C:\ais\<proyecto>\Procesos\Exes`, y un fallo en la segunda significa que los procesos de ese
+    entorno están rotos ahora mismo. La corrección es la misma: recompilar y redesplegar.
+  - `ERROR: gate de binding redirects — NO SE PUDO EVALUAR ...` = el gate no pudo leer algún
+    `.exe.config` o DLL → **no es un OK**. Reportar los ficheros y arreglarlos antes de repetir.
+  - `ERROR: gate de dependencias ODP.NET — ...` = MSBuild descartó en silencio los satélites de
+    `Oracle.ManagedDataAccess.dll`; el proceso arrancaría y moriría en el primer acceso a BD → **NO
+    desplegar**. Se corrige declarándolos en `Batch\Directory.Build.targets`
+    (`references/batch-config.md`), no copiando DLL a mano.
+  - `AVISO ⚠ N *.dll.config huérfanos` = residuos del mecanismo antiguo. No bloquea; ofrecer repetir
+    la etapa con `-LimpiarDllConfig` para barrerlos.
+  - Un `Resumen ... OK` sin las tres líneas de gate no es evidencia suficiente.
 - **AgendaWeb:** `OK — AgendaWeb publicada: N ficheros` (msbuild sin errores).
 - **ServiceManager:** `host OK` + `<destino>\ServiceManager\Modulos` con las DLL de los módulos.
 - **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts`
