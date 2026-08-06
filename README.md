@@ -68,9 +68,7 @@ El repo es **privado**: hace falta credencial de GitHub en la máquina (`gh auth
 
 Claude Code descubre automáticamente `commands/`, `agents/`, los skills, los hooks (SessionStart/Stop/UserPromptSubmit) y el MCP server `rs-workspace` — no hay que copiar nada a mano ni editar `~/.claude/settings.json`.
 
-Con origen Git, Claude Code clona el marketplace en `~/.claude/plugins/marketplaces/` y ejecuta el plugin desde su copia cacheada: **ninguna sesión depende de una unidad de red**.
-
-> ⚠️ Si tenías el marketplace anterior de tipo `directory` (ruta local/red), quítalo antes con `/plugin marketplace remove rs-enterprise-agent`. Si no, conviven dos orígenes.
+Claude Code clona el marketplace en `~/.claude/plugins/marketplaces/` y ejecuta el plugin desde su copia cacheada por usuario: **el plugin es portable y no depende de ninguna ruta compartida**.
 
 **Tras instalar: reiniciar Claude Code.** Después, `/rs-env` para validar la máquina y `/rs-help`
 como prueba de que el MCP responde (si el paso 1 falló, se nota ahí).

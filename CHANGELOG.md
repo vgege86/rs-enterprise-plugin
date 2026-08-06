@@ -1,5 +1,28 @@
 # RS Enterprise Agent — Changelog
 
+## 3.7.3 — 2026-08-06
+
+### Fuera la doble vida del origen del marketplace
+
+El plugin lleva mucho publicado solo como marketplace Git, pero la documentación seguía escrita como
+si el origen pudiera ser una carpeta local o de red. Eso obligaba al lector a decidir en qué caso
+estaba antes de poder aplicar nada, y arrastraba un aviso de migración que ya no le sirve a nadie.
+
+- `README.md` — retirado el aviso *"si tenías el marketplace anterior de tipo `directory`…"*. La frase
+  sobre la copia cacheada se redacta en positivo: el plugin es portable y no depende de ninguna ruta
+  compartida, en vez de contarlo como contraste con una situación que ya no existe.
+- `docs/plugin-architecture.md` §1.1 — eliminada la tabla de dos orígenes y el bloque de diagnóstico
+  (`Get-CimInstance` sobre el proceso de python) que servía para detectar un marketplace de tipo
+  `directory`. La raíz efectiva es siempre la copia cacheada, así que la sección lo afirma
+  directamente y se queda con lo que sí sigue mordiendo: el checkout local es solo un checkout, y la
+  copia cacheada no se edita a mano porque se pisa en el siguiente update.
+
+⚠️ Se pierde el procedimiento manual para diagnosticar una máquina que sirva el plugin desde donde no
+debe. La comprobación automática sigue estando: el check *Coherencia instalación* de `check-env.ps1`
+(`/rs-env`) detecta un MCP servido fuera del plugin.
+
+Ficheros: `README.md`, `docs/plugin-architecture.md`.
+
 ## 3.7.2 — 2026-08-06
 
 ### La instalación documentada no dejaba el plugin funcionando

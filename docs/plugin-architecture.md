@@ -51,22 +51,14 @@ workspace de cada solución cliente, **no** en el repo del plugin (ver §11).
 ### 1.1 Dónde se ejecuta realmente el plugin (`${CLAUDE_PLUGIN_ROOT}`)
 
 `${CLAUDE_PLUGIN_ROOT}` no es "la carpeta del repo": es la raíz **efectiva** desde la que Claude Code
-carga el plugin, y depende del tipo de marketplace:
+carga el plugin. El marketplace es de origen `git`, así que esa raíz es siempre
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<versión>/`: una copia por usuario, portable, que
+Claude Code renueva en cada `/plugin marketplace update`. El `installPath` que aparece en
+`installed_plugins.json` es un snapshot muerto y **no** se usa en runtime.
 
-| Origen del marketplace | Raíz efectiva | Consecuencia |
-|---|---|---|
-| `git` / `github` | `~/.claude/plugins/cache/<marketplace>/<plugin>/<versión>/` | Copia local por usuario. Portable. **Es el modo soportado.** |
-| `directory` (ruta local o de red) | la **propia carpeta origen** | El plugin se ejecuta *in situ*: hooks, runner y MCP salen de esa ruta. Todos los usuarios necesitan acceso a ella. El `installPath` que aparece en `installed_plugins.json` es un snapshot muerto que **no** se usa en runtime. |
-
-Cómo comprobarlo en una máquina concreta (el MCP server es el testigo más directo):
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name like '%python%'" | Select-Object CommandLine
-```
-
-La línea debe apuntar a `~/.claude/plugins/cache/...`. Si apunta a una unidad de red o a un árbol de
-desarrollo, el marketplace registrado es de tipo `directory` — revisar
-`~/.claude/plugins/known_marketplaces.json` y volver a instalar desde el origen Git.
+⛔ Por eso el checkout local del repo es solo un checkout: nada del plugin puede depender de su ruta,
+y editarlo no cambia lo que se ejecuta hasta publicar y actualizar. La copia cacheada tampoco se
+edita a mano — se pisa en el siguiente update.
 
 ⛔ En markdown (skills, agents, commands) `${CLAUDE_PLUGIN_ROOT}` **no se expande**: solo se sustituye
 en `.claude-plugin/plugin.json` y `.mcp.json`. Por eso el contrato de invocación pasa `plugin_root`
