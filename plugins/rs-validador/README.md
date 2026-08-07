@@ -54,7 +54,13 @@ La skill resuelve el workspace, carga las references que apliquen, analiza y **p
 
 | Comando | Qué hace |
 |---------|----------|
+| `/rs-validador <cambio>` | Entrada general a la skill: bug, mejora, funcionalidad nueva o documentación. Proceso completo con gate de PLAN |
+| `/rsv-bug <síntoma>` | Corrección de bug. Obliga a **reproducir** —endpoint, payload, línea o `data/rsvalidador.log`— antes de presentar el PLAN |
+| `/rsv-doc <qué actualizar>` | Actualiza la documentación canónica y las release notes. Contrapartida escritora de `/rsv-doc-drift`; ⛔ no toca código |
 | `/rsv-doc-drift` | Audita si la documentación funcional y técnica sigue coherente con el código. Solo lectura: clasifica los hallazgos en obsoleta / fantasma / incompleta / sin doc, con cita de doc y de código |
+
+Los tres primeros paran en el mismo gate de PLAN que la invocación natural: el comando elige el punto
+de entrada, no salta ningún control.
 
 ## References
 
@@ -71,8 +77,8 @@ bugs reales en esta herramienta:
 
 ## Estado
 
-Fase 1. Disponibles: la skill orquestadora con el gate de PLAN, las cinco references y
-`/rsv-doc-drift`.
+Fase 1. Disponibles: la skill orquestadora con el gate de PLAN, las cinco references y los cuatro
+comandos (`/rs-validador`, `/rsv-bug`, `/rsv-doc`, `/rsv-doc-drift`).
 
-Previsto para la fase 2: comandos de sincronización de documentación, inventario de endpoints,
-verificación del generador de scripts SQL, consulta del almacén, build y commit.
+Previsto para la fase 2: inventario de endpoints, verificación del generador de scripts SQL, consulta
+del almacén, build y commit.

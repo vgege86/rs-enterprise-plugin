@@ -198,6 +198,21 @@ documento entero.
 Reportar, escaneable: ficheros tocados, verificación ejecutada con su salida, doc actualizada, y
 lo que queda pendiente (build del exe, commit SVN) — ambos requieren petición explícita.
 
+# Comandos
+
+Entradas por slash al `PROCESO OBLIGATORIO` anterior. Todas corren en el **hilo principal** (no
+despachan a un subagente) y todas paran en el gate de PLAN del paso 3 — lo único que cambia es el
+`Tipo` que llevan fijado y el énfasis del análisis.
+
+| Comando | Tipo en el PLAN | Énfasis |
+|---------|-----------------|---------|
+| `/rs-validador <cambio>` | según el cambio | Entrada general: bug, mejora, funcionalidad nueva o documentación |
+| `/rsv-bug <síntoma>` | `bug` | Reproducción obligatoria antes del PLAN (paso 2): endpoint, payload, línea o `data/rsvalidador.log` |
+| `/rsv-doc <qué actualizar>` | `documentación` | Solo `docs/documentacion-funcional.md`, `docs/documentacion-tecnica.md` y `RELEASE_NOTES_<fecha>.md`; ⛔ nada de código de producción |
+
+La invocación en lenguaje natural sigue valiendo igual: mencionar la herramienta basta para que la
+skill se active con el mismo proceso.
+
 # Modos directos
 
 | Frase / comando | Agente | Tier |

@@ -1,5 +1,46 @@
 # RS Validador — Changelog
 
+## 1.1.0 — 2026-08-07
+
+### La skill ya tenía proceso, pero no tenía puerta
+
+La 1.0.0 dejó la skill `rs-validador` con su gate de PLAN y sus cinco references, y un único comando:
+`/rsv-doc-drift`, que audita la documentación y no escribe nada. El proceso principal —el que arregla
+bugs, añade campos al schema o toca el generador de scripts SQL— solo se alcanzaba mencionando la
+herramienta en lenguaje natural. Funcionaba, pero era invisible: quien escribía `/rsv` y no veía nada
+concluía que el plugin no estaba, no que la entrada era otra.
+
+Esta versión añade tres comandos que abren esa puerta.
+
+#### `/rs-validador <cambio>` — entrada general
+
+Ejecuta el `PROCESO OBLIGATORIO` completo, del contexto al cierre, con el gate de PLAN en su sitio.
+Es el equivalente de mencionar la herramienta, pero descubrible desde el menú de comandos.
+
+#### `/rsv-bug <síntoma>` — con la reproducción por delante
+
+Mismo proceso con `Tipo: bug` fijado y el paso de análisis reforzado: no se propone una causa leyendo
+código. Hay que fijar el endpoint, el payload que lo dispara, la línea que falla o la entrada de
+`data/rsvalidador.log`, y eso viaja dentro del PLAN. Un bug sin reproducción entendida no se arregla,
+se investiga — y el PLAN lo dice así.
+
+#### `/rsv-doc <qué actualizar>` — la contrapartida escritora del drift
+
+`/rsv-doc-drift` detecta el desfase pero no lo corrige. `/rsv-doc` lo corrige, acotado a
+`docs/documentacion-funcional.md`, `docs/documentacion-tecnica.md` y las `RELEASE_NOTES_<fecha>.md`,
+verificando cada afirmación contra el código antes de escribirla. ⛔ Nada de código de producción: si
+la documentación es correcta y el código no, lo reporta y para — eso es un `/rsv-bug`.
+
+#### Lo que no cambia
+
+Ningún agente nuevo. Los tres comandos corren en el hilo principal e invocan la misma skill, así que
+no hay lógica duplicada que pueda divergir. Y ninguno salta el gate: el comando elige el punto de
+entrada, no el nivel de control.
+
+**Ficheros:** `commands/rs-validador.md`, `commands/rsv-bug.md`, `commands/rsv-doc.md` (nuevos);
+`skills/rs-validador/SKILL.md` (sección `# Comandos`), `README.md`, `.claude-plugin/plugin.json` y la
+entrada del plugin en el `marketplace.json` del repo.
+
 ## 1.0.0 — 2026-08-07
 
 ### Primera versión: la herramienta de validación de ficheros deja de mantenerse a mano

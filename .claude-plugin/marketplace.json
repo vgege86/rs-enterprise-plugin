@@ -18,7 +18,7 @@
       "description": "Desarrollo, mantenimiento y documentación de RSValidador (validador de ficheros): estructuras de entrada, validación y scripts SQL de configuración de uCollect. Todo cambio pasa por un PLAN aprobado por un humano.",
       "source": "./plugins/rs-validador",
       "category": "productivity",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }
