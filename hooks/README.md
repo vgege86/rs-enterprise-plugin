@@ -65,7 +65,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | Script | Uso |
 |--------|-----|
 | `get-config.ps1 <workspace>` | Lee .rs-databases.json → motor, datasource, schema, conexiones[], motores[] |
-| `lib-dbdefaults.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`). Pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL. Mismo patrón que `lib-dbconfig.ps1` |
+| `lib-dbmodel.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`; pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL) y `New-RsColumnaModelo` (construye la columna del modelo conservando `description` y las marcas manuales `pii`/`safe`, que la BD no conoce). Mismo patrón que `lib-dbconfig.ps1` |
 | `lib-dbconfig.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Get-CsPart`, `Read-RsDatabases`, `Resolve-RsWorkspace`, `Get-RsProyecto`) |
 | `lib-deploy-gates.ps1` | Librería, no se invoca directamente — gates de carpeta de despliegue batch (`Test-RsCoherenciaBuild`, `Test-RsBindingRedirects`, `Test-RsOdpDependencies`, `Get-RsDllConfigHuerfanos`). Deciden y devuelven; los `Write-Host` y los `exit` se quedan en `installer-batch.ps1`. Mismo patrón que `lib-dbconfig.ps1` |
 | `convert-config.ps1 <workspace> [-Force]` | Convierte `XMLConfig.xml` → `.rs-databases.json`. No borra el XML |

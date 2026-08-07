@@ -26,7 +26,7 @@ trap {
 # --- Leer configuracion BD desde docs\.rs-databases.json ---
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
-. (Join-Path $hooksDir "lib-dbdefaults.ps1")
+. (Join-Path $hooksDir "lib-dbmodel.ps1")
 
 $Workspace = Resolve-RsWorkspace $Workspace
 
@@ -177,24 +177,10 @@ EXIT;
             $tblIdx[$tableName] = $entry
         }
 
-        # Columna (preservar description si ya existe — lookup O(1))
-        $existingCol  = $entry.cols[$colName]
-        $existingDesc = if ($existingCol) { $existingCol.description } else { "" }
-        $newCol = [PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        }
-        # `pii` / `safe` son marcas MANUALES que la BD no conoce. Al reconstruir la columna
-        # desde cero se borraban en cada sync, y la politica PII se relajaba en silencio: una
-        # columna marcada a mano volvia a salir en claro sin que nadie tocara nada.
-        foreach ($marca in @('pii','safe')) {
-            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
-                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
-            }
-        }
+        # Columna. Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1. El lookup del anterior es O(1).
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk `
+                                      -Existente $entry.cols[$colName]
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol
     }
@@ -263,24 +249,10 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
             $tblIdx[$tableName] = $entry
         }
 
-        # Columna (preservar description si ya existe — lookup O(1))
-        $existingCol  = $entry.cols[$colName]
-        $existingDesc = if ($existingCol) { $existingCol.description } else { "" }
-        $newCol = [PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        }
-        # `pii` / `safe` son marcas MANUALES que la BD no conoce. Al reconstruir la columna
-        # desde cero se borraban en cada sync, y la politica PII se relajaba en silencio: una
-        # columna marcada a mano volvia a salir en claro sin que nadie tocara nada.
-        foreach ($marca in @('pii','safe')) {
-            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
-                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
-            }
-        }
+        # Columna. Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1. El lookup del anterior es O(1).
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk `
+                                      -Existente $entry.cols[$colName]
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol
     }
@@ -290,7 +262,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 
 # --- Valores DEFAULT de columna (pasada aparte) ---
 # En Oracle DATA_DEFAULT es LONG y no se puede concatenar ni limpiar dentro del SELECT
-# principal (ver hooks/lib-dbdefaults.ps1). Sin este campo en el modelo,
+# principal (ver hooks/lib-dbmodel.ps1). Sin este campo en el modelo,
 # scripts/installer-ddl.py no puede emitirlo y el <Proyecto>-CreacionTablas.sql del
 # instalador sale sin valores por defecto: en el cliente, toda columna con DEFAULT queda a
 # NULL en el primer INSERT que no la nombre.

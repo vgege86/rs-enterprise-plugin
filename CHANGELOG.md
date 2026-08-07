@@ -17,7 +17,7 @@ campo. No es que se perdiera por el camino: no se capturaba nunca. En el cliente
 valor por defecto quedaba a NULL en el primer `INSERT` que no la nombrara — sin error, se descubre
 consultando.
 
-Ahora la columna admite `default` y lo rellena la nueva librería **`hooks/lib-dbdefaults.ps1`**, en
+Ahora la columna admite `default` y lo rellena la nueva librería **`hooks/lib-dbmodel.ps1`**, en
 una pasada aparte del `SELECT` principal. Lo de la pasada aparte no es gratuito: en Oracle
 `ALL_TAB_COLS.DATA_DEFAULT` es de tipo **LONG**, que no se puede concatenar ni pasar por
 `REPLACE`/`TRIM` dentro de una sentencia SQL, y sacado tal cual por sqlplus con `SET COLSEP '|'`
@@ -105,9 +105,17 @@ tampoco es una entrega incompleta: nadie iba a lanzarla.
 ### Dos fallos encontrados de camino
 
 - **Las marcas `pii`/`safe` se borraban en cada sincronización del modelo.** `sync-from-db.ps1` y
-  `sync-model-tables.ps1` reconstruían cada columna desde cero con los cinco campos que devuelve la
-  BD, preservando solo `description`. Las marcas manuales de la política PII no las conoce la BD: se
-  perdían en silencio y una columna marcada a mano volvía a salir en claro sin que nadie tocara nada.
+  `sync-model-tables.ps1` no actualizan la columna: la tiran y la reescriben entera con los cinco
+  campos que devuelve la BD, preservando solo `description`. Las marcas manuales de la política PII
+  no las conoce la BD, así que se perdían en silencio: una columna marcada a mano volvía a salir
+  **en claro** en las consultas después de cualquier resincronización, sin error y sin aviso.
+
+  La reconstrucción pasa a una función pura, `New-RsColumnaModelo` (en `hooks/lib-dbmodel.ps1`,
+  antes `lib-dbdefaults.ps1`: el fichero ya cubre los dos huecos de la columna, no solo el default).
+  La preservación va por **presencia** de la propiedad y nunca por su verdad — `safe: false`
+  equivale a `pii: true`, o sea que es la marca *más* restrictiva y su valor es falso; un
+  `if ($col.safe)` la daría por ausente y la borraría. `tests/DbModel.Tests.ps1` fija ese caso
+  aparte, porque es el fácil de volver a romper.
 - **Todo `.sql` en subcarpeta se daba por no declarado fuera de Windows.** En
   `Get-RsScriptsManifiesto`, las rutas declaradas se normalizan a `\` y las de disco traen el
   separador del sistema; solo se normalizaba un lado. Sin arreglarlo, el manifiesto nuevo —que
@@ -119,17 +127,18 @@ tampoco es una entrega incompleta: nadie iba a lanzarla.
 `'N'` son defaults reales y no ausencias, que al generar cruzado el `CREATE TABLE` no se contamina, y
 que los dos motores declaran los seis tipos de objeto con la misma numeración —que es de lo que
 dependen el maestro y el manifiesto—. En `tests/EjecutarScripts.Tests.ps1`, tres casos para
-`ejecutar: false` y la normalización de separadores.
+`ejecutar: false` y la normalización de separadores. `tests/DbModel.Tests.ps1` (19 casos) cubre la
+preservación de `pii`/`safe`/`description` y el parseo del mapa de defaults.
 
 ⛔ No se puede probar Oracle/sqlplus ni SQL Server/sqlcmd en el entorno de desarrollo Linux: lo que
 se prueba es la lógica pura y el SQL que se construye, no su ejecución contra un motor real.
 
-Ficheros: `hooks/lib-dbdefaults.ps1` (nuevo), `hooks/sync-from-db.ps1`,
+Ficheros: `hooks/lib-dbmodel.ps1` (nuevo), `hooks/sync-from-db.ps1`,
 `hooks/sync-model-tables.ps1`, `hooks/installer-scripts.ps1`, `hooks/instalacion-paquete.ps1`,
 `scripts/installer-ddl.py`, `scripts/installer-objects.py`, `scripts/generate-sql.py`,
 `assets/instalacion/Ejecutar-Scripts.ps1`, `agents/rs-instalador.md`, `references/hooks.md`,
 `references/json-schema.md`, `hooks/README.md`, `tests/test_installer_ddl_objetos.py` (nuevo),
-`tests/EjecutarScripts.Tests.ps1`.
+`tests/DbModel.Tests.ps1` (nuevo), `tests/EjecutarScripts.Tests.ps1`.
 
 ## 3.8.0 — 2026-08-06
 

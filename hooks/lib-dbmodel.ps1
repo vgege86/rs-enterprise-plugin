@@ -1,13 +1,26 @@
 ﻿<#
 .SYNOPSIS
-    Lee de la BD viva el valor DEFAULT de cada columna y lo devuelve como un mapa
-    "TABLA.COLUMNA" -> expresion, para que sync-from-db.ps1 y sync-model-tables.ps1 lo
-    graben en el model.json (campo `default` de la columna).
+    Lo que le falta a una columna de `model.json` cuando se reconstruye desde la BD.
+    Compartido por sync-from-db.ps1 y sync-model-tables.ps1. Son dos huecos opuestos:
 
-    Sin este campo en el modelo, `installer-ddl.py` no puede emitirlo: el
+      Get-RsColumnDefaults  lo que la BD SI sabe y el SELECT principal no puede traer:
+                            el valor DEFAULT de cada columna, como mapa
+                            "TABLA.COLUMNA" -> expresion (campo `default` del modelo).
+
+      New-RsColumnaModelo   lo que la BD NO sabe y por tanto no puede volver a decir:
+                            la descripcion semantica y las marcas manuales de la politica
+                            PII (`pii` / `safe`). Los hooks reconstruyen cada columna desde
+                            cero en cada sincronizacion, asi que lo que no se copie a mano
+                            aqui se pierde.
+
+    Sin el campo `default` en el modelo, `installer-ddl.py` no puede emitirlo: el
     <Proyecto>-CreacionTablas.sql del instalador sale con los tipos y los NOT NULL pero SIN
     los valores por defecto, y en el cliente toda columna con DEFAULT queda a NULL en el
     primer INSERT que no la nombre.
+
+    ⛔ Y sin New-RsColumnaModelo, una columna marcada a mano como `pii` volvia a salir EN
+    CLARO despues de cualquier resincronizacion del modelo, sin que nadie tocara nada y sin
+    ningun aviso. La politica PII se relajaba sola.
 
 .NOTES
     POR QUE UNA PASADA APARTE, Y NO UNA COLUMNA MAS EN EL SELECT PRINCIPAL
@@ -31,6 +44,47 @@
       - Columnas virtuales y ocultas (VIRTUAL_COLUMN / HIDDEN_COLUMN): su "default" es la
         expresion de la columna generada, no un valor por defecto.
 #>
+
+
+# Marcas que decide una persona, no la BD: no se pueden re-derivar de ALL_TAB_COLUMNS ni de
+# INFORMATION_SCHEMA, asi que una sincronizacion que no las copie las destruye.
+# `safe` va en la lista por el mismo motivo que `pii`, y ademas `safe: false` EQUIVALE a
+# `pii: true` (ver references/json-schema.md): por eso la comprobacion es por PRESENCIA de la
+# propiedad y nunca por su verdad — un `-not $col.safe` daria por ausente justo esa marca.
+$script:RsMarcasManuales = @('pii', 'safe')
+
+function New-RsColumnaModelo {
+    <#  Construye la entrada de columna del model.json a partir de lo que devuelve la BD,
+        conservando de la columna anterior lo que la BD no conoce.
+
+        Devuelve SIEMPRE un objeto nuevo; no muta $Existente. Pasar $null en $Existente
+        (columna que no estaba en el modelo) es el caso normal, no un error.  #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Tipo,
+        [Parameter(Mandatory=$true)][bool]$Nullable,
+        [Parameter(Mandatory=$true)][bool]$Pk,
+        $Existente = $null
+    )
+
+    $nueva = [PSCustomObject]@{
+        type        = $Tipo
+        nullable    = $Nullable
+        pk          = $Pk
+        description = ""
+        source      = "db"
+    }
+    if ($null -eq $Existente) { return $nueva }
+
+    if ($Existente.PSObject.Properties.Name -contains 'description') {
+        $nueva.description = "$($Existente.description)"
+    }
+    foreach ($marca in $script:RsMarcasManuales) {
+        if ($Existente.PSObject.Properties.Name -contains $marca) {
+            $nueva | Add-Member -NotePropertyName $marca -NotePropertyValue $Existente.$marca
+        }
+    }
+    return $nueva
+}
 
 # Marcador de linea de salida. Sirve para separar las filas utiles del banner de sqlplus/sqlcmd
 # y de cualquier aviso: se ignora todo lo que no empiece por el.

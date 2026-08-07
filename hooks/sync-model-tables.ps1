@@ -23,7 +23,7 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
-. (Join-Path $hooksDir "lib-dbdefaults.ps1")
+. (Join-Path $hooksDir "lib-dbmodel.ps1")
 
 # Config BD
 $configJson = & "$hooksDir\get-config.ps1" $Workspace | ConvertFrom-Json
@@ -118,26 +118,13 @@ EXIT;
             })
         }
 
-        $existingCol  = $null
-        $existingDesc = ""
+        # Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1.
+        $existingCol = $null
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingCol  = $model.tables.$tableName.columns.$colName
-            $existingDesc = $existingCol.description
+            $existingCol = $model.tables.$tableName.columns.$colName
         }
-        $newCol = [PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        }
-        # `pii` / `safe` son marcas MANUALES que la BD no conoce: reconstruir la columna desde
-        # cero las borraba y la politica PII se relajaba en silencio. Mismo criterio en sync-from-db.ps1.
-        foreach ($marca in @('pii','safe')) {
-            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
-                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
-            }
-        }
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk -Existente $existingCol
         $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 
@@ -200,26 +187,13 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
             })
         }
 
-        $existingCol  = $null
-        $existingDesc = ""
+        # Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1.
+        $existingCol = $null
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingCol  = $model.tables.$tableName.columns.$colName
-            $existingDesc = $existingCol.description
+            $existingCol = $model.tables.$tableName.columns.$colName
         }
-        $newCol = [PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        }
-        # `pii` / `safe` son marcas MANUALES que la BD no conoce: reconstruir la columna desde
-        # cero las borraba y la politica PII se relajaba en silencio. Mismo criterio en sync-from-db.ps1.
-        foreach ($marca in @('pii','safe')) {
-            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
-                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
-            }
-        }
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk -Existente $existingCol
         $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 } else {

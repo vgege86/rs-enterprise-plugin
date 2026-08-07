@@ -48,7 +48,7 @@ def pk_columns(table_def: dict) -> list:
 
 
 def column_default(col_def: dict) -> str:
-    """Expresión DEFAULT de la columna, tal cual la leyó del diccionario `hooks/lib-dbdefaults.ps1`.
+    """Expresión DEFAULT de la columna, tal cual la leyó del diccionario `hooks/lib-dbmodel.ps1`.
 
     Cadena vacía = la columna no tiene default. `0` y `'N'` sí son defaults reales, así que la
     comprobación va contra la cadena vacía y nunca contra la falsedad del valor.
