@@ -1,5 +1,54 @@
 # RS Enterprise Agent — Changelog
 
+## 3.9.1 — 2026-08-07
+
+### El toggle de PK del ERD podía reintroducir la clave invertida que acababa de arreglarse
+
+Encontrado al revisar la 3.9.0. `scripts/erd-template.html` escribía un booleano al marcar o
+desmarcar una columna como PK (`columns[col].pk = isPk`), y `saveModel()` serializa el modelo
+tal cual. En una PK compuesta eso deja la tabla en estado **mixto** —unas columnas con ordinal
+y otras con `true`— que es peor que no tener posiciones:
+
+```
+tras sync-from-db      -> ('COD_EMP', 'ID_MOV')   correcto
+tras un toggle del ERD -> ('ID_MOV', 'COD_EMP')   INVERTIDO
+```
+
+`pk_columns` ordenaba en cuanto detectaba **algún** ordinal, y trataba `true` como ordinal 0:
+la columna tocada se iba al final aunque fuera la primera de la clave. Si alguien generaba un
+instalador entre el toggle y la siguiente resincronización, el `CONSTRAINT ... PRIMARY KEY`
+salía al revés. Como en la 3.9.0: DDL válido, tabla creada, ningún error, y el índice que
+respalda la clave es otro.
+
+Arreglado por los dos lados, porque cada uno cubre un agujero distinto:
+
+- **El productor deja de generar mezclas.** El toggle asigna un ordinal (entra al final de la
+  clave, que es lo único honesto sin preguntar) y después renumera la PK entera a `1..n`
+  respetando las posiciones ya declaradas. Efecto colateral útil: tocar cualquier columna de
+  una tabla **normaliza** los `true` heredados que hubiera en ella.
+- **El consumidor deja de confiar en que no las haya.** Con la tabla en estado mixto,
+  `pk_columns` ya no ordena a medias: cae al orden de declaración, y el nuevo
+  `pk_orden_ambiguo` hace que `installer-ddl.py` y `generate-sql.py` lo digan por consola.
+  Del `true` no se puede deducir ninguna posición, así que ordenar a medias era inventarse
+  una. Esto protege además del `model.json` editado a mano, que es un caso real:
+  `references/json-schema.md` documenta las dos formas del campo como válidas.
+
+### Tests
+
+Cuatro casos nuevos en `tests/test_installer_ddl_objetos.py`: que el estado mixto no se ordena
+a medias, que una tabla coherente no se marca como ambigua, que `pk: false` no cuenta como «la
+otra forma» (contarlo daría un falso aviso en toda tabla con PK por ordinal, que es justo lo
+que escribe el sync desde la 3.9.0) y que el generador emite el aviso.
+
+El JavaScript del ERD no tiene infraestructura de test en el repo, así que se verificó
+extrayendo las dos funciones y ejercitándolas con node: 10 casos, incluidos el cierre de hueco
+al desmarcar, la normalización de un mixto preexistente y que `true` no se confunda con la
+posición 1. **El gate que sí queda en CI es el del consumidor**, y es el que importa: cubre la
+mezcla venga de donde venga, también de un modelo editado a mano.
+
+Ficheros: `scripts/_dbmodel.py`, `scripts/erd-template.html`, `scripts/installer-ddl.py`,
+`scripts/generate-sql.py`, `references/json-schema.md`, `tests/test_installer_ddl_objetos.py`.
+
 ## 3.9.0 — 2026-08-07
 
 ### El instalador entregaba tablas y nada más: sin vistas, sin procedimientos y sin valores por defecto

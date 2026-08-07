@@ -15,7 +15,7 @@ from datetime import datetime
 from _dbtypes import adapt_type, ensure_oracle_char_semantics
 # pk_columns / column_default: fuente única en scripts/_dbmodel.py, compartida con
 # installer-ddl.py. Antes aquí se listaba la PK sin ordenar por su posición real.
-from _dbmodel import pk_columns, column_default
+from _dbmodel import pk_columns, column_default, pk_orden_ambiguo
 
 
 def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str) -> str:
@@ -130,7 +130,10 @@ def main():
     schema    = (model.get('schema') or '').upper()
     fk_block  = []
     idx_block = []
+    pk_ambiguas = []
     for table_name, table_def in model.get('tables', {}).items():
+        if pk_orden_ambiguo(table_def):
+            pk_ambiguas.append(table_name)
         lines.append(generate_create_table(table_name, table_def, target_engine, model_engine))
         lines.append("")
         fk_block.extend(generate_fk_statements(table_name, table_def, target_engine))
@@ -151,6 +154,11 @@ def main():
 
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
+
+    if pk_ambiguas:
+        # Ver scripts/_dbmodel.py::pk_columns — con la mezcla no se puede deducir el orden.
+        print(f"AVISO: {len(pk_ambiguas)} tabla(s) mezclan ordinal y booleano en 'pk' "
+              f"({', '.join(pk_ambiguas[:8])}): la PK sale en orden de declaración.")
 
     print(f"OK — DDL generado: {out_path}")
     print(f"     {len(model.get('tables', {}))} tablas | Motor: {target_engine}")
