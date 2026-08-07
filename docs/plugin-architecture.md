@@ -221,7 +221,10 @@ un workspace nuevo (config BD + andamiaje docs + primer modelo), sin sobrescribi
 `rs-instalador` (`/rs-instalador`, opus) genera el instalador completo de cliente en
 `C:\AIS\<Proyecto>\Instalador` (EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL).
 Orquesta 4 hooks `installer-*.ps1` vía `runner/runner.ps1` (patrón `batch-build`/`online-publish`,
-sin tool MCP) y 3 scripts Python (`installer-ddl.py`, `installer-objects.py`, `installer-inserts.py`).
+sin tool MCP) y 3 scripts Python (`installer-ddl.py`, `installer-objects.py`, `installer-inserts.py`),
+sobre el módulo compartido `_dbmodel.py` (orden real de la PK y valor DEFAULT, la misma lectura del
+modelo que usa `generate-sql.py`). La extracción de objetos cubre **los dos motores**: Oracle por el
+diccionario `ALL_*` y SQL Server por el catálogo `sys.*`.
 Config por cliente en `docs\<Proyecto>-instalador.json`; tablas paramétricas desde
 `subviews["Parametricas"]` del model.json. La etapa de scripts está optimizada alrededor de que el
 coste real es el **login del cliente SQL**, no la consulta: los inserts se piden agrupando tablas por
@@ -230,7 +233,11 @@ aislamiento de error por tabla), los 6 tipos de objeto se extraen en paralelo, e
 `TO_CLOB` cuando la fila cabe en `VARCHAR2` (con reintento automático si sale `ORA-01489`) y la
 config de BD se resuelve una vez en el hook y viaja por `RS_DB_CONFIG_JSON` (sin password). Cap
 común de sesiones simultáneas: `parametricas.max_paralelo` (default 8), que gobierna inserts y
-objetos. `installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte.
+objetos. `installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte, y su inventario
+final nombra los seis ficheros de objetos uno a uno (`AUSENTE` + exit 2 al que falte): con un
+comodín, cero ficheros generados salían como un resumen en verde. El paquete se cierra con
+`Scripts\scripts.json`, que fija el orden de ejecución en el cliente — sin él se ordena por nombre y
+los triggers se lanzan antes que las tablas.
 
 `rs-actualizador` (`/rs-actualizador`, opus, v2.28.0) es su hermano **incremental**: genera la entrega
 delta de un entorno (`DESA`/`TEST`/`PROD`) en `C:\AIS\<Proyecto>\Actualizador\<ENTORNO>_<AAAAMMDD>`.

@@ -223,6 +223,10 @@ depende de que nadie renombre un fichero en destino:
 ] }
 ```
 
+⛔ Todo `.sql` que viaje en el paquete tiene que estar declarado, aunque no se ejecute: uno sin
+declarar sale como aviso y **no se lanza**. Si la entrega lleva un maestro que encadena a los demás,
+decláralo con `"ejecutar": false` — así ni se ejecuta dos veces ni aparece como olvidado.
+
 ⛔ Declarar **solo** ficheros que existan en `scripts\`: un obligatorio ausente aborta la ejecución
 en el cliente antes de conectar (deliberado — una entrega incompleta no se empieza a medias). Un
 `.sql` que viaje sin declarar se avisa y **no se ejecuta**.

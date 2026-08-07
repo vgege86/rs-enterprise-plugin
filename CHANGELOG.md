@@ -159,11 +159,11 @@ se mezclaban entre sí y duplicaban filas; ahora el schema entra en los dos JOIN
 
 ### Tests
 
-`tests/test_installer_ddl_objetos.py` (20 casos) fija el orden `TIPO DEFAULT x NOT NULL`, que `0` y
+`tests/test_installer_ddl_objetos.py` (25 casos) fija el orden `TIPO DEFAULT x NOT NULL`, que `0` y
 `'N'` son defaults reales y no ausencias, que al generar cruzado el `CREATE TABLE` no se contamina, y
 que los dos motores declaran los seis tipos de objeto con la misma numeración —que es de lo que
 dependen el maestro y el manifiesto—. En `tests/EjecutarScripts.Tests.ps1`, tres casos para
-`ejecutar: false` y la normalización de separadores. `tests/DbModel.Tests.ps1` (27 casos) cubre la
+`ejecutar: false` y la normalización de separadores. `tests/DbModel.Tests.ps1` (23 casos) cubre la
 preservación de `pii`/`safe`/`description`, la posición dentro de la PK y el parseo del mapa de
 defaults; cinco casos más en `tests/test_installer_ddl_objetos.py` fijan el orden de la PK en el
 `CREATE TABLE` y que los dos generadores de DDL comparten de verdad la misma función.
