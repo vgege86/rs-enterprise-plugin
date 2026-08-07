@@ -16,6 +16,11 @@
         deja el bin sin System.Text.Json y el proceso muere en el primer acceso a BD.
       - -Aplicar dos veces -> no pisa lo ya creado (idempotente).
 
+    El hook se lanza con el interprete de PRODUCCION (`powershell`, 5.1) cuando esta
+    disponible, y con `pwsh` cuando no —el CI corre sobre ubuntu-latest, donde no existe—.
+    Cablear `powershell` mantenia estos 13 tests en rojo permanente sin que ninguno fuese un
+    defecto real.
+
     Ejecutar: Invoke-Pester tests/BatchCentralizar.Tests.ps1
 #>
 
@@ -89,11 +94,33 @@ $refs  </ItemGroup>
         Set-Content (Join-Path $d "app.config") -Encoding UTF8 -Value $AppConfig
     }
 
+    # Interprete con el que se lanza el hook. `powershell` (Windows PowerShell 5.1) es el de
+    # PRODUCCION —plugin.json lanza los hooks con `powershell -File`— asi que se prefiere
+    # siempre que exista: una suite que solo corre bajo 7 no prueba el interprete real (ver
+    # 3.5.1). Pero CABLEARLO dejaba estos 13 tests en rojo permanente, porque el CI corre sobre
+    # ubuntu-latest y alli `powershell` no existe: CommandNotFoundException, 13 fallos que no
+    # son defectos del hook. Se resuelve, no se cablea. Mismo criterio que ya seguia
+    # tests/test_dpapi_paridad.py con shutil.which("pwsh") or shutil.which("powershell").
+    # -CommandType Application: solo un ejecutable real cuenta, no un alias ni una funcion.
+    $script:Interprete = if (Get-Command powershell -CommandType Application -ErrorAction SilentlyContinue) {
+        'powershell'
+    } else {
+        'pwsh'
+    }
+    if ($script:Interprete -ne 'powershell') {
+        # Visible a proposito: el hook se ejecuta en 5.1 en produccion, y haber corrido estos
+        # tests bajo 7 no es lo mismo. Degradar en silencio seria peor que el rojo.
+        Write-Host "  NOTA: 'powershell' (5.1) no disponible - el hook se lanza con '$script:Interprete'."
+    }
+
     function Invoke-Hook {
         param([string]$Workspace, [switch]$Aplicar)
-        $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$script:Hook,$Workspace)
-        if ($Aplicar) { $args += '-Aplicar' }
-        $out = & powershell @args 2>&1 | Out-String
+        # $argumentos, no $args: $args es variable automatica de PowerShell y asignarla dentro
+        # de una funcion pisa los argumentos posicionales de la propia llamada (misma cicatriz
+        # que hooks/sync-model-tables.ps1 documenta en Invoke-RsSqlServer).
+        $argumentos = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$script:Hook,$Workspace)
+        if ($Aplicar) { $argumentos += '-Aplicar' }
+        $out = & $script:Interprete @argumentos 2>&1 | Out-String
         return ($out | ConvertFrom-Json)
     }
 
