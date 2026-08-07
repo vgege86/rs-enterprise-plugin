@@ -134,11 +134,13 @@ SELECT t.TABLE_NAME,
            ELSE ''
        END AS FULL_TYPE,
        c.NULLABLE,
-       CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'Y' ELSE 'N' END AS IS_PK
+       NVL(pk.POSITION, 0) AS PK_POS
 FROM ALL_TABLES t
 JOIN ALL_TAB_COLUMNS c ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
 LEFT JOIN (
-    SELECT cc.TABLE_NAME, cc.COLUMN_NAME
+    -- POSITION = orden de la columna DENTRO de la clave primaria. No es lo mismo que
+    -- COLUMN_ID (orden en la tabla) y es el que manda: es el del indice que respalda la PK.
+    SELECT cc.TABLE_NAME, cc.COLUMN_NAME, cc.POSITION
     FROM ALL_CONSTRAINTS con
     JOIN ALL_CONS_COLUMNS cc ON cc.CONSTRAINT_NAME = con.CONSTRAINT_NAME AND cc.OWNER = con.OWNER
     WHERE con.CONSTRAINT_TYPE = 'P' AND con.OWNER = '$schemaFilter'
@@ -158,7 +160,7 @@ EXIT;
         $colName    = $parts[1].Trim()
         $colType    = $parts[2].Trim()
         $nullable   = $parts[3].Trim() -eq 'Y'
-        $isPk       = $parts[4].Trim() -eq 'Y'
+        $pkPos      = ConvertTo-RsPkPosicion $parts[4]
 
         if (-not $tableName -or -not $colName) { continue }
 
@@ -179,7 +181,7 @@ EXIT;
 
         # Columna. Lo que la BD no conoce (description, marcas pii/safe) lo conserva
         # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1. El lookup del anterior es O(1).
-        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk `
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -PkPosicion $pkPos `
                                       -Existente $entry.cols[$colName]
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol
@@ -199,15 +201,20 @@ SELECT
         ELSE ''
     END AS FULL_TYPE,
     c.IS_NULLABLE,
-    CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES' ELSE 'NO' END AS IS_PK
+    ISNULL(pk.ORDINAL_POSITION, 0) AS PK_POS
 FROM INFORMATION_SCHEMA.TABLES t
 JOIN INFORMATION_SCHEMA.COLUMNS c ON c.TABLE_NAME = t.TABLE_NAME AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
 LEFT JOIN (
-    SELECT ku.TABLE_NAME, ku.COLUMN_NAME
+    -- ORDINAL_POSITION de KEY_COLUMN_USAGE = orden de la columna DENTRO de la constraint,
+    -- no dentro de la tabla. El schema entra en los dos JOIN: sin el, dos tablas homonimas
+    -- en schemas distintos se cruzaban entre si y duplicaban filas.
+    SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME, ku.ORDINAL_POSITION
     FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON ku.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+      ON ku.CONSTRAINT_NAME = tc.CONSTRAINT_NAME AND ku.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
     WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
 ) pk ON pk.TABLE_NAME = c.TABLE_NAME AND pk.COLUMN_NAME = c.COLUMN_NAME
+    AND pk.TABLE_SCHEMA = c.TABLE_SCHEMA
 WHERE t.TABLE_TYPE = 'BASE TABLE'
 ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 "@
@@ -230,7 +237,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
         $colName   = $parts[1].Trim()
         $colType   = $parts[2].Trim()
         $nullable  = $parts[3].Trim() -eq 'YES'
-        $isPk      = $parts[4].Trim() -eq 'YES'
+        $pkPos     = ConvertTo-RsPkPosicion $parts[4]
 
         if (-not $tableName -or -not $colName) { continue }
 
@@ -251,7 +258,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 
         # Columna. Lo que la BD no conoce (description, marcas pii/safe) lo conserva
         # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1. El lookup del anterior es O(1).
-        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -Pk $isPk `
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -PkPosicion $pkPos `
                                       -Existente $entry.cols[$colName]
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol

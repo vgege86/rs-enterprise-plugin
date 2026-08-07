@@ -102,6 +102,42 @@ a mano desde una sesión) pero no deben ejecutarse. `Ejecutar-Scripts.ps1` acept
 "presente en disco y NO declarado", que en su caso sería ruido— y no se ejecuta. Su ausencia en disco
 tampoco es una entrega incompleta: nadie iba a lanzarla.
 
+### El orden de la clave primaria se aplanaba en cada sincronización
+
+El `SELECT` de los dos hooks de sync preguntaba solo **si** la columna es PK
+(`CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'Y'`), así que escribían siempre `pk: true`. El
+modelo admite desde hace tiempo un entero con la posición dentro de la clave, y
+`installer-ddl.py` lo usa para ordenar, pero nadie lo rellenaba: la posición había que ponerla
+a mano y la siguiente resincronización se la llevaba por delante.
+
+Con `pk: true` en todas, el `CONSTRAINT ... PRIMARY KEY (...)` sale en el orden de **declaración
+de las columnas**, que no tiene por qué ser el de la clave:
+
+```
+PK real en BD       (COD_EMP, ID_MOV)
+antes               PRIMARY KEY (ID_MOV, COD_EMP)     <- orden de la tabla
+ahora               PRIMARY KEY (COD_EMP, ID_MOV)
+```
+
+No da error —el DDL es válido y la tabla se crea— pero el índice que respalda la clave es otro,
+y con él se pierden los accesos por prefijo. En una instalación limpia eso no se ve el día de
+la entrega: se ve como degradación de rendimiento semanas después.
+
+Ahora las consultas traen la posición real (`ALL_CONS_COLUMNS.POSITION` en Oracle,
+`KEY_COLUMN_USAGE.ORDINAL_POSITION` en SQL Server) y `New-RsColumnaModelo` la escribe como
+ordinal. **Siempre**, también cuando la PK es de una sola columna: `pk_columns` solo ordena si
+detecta algún ordinal y trata `true` como ordinal 0, así que una PK mezclada (`true` la primera,
+`2` la segunda) sale **al revés** — peor que no tener ninguna posición. Es todo o nada, así que
+es todo. Efecto colateral: la primera resincronización de un modelo existente cambia todos los
+`"pk": true` por `"pk": 1`. Es ruido de diff de una sola vez, no un cambio de significado.
+
+De paso, `generate-sql.py` arrastraba el mismo fallo por su cuenta: listaba la PK con un
+`[c for c, d in cols.items() if d.get('pk')]`, sin ordenar. `pk_columns` y `column_default` pasan
+a **`scripts/_dbmodel.py`**, fuente única para los dos generadores de DDL — es exactamente lo que
+ya hubo que hacer con el mapeo de tipos cuando las copias divergieron en `RAW`. Y el `LEFT JOIN`
+de SQL Server cruzaba las constraints **sin el schema**: dos tablas homónimas en schemas distintos
+se mezclaban entre sí y duplicaban filas; ahora el schema entra en los dos JOIN.
+
 ### Dos fallos encontrados de camino
 
 - **Las marcas `pii`/`safe` se borraban en cada sincronización del modelo.** `sync-from-db.ps1` y
@@ -127,8 +163,10 @@ tampoco es una entrega incompleta: nadie iba a lanzarla.
 `'N'` son defaults reales y no ausencias, que al generar cruzado el `CREATE TABLE` no se contamina, y
 que los dos motores declaran los seis tipos de objeto con la misma numeración —que es de lo que
 dependen el maestro y el manifiesto—. En `tests/EjecutarScripts.Tests.ps1`, tres casos para
-`ejecutar: false` y la normalización de separadores. `tests/DbModel.Tests.ps1` (19 casos) cubre la
-preservación de `pii`/`safe`/`description` y el parseo del mapa de defaults.
+`ejecutar: false` y la normalización de separadores. `tests/DbModel.Tests.ps1` (27 casos) cubre la
+preservación de `pii`/`safe`/`description`, la posición dentro de la PK y el parseo del mapa de
+defaults; cinco casos más en `tests/test_installer_ddl_objetos.py` fijan el orden de la PK en el
+`CREATE TABLE` y que los dos generadores de DDL comparten de verdad la misma función.
 
 ⛔ No se puede probar Oracle/sqlplus ni SQL Server/sqlcmd en el entorno de desarrollo Linux: lo que
 se prueba es la lógica pura y el SQL que se construye, no su ejecución contra un motor real.
@@ -136,6 +174,7 @@ se prueba es la lógica pura y el SQL que se construye, no su ejecución contra 
 Ficheros: `hooks/lib-dbmodel.ps1` (nuevo), `hooks/sync-from-db.ps1`,
 `hooks/sync-model-tables.ps1`, `hooks/installer-scripts.ps1`, `hooks/instalacion-paquete.ps1`,
 `scripts/installer-ddl.py`, `scripts/installer-objects.py`, `scripts/generate-sql.py`,
+`scripts/_dbmodel.py` (nuevo),
 `assets/instalacion/Ejecutar-Scripts.ps1`, `agents/rs-instalador.md`, `references/hooks.md`,
 `references/json-schema.md`, `hooks/README.md`, `tests/test_installer_ddl_objetos.py` (nuevo),
 `tests/DbModel.Tests.ps1` (nuevo), `tests/EjecutarScripts.Tests.ps1`.

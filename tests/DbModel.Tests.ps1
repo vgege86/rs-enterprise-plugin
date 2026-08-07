@@ -39,14 +39,14 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
 
         It "conserva pii:true" {
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(100)","nullable":false,"pk":false,"description":"Nombre","source":"db","pii":true }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(120)" -Nullable $false -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(120)" -Nullable $false -PkPosicion 0 -Existente $vieja
             $nueva.PSObject.Properties.Name | Should -Contain 'pii'
             $nueva.pii | Should -BeTrue
         }
 
         It "conserva safe:true" {
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(2)","nullable":true,"pk":false,"description":"","source":"db","safe":true }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(2)" -Nullable $true -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(2)" -Nullable $true -PkPosicion 0 -Existente $vieja
             $nueva.safe | Should -BeTrue
         }
 
@@ -54,21 +54,21 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
             # safe:false equivale a pii:true. Una comprobacion por verdad la borraria, y la
             # columna pasaria de enmascarada a en claro.
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(400)","nullable":true,"pk":false,"description":"","source":"db","safe":false }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(400)" -Nullable $true -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(400)" -Nullable $true -PkPosicion 0 -Existente $vieja
             $nueva.PSObject.Properties.Name | Should -Contain 'safe'
             $nueva.safe | Should -BeFalse
         }
 
         It "conserva pii:false sin convertirlo en ausencia" {
             $vieja = New-ColumnaJson '{ "type":"NUMBER(10)","nullable":false,"pk":false,"description":"","source":"db","pii":false }'
-            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -PkPosicion 0 -Existente $vieja
             $nueva.PSObject.Properties.Name | Should -Contain 'pii'
             $nueva.pii | Should -BeFalse
         }
 
         It "no se inventa marcas donde no las habia" {
             $vieja = New-ColumnaJson '{ "type":"NUMBER(10)","nullable":false,"pk":true,"description":"Id","source":"db" }'
-            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -Pk $true -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -PkPosicion 1 -Existente $vieja
             $nueva.PSObject.Properties.Name | Should -Not -Contain 'pii'
             $nueva.PSObject.Properties.Name | Should -Not -Contain 'safe'
         }
@@ -78,12 +78,12 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
 
         It "conserva la description escrita a mano" {
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(100)","nullable":true,"pk":false,"description":"Razon social del cliente","source":"db" }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(100)" -Nullable $true -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(100)" -Nullable $true -PkPosicion 0 -Existente $vieja
             $nueva.description | Should -BeExactly "Razon social del cliente"
         }
 
         It "una columna que no estaba en el modelo entra con description vacia, no con null" {
-            $nueva = New-RsColumnaModelo -Tipo "DATE" -Nullable $true -Pk $false -Existente $null
+            $nueva = New-RsColumnaModelo -Tipo "DATE" -Nullable $true -PkPosicion 0 -Existente $null
             $nueva.description | Should -BeExactly ""
             $nueva.source      | Should -BeExactly "db"
         }
@@ -91,8 +91,8 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
         It "una columna vieja sin la clave description no revienta" {
             # Modelos antiguos escritos a mano pueden no traerla.
             $vieja = New-ColumnaJson '{ "type":"DATE","nullable":true,"pk":false }'
-            { New-RsColumnaModelo -Tipo "DATE" -Nullable $true -Pk $false -Existente $vieja } | Should -Not -Throw
-            (New-RsColumnaModelo -Tipo "DATE" -Nullable $true -Pk $false -Existente $vieja).description | Should -BeExactly ""
+            { New-RsColumnaModelo -Tipo "DATE" -Nullable $true -PkPosicion 0 -Existente $vieja } | Should -Not -Throw
+            (New-RsColumnaModelo -Tipo "DATE" -Nullable $true -PkPosicion 0 -Existente $vieja).description | Should -BeExactly ""
         }
     }
 
@@ -101,10 +101,10 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
         It "el tipo, el nullable y el pk se toman de la BD, no del modelo viejo" {
             # Si no, un ALTER TABLE aplicado en BD nunca llegaria al modelo.
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(100)","nullable":true,"pk":false,"description":"x","source":"db","pii":true }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(250)" -Nullable $false -Pk $true -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(250)" -Nullable $false -PkPosicion 1 -Existente $vieja
             $nueva.type     | Should -BeExactly "VARCHAR2(250)"
             $nueva.nullable | Should -BeFalse
-            $nueva.pk       | Should -BeTrue
+            $nueva.pk       | Should -Be 1
             $nueva.pii      | Should -BeTrue   # la marca sobrevive al cambio de tipo
         }
 
@@ -112,8 +112,68 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
             # Lo reescribe despues Get-RsColumnDefaults con lo que diga la BD: arrastrarlo aqui
             # dejaria un default fantasma cuando se hubiera quitado en BD.
             $vieja = New-ColumnaJson '{ "type":"CHAR(1)","nullable":false,"pk":false,"description":"","source":"db","default":"''A''" }'
-            $nueva = New-RsColumnaModelo -Tipo "CHAR(1)" -Nullable $false -Pk $false -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "CHAR(1)" -Nullable $false -PkPosicion 0 -Existente $vieja
             $nueva.PSObject.Properties.Name | Should -Not -Contain 'default'
+        }
+    }
+
+    Context "posicion dentro de la clave primaria" {
+
+        It "escribe el ORDINAL, no un booleano, tambien con PK de una sola columna" {
+            # Uniforme o nada: pk_columns solo ordena si detecta ordinales y trata `true` como
+            # ordinal 0, asi que mezclar las dos formas dentro de una tabla ordena AL REVES.
+            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -PkPosicion 1 -Existente $null
+            $nueva.pk | Should -Be 1
+            $nueva.pk | Should -Not -BeOfType [bool]
+        }
+
+        It "conserva la posicion real cuando no coincide con el orden de la tabla" {
+            # Es el caso que se perdia: la PK es (B, A) pero en la tabla A va antes que B.
+            $a = New-RsColumnaModelo -Tipo "VARCHAR2(4)" -Nullable $false -PkPosicion 2 -Existente $null
+            $b = New-RsColumnaModelo -Tipo "NUMBER(6)"   -Nullable $false -PkPosicion 1 -Existente $null
+            $a.pk | Should -Be 2
+            $b.pk | Should -Be 1
+        }
+
+        It "una columna que no es PK sale con false, no con 0" {
+            # `0` es truthy en algunos consumidores del modelo (y en el HTML del ERD se
+            # renderiza); false es lo que ya esperaban todos.
+            $nueva = New-RsColumnaModelo -Tipo "DATE" -Nullable $true -PkPosicion 0 -Existente $null
+            $nueva.pk | Should -BeFalse
+            $nueva.pk | Should -BeOfType [bool]
+        }
+
+        It "la posicion la manda la BD: un ordinal viejo del modelo no se arrastra" {
+            $vieja = New-ColumnaJson '{ "type":"NUMBER(10)","nullable":false,"pk":3,"description":"","source":"db" }'
+            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -PkPosicion 1 -Existente $vieja
+            $nueva.pk | Should -Be 1
+        }
+
+        It "una columna que dejo de ser PK en BD pierde la marca" {
+            $vieja = New-ColumnaJson '{ "type":"NUMBER(10)","nullable":false,"pk":2,"description":"","source":"db" }'
+            $nueva = New-RsColumnaModelo -Tipo "NUMBER(10)" -Nullable $false -PkPosicion 0 -Existente $vieja
+            $nueva.pk | Should -BeFalse
+        }
+    }
+
+    Context "ConvertTo-RsPkPosicion" {
+
+        It "convierte el texto que devuelve el SELECT" {
+            ConvertTo-RsPkPosicion "1"    | Should -Be 1
+            ConvertTo-RsPkPosicion "  2 " | Should -Be 2
+        }
+
+        It "0 y vacio son 'no es PK'" {
+            ConvertTo-RsPkPosicion "0" | Should -Be 0
+            ConvertTo-RsPkPosicion ""  | Should -Be 0
+        }
+
+        It "basura devuelve 0, nunca un ordinal inventado" {
+            # Escribir un ordinal falso reordenaria el indice de la PK en el DDL entregado al
+            # cliente. Perder la marca es menos malo y ademas se ve.
+            ConvertTo-RsPkPosicion "N"    | Should -Be 0
+            ConvertTo-RsPkPosicion "-1"   | Should -Be 0
+            ConvertTo-RsPkPosicion "IS_PK"| Should -Be 0
         }
     }
 
@@ -121,7 +181,7 @@ Describe "New-RsColumnaModelo: conserva lo que la BD no puede volver a decir" {
 
         It "devuelve un objeto nuevo y no muta el anterior" {
             $vieja = New-ColumnaJson '{ "type":"VARCHAR2(100)","nullable":true,"pk":false,"description":"orig","source":"db","pii":true }'
-            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(9)" -Nullable $false -Pk $true -Existente $vieja
+            $nueva = New-RsColumnaModelo -Tipo "VARCHAR2(9)" -Nullable $false -PkPosicion 1 -Existente $vieja
             $vieja.type        | Should -BeExactly "VARCHAR2(100)"
             $vieja.nullable    | Should -BeTrue
             [object]::ReferenceEquals($vieja, $nueva) | Should -BeFalse

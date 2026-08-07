@@ -65,11 +65,11 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | Script | Uso |
 |--------|-----|
 | `get-config.ps1 <workspace>` | Lee .rs-databases.json → motor, datasource, schema, conexiones[], motores[] |
-| `lib-dbmodel.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`; pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL) y `New-RsColumnaModelo` (construye la columna del modelo conservando `description` y las marcas manuales `pii`/`safe`, que la BD no conoce). Mismo patrón que `lib-dbconfig.ps1` |
+| `lib-dbmodel.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`; pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL) y `New-RsColumnaModelo` / `ConvertTo-RsPkPosicion` (construye la columna del modelo con la posición real dentro de la PK y conservando `description` y las marcas manuales `pii`/`safe`, que la BD no conoce). Mismo patrón que `lib-dbconfig.ps1` |
 | `lib-dbconfig.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Get-CsPart`, `Read-RsDatabases`, `Resolve-RsWorkspace`, `Get-RsProyecto`) |
 | `lib-deploy-gates.ps1` | Librería, no se invoca directamente — gates de carpeta de despliegue batch (`Test-RsCoherenciaBuild`, `Test-RsBindingRedirects`, `Test-RsOdpDependencies`, `Get-RsDllConfigHuerfanos`). Deciden y devuelven; los `Write-Host` y los `exit` se quedan en `installer-batch.ps1`. Mismo patrón que `lib-dbconfig.ps1` |
 | `convert-config.ps1 <workspace> [-Force]` | Convierte `XMLConfig.xml` → `.rs-databases.json`. No borra el XML |
-| `sync-from-db.ps1 <workspace>` | Sincroniza modelo completo desde BD, incluidos los valores `default` de columna; preserva las marcas `pii`/`safe` |
+| `sync-from-db.ps1 <workspace>` | Sincroniza modelo completo desde BD, incluidos los valores `default` y la posición dentro de la PK; preserva `description` y las marcas `pii`/`safe` |
 | `compare-model.ps1 <workspace>` | Diff model.json vs esquema real BD |
 | `generate-migration.ps1 <workspace>` | CREATE TABLE / ALTER TABLE ADD desde drift modelo→BD |
 | `sync-model-tables.ps1 <workspace> <tablas>` | Actualiza tablas específicas model.json (post-migración) |

@@ -170,6 +170,52 @@ class TestFicheroGenerado:
         assert "ninguna columna del modelo declara 'default'" in capsys.readouterr().out
 
 
+# --------------------------------------------------------------- orden de la PK
+class TestOrdenPk:
+    """El orden de la PK es el del índice que la respalda; cambiarlo pierde los accesos por
+    prefijo de clave. No da error: el DDL es válido, solo que el índice es otro."""
+
+    def _tabla(self, pks):
+        return {"columns": {c: {"type": "NUMBER(10)", "nullable": False, "pk": v}
+                            for c, v in pks.items()}}
+
+    def test_el_ordinal_manda_sobre_el_orden_de_declaracion(self):
+        # Columnas declaradas ID_MOV, COD_EMP; PK real (COD_EMP, ID_MOV).
+        t = self._tabla({"ID_MOV": 2, "COD_EMP": 1, "FECHA": False})
+        assert ddl.pk_columns(t) == ["COD_EMP", "ID_MOV"]
+
+    def test_sin_ordinales_se_respeta_el_orden_de_declaracion(self):
+        # Modelos anteriores al ordinal siguen valiendo; es lo mejor que se puede hacer.
+        t = self._tabla({"ID_MOV": True, "COD_EMP": True})
+        assert ddl.pk_columns(t) == ["ID_MOV", "COD_EMP"]
+
+    def test_pk_true_no_se_confunde_con_el_ordinal_1(self):
+        # bool es subclase de int en Python: sin descartarlo, `True` contaría como posición 1.
+        t = self._tabla({"A": True, "B": True, "C": False})
+        assert ddl.pk_columns(t) == ["A", "B"]
+
+    def test_el_CREATE_TABLE_emite_la_PK_en_su_orden_real(self):
+        t = {"columns": {
+            "ID_MOV":  {"type": "NUMBER(12)", "nullable": False, "pk": 2},
+            "COD_EMP": {"type": "VARCHAR2(4)", "nullable": False, "pk": 1},
+            "FECHA":   {"type": "DATE", "nullable": False, "pk": False}}}
+        sql = ddl.generate_create_table("RMOVIM", t, "ORACLE", "ORACLE")
+        assert "PRIMARY KEY (COD_EMP, ID_MOV)" in sql
+        # y las columnas siguen en su orden de tabla, que es independiente
+        assert sql.index("ID_MOV NUMBER") < sql.index("COD_EMP VARCHAR2")
+
+    def test_los_dos_generadores_de_DDL_usan_la_misma_funcion(self):
+        # Estaban duplicados y generate-sql.py no ordenaba: mismo objeto, no dos copias.
+        import _dbmodel
+        import importlib.util as _u
+        spec = _u.spec_from_file_location("_gen_sql", _SCRIPTS / "generate-sql.py")
+        gen = _u.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        assert gen.pk_columns is _dbmodel.pk_columns
+        assert ddl.pk_columns is _dbmodel.pk_columns
+        assert gen.column_default is _dbmodel.column_default
+
+
 # --------------------------------------------------------------- objetos por motor
 _CFG_SS = {"motor": "SQLSERVER", "schema": "MIBD", "user": "u", "password": "p",
            "datasource": "srv"}

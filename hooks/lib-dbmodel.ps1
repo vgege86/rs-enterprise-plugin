@@ -53,23 +53,45 @@
 # propiedad y nunca por su verdad — un `-not $col.safe` daria por ausente justo esa marca.
 $script:RsMarcasManuales = @('pii', 'safe')
 
+function ConvertTo-RsPkPosicion {
+    <#  Convierte a entero la columna de posicion de PK que devuelve el SELECT.
+
+        Tolerante a proposito: si el valor no es un numero (una fila de basura, una cabecera
+        que se colo) se devuelve 0 = "no es PK". Es preferible perder una marca de PK a
+        escribir un ordinal inventado, que reordenaria el indice de la clave en el DDL
+        entregado al cliente.  #>
+    param([string]$Valor)
+    $n = 0
+    if ([int]::TryParse("$Valor".Trim(), [ref]$n) -and $n -gt 0) { return $n }
+    return 0
+}
+
 function New-RsColumnaModelo {
     <#  Construye la entrada de columna del model.json a partir de lo que devuelve la BD,
         conservando de la columna anterior lo que la BD no conoce.
 
         Devuelve SIEMPRE un objeto nuevo; no muta $Existente. Pasar $null en $Existente
-        (columna que no estaba en el modelo) es el caso normal, no un error.  #>
+        (columna que no estaba en el modelo) es el caso normal, no un error.
+
+        -PkPosicion es la posicion DENTRO de la clave primaria (1, 2, 3...), 0 si la columna
+        no es PK. Se escribe el ordinal, no un booleano: ese orden es el del indice que
+        respalda la PK y no tiene por que coincidir con el orden de las columnas de la tabla.
+        ⛔ Y se escribe SIEMPRE, tambien cuando la PK es de una sola columna. El consumidor
+        (scripts/_dbmodel.py::pk_columns) solo ordena si detecta ordinales, y trata el `true`
+        como ordinal 0: una PK con la primera columna en `true` y la segunda en `2` se
+        ordenaria al reves. Mezclar las dos formas dentro de una tabla es peor que no tener
+        ninguna, asi que aqui es todo o nada.  #>
     param(
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Tipo,
         [Parameter(Mandatory=$true)][bool]$Nullable,
-        [Parameter(Mandatory=$true)][bool]$Pk,
+        [Parameter(Mandatory=$true)][int]$PkPosicion,
         $Existente = $null
     )
 
     $nueva = [PSCustomObject]@{
         type        = $Tipo
         nullable    = $Nullable
-        pk          = $Pk
+        pk          = $(if ($PkPosicion -gt 0) { $PkPosicion } else { $false })
         description = ""
         source      = "db"
     }

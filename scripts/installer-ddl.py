@@ -25,38 +25,9 @@ for _s in (sys.stdout, sys.stderr):
 # Mapeo de tipos Oracle ⇄ SQL Server: fuente única en scripts/_dbtypes.py (antes duplicado aquí
 # y en generate-sql.py; las copias ya habían divergido en 'RAW'). scripts/ está en sys.path.
 from _dbtypes import adapt_type, ensure_oracle_char_semantics
-
-
-def pk_columns(table_def: dict) -> list:
-    """Columnas de la PK en su orden real.
-
-    `pk` admite dos formas en el modelo: booleano (orden = el de declaración de las
-    columnas) o entero con la posición dentro de la PK (1, 2, 3...). El orden importa:
-    es el del índice que respalda la PK, y con el orden cambiado se pierden los accesos
-    por prefijo de clave.
-    """
-    cols = [(c, d.get('pk')) for c, d in table_def.get('columns', {}).items() if d.get('pk')]
-
-    def pos(v):
-        # bool es subclase de int: hay que descartarlo antes de tratarlo como ordinal
-        return v if isinstance(v, int) and not isinstance(v, bool) else 0
-
-    if any(pos(v) for _, v in cols):
-        # sort estable: las que no declaran ordinal mantienen su orden relativo al final
-        cols.sort(key=lambda cv: (pos(cv[1]) == 0, pos(cv[1])))
-    return [c for c, _ in cols]
-
-
-def column_default(col_def: dict) -> str:
-    """Expresión DEFAULT de la columna, tal cual la leyó del diccionario `hooks/lib-dbmodel.ps1`.
-
-    Cadena vacía = la columna no tiene default. `0` y `'N'` sí son defaults reales, así que la
-    comprobación va contra la cadena vacía y nunca contra la falsedad del valor.
-    """
-    d = col_def.get('default')
-    if d is None:
-        return ""
-    return str(d).strip()
+# Orden real de la PK y valor DEFAULT: fuente única en scripts/_dbmodel.py, compartida con
+# generate-sql.py. Duplicarlas es justo lo que ya hizo divergir el mapeo de tipos.
+from _dbmodel import pk_columns, column_default
 
 
 def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str,
