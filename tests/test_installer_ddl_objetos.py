@@ -204,6 +204,48 @@ class TestOrdenPk:
         # y las columnas siguen en su orden de tabla, que es independiente
         assert sql.index("ID_MOV NUMBER") < sql.index("COD_EMP VARCHAR2")
 
+    def test_el_estado_MIXTO_no_se_ordena_a_medias(self):
+        """Una tabla con unas columnas en ordinal y otras en `true` no se puede ordenar.
+
+        Antes SÍ se ordenaba, y era peor que no hacer nada: `true` contaba como ordinal 0 y se
+        iba al final, así que (A=true, B=2) salía como (B, A) — la clave invertida, sin error.
+        """
+        t = self._tabla({"COD_EMP": True, "ID_MOV": 2})
+        assert ddl.pk_columns(t) == ["COD_EMP", "ID_MOV"]      # orden de declaración
+        assert ddl.pk_orden_ambiguo(t) is True
+
+    def test_una_tabla_coherente_no_se_marca_como_ambigua(self):
+        assert ddl.pk_orden_ambiguo(self._tabla({"A": 1, "B": 2})) is False
+        assert ddl.pk_orden_ambiguo(self._tabla({"A": True, "B": True})) is False
+        assert ddl.pk_orden_ambiguo(self._tabla({"A": False, "B": False})) is False
+
+    def test_las_columnas_que_no_son_PK_no_cuentan_para_la_ambiguedad(self):
+        # `pk: false` no es "la otra forma": es no ser clave. Contarlo daría un falso aviso
+        # en toda tabla con PK por ordinal, que es justo lo que escribe el sync ahora.
+        t = self._tabla({"A": 1, "B": 2, "C": False})
+        assert ddl.pk_orden_ambiguo(t) is False
+        assert ddl.pk_columns(t) == ["A", "B"]
+
+    def test_el_generador_avisa_de_la_PK_ambigua(self, tmp_path, capsys):
+        # El DDL es válido y la tabla se crea: lo que no se puede garantizar es el orden de la
+        # clave. Sin aviso, eso se entrega y no se descubre hasta que el plan de ejecución
+        # deja de usar el índice.
+        ws = tmp_path / "trunk"
+        (ws / "BD").mkdir(parents=True)
+        m = _modelo()
+        m["tables"]["RTABLA"]["columns"]["ID"]["pk"] = 1
+        m["tables"]["RTABLA"]["columns"]["ESTADO"]["pk"] = True
+        (ws / "BD" / "MIPROYECTO-model.json").write_text(json.dumps(m), encoding="utf-8")
+        viejo, sys.argv = sys.argv, ["installer-ddl.py", str(ws), "MIPROYECTO",
+                                     str(tmp_path / "o.sql")]
+        try:
+            ddl.main()
+        finally:
+            sys.argv = viejo
+        salida = capsys.readouterr().out
+        assert "mezclan ordinal y booleano" in salida
+        assert "RTABLA" in salida
+
     def test_los_dos_generadores_de_DDL_usan_la_misma_funcion(self):
         # Estaban duplicados y generate-sql.py no ordenaba: mismo objeto, no dos copias.
         import _dbmodel
@@ -214,6 +256,7 @@ class TestOrdenPk:
         assert gen.pk_columns is _dbmodel.pk_columns
         assert ddl.pk_columns is _dbmodel.pk_columns
         assert gen.column_default is _dbmodel.column_default
+        assert gen.pk_orden_ambiguo is _dbmodel.pk_orden_ambiguo
 
 
 # --------------------------------------------------------------- objetos por motor

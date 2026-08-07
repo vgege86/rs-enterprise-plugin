@@ -27,7 +27,7 @@ for _s in (sys.stdout, sys.stderr):
 from _dbtypes import adapt_type, ensure_oracle_char_semantics
 # Orden real de la PK y valor DEFAULT: fuente única en scripts/_dbmodel.py, compartida con
 # generate-sql.py. Duplicarlas es justo lo que ya hizo divergir el mapeo de tipos.
-from _dbmodel import pk_columns, column_default
+from _dbmodel import pk_columns, column_default, pk_orden_ambiguo
 
 
 def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str,
@@ -131,6 +131,7 @@ def main():
 
     idx_block = []
     def_block = []
+    pk_ambiguas = []
     tables = model.get('tables', {})
     n_ddl = 0
     n_def = 0
@@ -138,6 +139,8 @@ def main():
         # Saltar tablas huérfanas (existen en modelo pero no en BD real)
         if table_def.get('orphan'):
             continue
+        if pk_orden_ambiguo(table_def):
+            pk_ambiguas.append(table_name)
         lines.append(generate_create_table(table_name, table_def, target_engine, model_engine,
                                            inline_defaults))
         lines.append("")
@@ -170,6 +173,14 @@ def main():
 
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
+
+    if pk_ambiguas:
+        # No se aborta: el DDL es válido y las tablas se crean. Lo que no se puede garantizar
+        # es el ORDEN de la clave, y con él los accesos por prefijo. Eso no da error nunca.
+        print(f"     AVISO: {len(pk_ambiguas)} tabla(s) mezclan ordinal y booleano en 'pk':")
+        print(f"            {', '.join(pk_ambiguas[:8])}{' ...' if len(pk_ambiguas) > 8 else ''}")
+        print("            La PK sale en ORDEN DE DECLARACIÓN, que puede no ser el de la clave.")
+        print("            Resincroniza el modelo (/rs-erd o sync-from-db.ps1) antes de entregar.")
 
     print(f"OK — DDL generado: {out_path}")
     print(f"     {n_ddl} tablas | {len(idx_block)} índices | {n_def} defaults | Motor: {target_engine}")

@@ -1906,11 +1906,42 @@ function confirmAddColumn(tableName) {
 }
 
 // ─── Toggle column PK ─────────────────────────────────────────────────────────
+//
+// `pk` admite dos formas: booleano (es PK, sin posicion declarada) y entero con la POSICION
+// dentro de la clave. El orden importa — es el del indice que respalda la PK — y los
+// consumidores (scripts/_dbmodel.py::pk_columns) solo ordenan si la tabla usa una sola forma.
+// Escribir `true` aqui dejaba la tabla en estado MIXTO, que es peor que no tener posiciones:
+// una PK (A=true, B=2) salia como (B, A), invertida. Por eso el toggle mantiene SIEMPRE la
+// clave entera en ordinales consecutivos.
+
+function _pkOrd(colDef) {
+  const v = colDef && colDef.pk;
+  return (typeof v === 'number' && v > 0) ? v : 0;   // `true` no es una posicion
+}
+
+function _renumerarPk(cols) {
+  // Deja la PK en 1..n respetando las posiciones ya declaradas. Las columnas con `true`
+  // (modelos antiguos, edicion a mano) van detras, en su orden de declaracion: es lo unico
+  // que se puede deducir de ellas, pero al menos salen con posicion y sin mezcla.
+  const pk = Object.keys(cols).filter(c => cols[c].pk).map(c => cols[c]);
+  pk.sort((a, b) => {
+    const oa = _pkOrd(a), ob = _pkOrd(b);
+    if (oa && ob) return oa - ob;
+    if (oa) return -1;
+    if (ob) return 1;
+    return 0;                                        // sort estable: conserva el orden relativo
+  });
+  pk.forEach((d, i) => { d.pk = i + 1; });
+}
 
 function toggleColumnPk(tableName, colName, isPk) {
   if (!MODEL.tables[tableName]?.columns?.[colName]) return;
   pushUndo();
-  MODEL.tables[tableName].columns[colName].pk = isPk;
+  const cols = MODEL.tables[tableName].columns;
+  // Al marcar entra AL FINAL de la clave: es lo unico honesto sin preguntar. Si la posicion
+  // real es otra, la proxima sincronizacion la corrige desde la BD.
+  cols[colName].pk = isPk ? (Math.max(0, ...Object.keys(cols).map(c => _pkOrd(cols[c]))) + 1) : false;
+  _renumerarPk(cols);
   refreshTableBox(tableName);
   buildFkMap();
   showDDLModal((isPk?'Añadir PK':'Eliminar PK')+' — '+tableName+'.'+colName, ddlTogglePK(tableName, colName, isPk), tableName+'-PK-'+colName+'.sql');

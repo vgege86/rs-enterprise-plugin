@@ -11,6 +11,31 @@ Equivalente Python de `hooks/lib-dbmodel.ps1`, que es quien ESCRIBE estos mismos
 """
 
 
+def _pos(v) -> int:
+    """Ordinal declarado en `pk`, o 0 si no lo declara.
+
+    bool es subclase de int en Python: `True` pasaría por ordinal 1 si no se descarta antes.
+    """
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+
+def _pk_pares(table_def: dict) -> tuple:
+    """([(columna, valor_pk)], mixto) — `mixto` = la tabla usa las DOS formas a la vez."""
+    cols = [(c, d.get('pk')) for c, d in table_def.get('columns', {}).items() if d.get('pk')]
+    con_ordinal = [c for c, v in cols if _pos(v)]
+    mixto = bool(con_ordinal) and len(con_ordinal) != len(cols)
+    return cols, mixto
+
+
+def pk_orden_ambiguo(table_def: dict) -> bool:
+    """True si la PK de la tabla mezcla ordinales y booleanos.
+
+    El llamante debe AVISAR: con la mezcla no se puede saber el orden real de la clave, así
+    que `pk_columns` cae al orden de declaración — que puede no ser el de la PK.
+    """
+    return _pk_pares(table_def)[1]
+
+
 def pk_columns(table_def: dict) -> list:
     """Columnas de la PK en su orden real.
 
@@ -19,21 +44,22 @@ def pk_columns(table_def: dict) -> list:
     es el del índice que respalda la PK, y con el orden cambiado se pierden los accesos
     por prefijo de clave.
 
-    ⛔ El modelo tiene que ser coherente DENTRO de una tabla: o todas las columnas de la PK
-    llevan ordinal o ninguna. Mezclarlas ordena mal — una columna con `pk: true` cuenta como
-    ordinal 0 y se va al final, aunque fuera la primera de la clave. Por eso
-    `hooks/lib-dbmodel.ps1` escribe siempre el ordinal, también cuando la PK es de una sola
-    columna: uniforme es lo único que es correcto.
+    ⛔ Con la tabla en estado MIXTO —unas columnas con ordinal y otras con `true`— no se
+    ordena. Antes sí se ordenaba, y era peor que no hacer nada: `true` contaba como ordinal 0
+    y se iba al final, así que una PK (A=true, B=2) salía como (B, A), justo invertida. Como
+    del `true` no se puede deducir ninguna posición, la única salida honesta es el orden de
+    declaración; `pk_orden_ambiguo` está para que el llamante lo diga en voz alta en vez de
+    entregar un DDL con la clave reordenada en silencio.
+
+    Quién produce mezclas: `hooks/lib-dbmodel.ps1` escribe siempre el ordinal, también con PK
+    de una sola columna. Pero el `model.json` se edita a mano y `references/json-schema.md`
+    documenta las dos formas como válidas, así que el consumidor no puede confiar en ello.
     """
-    cols = [(c, d.get('pk')) for c, d in table_def.get('columns', {}).items() if d.get('pk')]
-
-    def pos(v):
-        # bool es subclase de int: hay que descartarlo antes de tratarlo como ordinal
-        return v if isinstance(v, int) and not isinstance(v, bool) else 0
-
-    if any(pos(v) for _, v in cols):
-        # sort estable: las que no declaran ordinal mantienen su orden relativo al final
-        cols.sort(key=lambda cv: (pos(cv[1]) == 0, pos(cv[1])))
+    cols, mixto = _pk_pares(table_def)
+    if mixto:
+        return [c for c, _ in cols]
+    if any(_pos(v) for _, v in cols):
+        cols.sort(key=lambda cv: _pos(cv[1]))
     return [c for c, _ in cols]
 
 
