@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.2.1** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.11.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -82,6 +82,21 @@ Para actualizar tras una versión nueva:
 …y reiniciar.
 
 **Requisitos** (detalle abajo): Python 3.11+ **con el paquete `mcp`**, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
+
+### El marketplace publica dos plugins
+
+Desde la 3.11.0 el mismo marketplace ofrece, además del agente C#, el plugin **`rs-validador`** —
+desarrollo, mantenimiento y documentación de la herramienta de validación de ficheros
+(Python/FastAPI + HTML/JS): estructuras de entrada, validación de lo que manda el cliente y
+generación de los scripts SQL de configuración de uCollect.
+
+```
+/plugin install rs-validador@rs-enterprise-agent
+```
+
+Son independientes: se instalan, se versionan y se actualizan por separado. `rs-enterprise-agent`
+trabaja sobre `.sln` de uCollect/RS; `rs-validador` no toca ninguna solución C#. Su guía está en
+`plugins/rs-validador/README.md`.
 
 > 💡 **Menos tokens por sesión (ya automático)**: Claude Code **difiere por defecto** los schemas de
 > las tools MCP de `rs-workspace` — solo se cargan bajo demanda vía tool-search cuando una tarea las

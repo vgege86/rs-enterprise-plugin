@@ -23,7 +23,7 @@ local del mantenedor es un checkout más — ningún artefacto del plugin puede 
 ```
 .claude-plugin/
   plugin.json            manifiesto: name, version, author, hooks SessionStart + Stop + UserPromptSubmit
-  marketplace.json       marketplace de un solo plugin (source: "./")
+  marketplace.json       marketplace de dos plugins: rs-enterprise-agent (source "./") + rs-validador
 .mcp.json                registro del MCP server rs-workspace (stdio, python)
 skills/
   rs-enterprise-agent/SKILL.md   skill orquestadora (pipeline + modos directos)
@@ -43,6 +43,10 @@ scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd,
 assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
 executions/
   history.json           historial de ejecuciones del pipeline (lo escribe log_execution)
+plugins/                 plugins adicionales publicados por el mismo marketplace (§9.5)
+  rs-validador/          mantenimiento de RSValidador (validador de ficheros) — árbol propio y
+                         completo: .claude-plugin/, skills/, agents/, commands/, references/,
+                         README y CHANGELOG. Versión independiente de la del plugin raíz
 ```
 
 Nota: `README.md` menciona una carpeta `BD/<proyecto>-model.json`; ese modelo vive en el
@@ -73,7 +77,7 @@ resuelto y verificado (§11.4).
 | Fichero | Declara |
 |---------|---------|
 | `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 15), inline con `${CLAUDE_PLUGIN_ROOT}`. Los 3 commands se lanzan con `powershell -NoProfile` (evita cargar el perfil de usuario en cada arranque → timeouts; ver CHANGELOG 2.15.9) |
-| `.claude-plugin/marketplace.json` | Entrada de marketplace: un plugin `rs-enterprise-agent`, `source: "./"`, `category: productivity`. Puede llevar su propia `version` |
+| `.claude-plugin/marketplace.json` | El marketplace y **la lista de plugins que publica** (desde 3.11.0 son dos): `rs-enterprise-agent` con `source: "./"` y `rs-validador` con `source: "./plugins/rs-validador"`, ambos `category: productivity` y con su propia `version` |
 | `.mcp.json` | El MCP server `rs-workspace` (type `stdio`, `command: python`, arg `${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py`, env `PYTHONUTF8=1`) |
 
 **Qué se auto-descubre por convención** (no se lista en ningún manifiesto):
@@ -85,6 +89,12 @@ resuelto y verificado (§11.4).
 ⛔ Consecuencia clave: crear el fichero en la carpeta correcta **registra** el artefacto, pero
 Claude Code solo lo detecta tras **subir la versión** en `plugin.json` (§9) + `/plugin
 marketplace update` + reinicio. Sin bump de versión el cambio no se propaga.
+
+⚠️ El auto-descubrimiento es **relativo a la raíz de cada plugin**, no del repo: `skills/`,
+`agents/` y `commands/` de un plugin de `plugins/<x>/` solo se cargan cuando se instala *ese*
+plugin. Por eso los dos árboles no colisionan aunque compartan repo — y por eso el plugin raíz,
+cuyo `source` es `"./"`, arrastra en su copia los ficheros de `plugins/` como peso muerto sin
+efecto funcional.
 
 ---
 
@@ -454,6 +464,29 @@ spec y en la tabla de pasos del `README.md`.
 Carpeta `skills/<nombre>/SKILL.md` (frontmatter `name` + `description` con triggers). Se
 auto-descubre. Añadir un comando wrapper si se quiere invocación por slash.
 
+### 9.5 Nuevo plugin en el mismo marketplace
+
+Para una herramienta que **no es** una solución uCollect/RS (otro stack, sin `.sln`, sin las tools
+MCP de este plugin): plugin aparte, no skills más aquí. Se instala y versiona por separado, y sus
+triggers no contaminan al agente C#.
+
+1. Árbol propio bajo `plugins/<nombre>/` con su `.claude-plugin/plugin.json` (`name`, `description`
+   con triggers explícitos, `version` **independiente**, `author`) y las carpetas que necesite:
+   `skills/`, `agents/`, `commands/`, `references/`.
+2. Entrada nueva en el array `plugins` de `.claude-plugin/marketplace.json`, con
+   `source: "./plugins/<nombre>"` y su `version`. La `version` de esa entrada y la de su
+   `plugin.json` deben quedar **idénticas** (misma regla que el plugin raíz).
+3. `README.md` y `CHANGELOG.md` propios dentro de su carpeta. El CHANGELOG del repo raíz solo
+   registra el alta del plugin, no su evolución posterior.
+4. La descripción del **marketplace** deja de describir a un solo plugin: revisarla.
+
+⛔ El plugin nuevo **no hereda** nada del raíz: ni hooks, ni MCP server, ni references. Si necesita
+un `plugin_root`, define su propia regla de resolución y verifícala con Glob contra carpetas que
+existan en *su* árbol (`${CLAUDE_PLUGIN_ROOT}` sigue sin expandirse en markdown — §11.2).
+
+⚠️ El plugin raíz mantiene `source: "./"`, así que su copia instalada incluye también `plugins/`.
+Es peso muerto sin efecto funcional (§2): no se auto-descubre nada desde ahí.
+
 ---
 
 ## 10. Puntos de sincronización de documentación
@@ -467,6 +500,7 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Nueva tool MCP | `references/mcp.md` · `references/hooks.md` · README (nº de tools) · CHANGELOG · §6 este doc |
 | Nuevo hook | `references/hooks.md` · `hooks/README.md` · CHANGELOG |
 | Nueva skill | README · CHANGELOG · §2/§3 este doc |
+| **Nuevo plugin en el marketplace** | `marketplace.json` (entrada + descripción del marketplace) · README raíz (sección de instalación) · CHANGELOG raíz (alta) · §1/§2/§9.5 este doc · README y CHANGELOG **propios** del plugin nuevo |
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
 
