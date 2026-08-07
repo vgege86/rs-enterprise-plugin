@@ -1,5 +1,208 @@
 # RS Enterprise Agent — Changelog
 
+## 3.14.0 — 2026-08-07
+
+### Buscar en el árbol tenía tres implementaciones, y dos bugs que solo estaban en una
+
+Continuación de 3.13.0 con los cuatro puntos que quedaban del análisis de rendimiento. Al medir el
+camino de búsqueda aparecieron dos defectos silenciosos que llevaban ahí desde el principio.
+
+#### 1. Un solo motor de búsqueda: `hooks/lib-buscar.ps1`
+
+`find-symbol.ps1`, `search-code.ps1` y `security-scan.ps1` recorrían el árbol cada uno por su
+cuenta con `Get-ChildItem` + `Get-Content` + `-match`: un objeto por línea y una recompilación del
+regex por comparación. Medido sobre 3200 ficheros `.cs` de 65 líneas, buscando un símbolo:
+
+| | ms |
+|---|---|
+| `Get-ChildItem` + `Get-Content` + `-match` | 6650 |
+| `EnumerateFiles` + `ReadAllLines` + regex compilado | 2836 |
+| `EnumerateFiles` + `ReadAllText` + `Matches` | 2969 |
+| **`Select-String` multi-patrón** | **1480** |
+
+Suelo: 121 ms enumerar + 468 ms leer los 3200 ficheros. Gana `Select-String` porque el bucle de
+líneas y el motor de regex viven dentro del cmdlet, en C#.
+
+⛔ **No se usa ripgrep**, aunque el análisis inicial lo daba por hecho con una medida de 0,22 s.
+Esa medida era inalcanzable: `rg` está disponible dentro de la herramienta Bash del agente, pero
+como **función del shell**, no como `rg.exe` en el PATH. Los hooks PowerShell —que es como Claude
+Code ejecuta esto— no lo alcanzan; se comprobó recorriendo el PATH y buscando el binario en el
+árbol. Un camino "usa rg si está" habría sido código muerto que ninguna prueba cubre.
+
+End-to-end sobre 3200 ficheros: **7785 ms → 2291 ms (3,4×)**.
+
+#### 2. `batch_find_symbols` no batcheaba nada
+
+Era un bucle que lanzaba un proceso PowerShell **por símbolo**, y cada uno recorría el scope
+entero de nuevo. `find-symbol.ps1` acepta ahora `-Symbols "A,B,C"` y resuelve los N en una pasada;
+la tool baja al hook una sola vez. El truncado `max_per_symbol` se queda en Python, que es donde
+se sabe cuánto contexto cabe.
+
+Con 10 símbolos sobre 3200 ficheros: **74 471 ms → 13 657 ms (5,5×)**.
+
+#### 3. Dos bugs que el recorrido viejo escondía
+
+Los dos estaban solo en `find-symbol.ps1` y ninguno daba error: devolvían un resultado plausible.
+
+**Una sola coincidencia se contaba como cuatro.** `Sort-Object -Unique` con un único elemento
+devuelve el objeto, no un array de uno, y `.Count` sobre un hashtable cuenta sus **claves**
+(`file`, `line`, `content`, `match`). Así que `find_symbol` respondía `found: 4` y `matches` como
+objeto en vez de lista, y `batch_find_symbols` propagaba `count: 4`. Justo el caso más común en
+análisis de impacto: el símbolo que aparece una vez.
+
+**Un fichero de una sola línea no casaba nunca.** `Get-Content` sobre un fichero de una línea
+devuelve `String`, no `String[]`; el bucle indexaba `$lines[0]` y obtenía el primer **carácter**.
+Cualquier `.cs` de una línea se escaneaba letra a letra y se declaraba sin coincidencias.
+
+Los dos quedan fijados en `tests/Search.Tests.ps1`.
+
+#### 4. `security-scan.ps1` leía cada fichero una vez por regla
+
+Hasta 8 lecturas del mismo `.cs` para descartar casi todas. Ahora el árbol se enumera una vez y
+cada regla trabaja sobre el subconjunto de extensiones que le toca. ⚠️ Sigue haciendo **una
+búsqueda por patrón**, no una sola con todos: una línea que dispara dos reglas son dos hallazgos
+con `id` distinto, y el motor por defecto se queda con el primer patrón que casa. Hay un test que
+se pone en rojo si alguien lo "optimiza" a una sola llamada.
+
+Verificado con prueba diferencial contra la implementación anterior: salida **idéntica**.
+
+⚠️ **Cambio de comportamiento deliberado en `search_code`:** ahora excluye `bin\` y `obj\`. Antes
+no excluía nada —los otros dos hooks sí— y los `.cs` generados en `obj\` gastaban parte del
+presupuesto de 50 resultados con duplicados del código real.
+
+#### 5. El pipeline estaba escrito dos veces, y las copias ya divergían
+
+`commands/rs-enterprise-agent.md` repetía las etapas, los handoffs y el control de flujo de
+`SKILL.md`. Se escribió en 2.14.0 y no se volvió a tocar salvo para arreglar su frontmatter,
+mientras que la etapa `plan-check` entró en 2.18.0: durante diez versiones menores los dos
+documentos describían pipelines distintos **en el mismo contexto**, y el comando omitía
+precisamente la etapa que verifica que el código cubre el PLAN aprobado.
+
+El comando pasa a ser un wrapper fino que apunta a `SKILL.md`. Una definición, un dueño.
+
+En el mismo sitio, `SKILL.md` se contradecía: la red de seguridad de `db-modeler` se describía como
+"única corrección empírica permitida sobre `STAGES`" mientras el propio fichero define otras dos
+(`plan-check` y `documentar`). Ahora hay una sección **§ Redes de seguridad** que enumera las tres
+con su señal y su motivo, y dice explícitamente que añadir cualquier otra etapa no es una red de
+seguridad, es re-planificar.
+
+#### 6. Etapas que pueden solaparse
+
+Nueva sección **§ Etapas que pueden solaparse** en `SKILL.md`. El orden de `STAGES` es secuencial
+porque encadena el contrato, no por ceremonia: `db-modeler` ∥ `documentar` no se leen entre sí, y
+`plan-check` ∥ `validator` son independientes (uno mira cobertura del PLAN, el otro compila). Se
+lanzan en el mismo turno con varias llamadas Task. `build` no solapa con nada, y tras un ciclo de
+`fixer` se vuelve a serializar.
+
+## 3.13.0 — 2026-08-07
+
+### El plugin cobraba peaje en sitios donde no hacía trabajo
+
+Cinco derroches medidos con cronómetro sobre esta máquina, ninguno de ellos visible desde el
+código: los cinco son caminos que se recorren *antes* de decidir si hay algo que hacer. Ninguno
+cambia lo que el plugin decide — solo lo que cuesta llegar a la decisión.
+
+#### 1. `Get-Command` sobre un nombre inexistente: 1,7 s en cada Bash y cada Write
+
+`hooks/lib-pii.ps1` comprobaba con `Get-Command Get-RsModelPath -ErrorAction SilentlyContinue`
+si quien le dot-sourcea traía ya la resolución del modelo. Con un nombre que **todavía no
+existe** —el caso normal— Windows PowerShell 5.1 no se limita a mirar su tabla de comandos:
+recorre `PSModulePath` entero analizando módulos por si alguno lo exporta.
+
+Lo caro no es el fichero, es esa línea. Medido, tres ejecuciones cada uno:
+
+| | ms |
+|---|---|
+| `powershell -NoProfile exit 0` (suelo) | 228 |
+| dot-source de `lib-dbmodel.ps1` | 260 |
+| `Get-Command <inexistente> -EA SilentlyContinue` | **1763** |
+| `Test-Path Function:\<inexistente>` | 291 |
+
+Y se pagaba en **cada llamada a Bash, Write y Edit**, porque las dos guardas `PreToolUse`
+dot-sourcean `lib-pii.ps1` antes de mirar siquiera si el workspace tiene la protección activa —
+también fuera de un workspace uCollect/RS, donde la guarda no llega a hacer nada.
+
+Ahora la comprobación va por el proveedor `Function:`, que resuelve por la cadena de scopes
+igual que la invocación. Las guardas completas, extremo a extremo:
+
+| guarda | antes | ahora |
+|---|---|---|
+| `pii-guard-bash.ps1` | 2021 ms | **477 ms** |
+| `pii-guard-write.ps1` | 1932 ms | **487 ms** |
+
+En una sesión de 150 operaciones de fichero son unos **4 minutos** que antes se iban en un
+escaneo de módulos. `tests/PiiGuard.Tests.ps1` sigue en verde sin tocar (450 aserciones).
+
+#### 2. El runner del `Stop` hook parseaba el transcript entero en cada turno
+
+`runner/runner.ps1` corre al final de **cada** turno, y solo tres agentes (`rs-editor-build`,
+`rs-instalador`, `rs-actualizador`) llegan a emitir el contrato `TYPE:`/`COMMAND:` que busca.
+Para quedarse con el último mensaje leía el transcript completo —una línea JSON por mensaje,
+creciendo toda la sesión— y hacía `ConvertFrom-Json` de cada una.
+
+Ahora lee la cola (`-Tail 400`) y la recorre hacia atrás, cortando en el primer `assistant`;
+si en esas líneas no hubiera ninguno, **cae a la lectura completa de antes**, así que el camino
+rápido no puede perder nada. Se devuelve el texto del último `assistant` aunque venga vacío, sin
+seguir buscando hacia atrás: un texto anterior puede llevar un `COMMAND:` ya ejecutado en un
+turno previo, y reejecutarlo sería lanzar un build a espaldas del usuario.
+
+| transcript | antes | ahora |
+|---|---|---|
+| 1 500 líneas (0,7 MB) | 588 ms | 488 ms |
+| 15 000 líneas (7,9 MB) | 1709 ms | **478 ms** |
+
+Verificado con una prueba diferencial contra la versión anterior sobre cuatro transcripts
+(normal, `assistant` fuera de la cola → fallback, contrato `TYPE:`/`COMMAND:`, y uno largo):
+salida **idéntica byte a byte** en los cuatro.
+
+#### 3. Diez comandos de solo lectura dejan de cargar la skill entera
+
+`skills/rs-enterprise-agent/SKILL.md` son ~7k tokens. Un `/rs-stats` los cargaba para acabar
+despachando a un subagente Haiku que lee un JSON. Esos comandos ya llevaban inline lo único que
+necesitan (`workspace` = cwd, y la regla de `plugin_root` glosada en la propia frase); la skill
+no aportaba nada.
+
+Dejan de invocarla: `rs-stats`, `rs-dashboard`, `rs-help`, `rs-deps`, `rs-env`, `rs-schema`,
+`rs-word`, `rs-comparar-modelo`, `rs-comparar-entornos`, `rs-historial`. Cada uno declara ahora
+`⛔ Self-contained — do NOT invoke the skill` y trae la regla de `plugin_root` escrita entera en
+vez de citada.
+
+**Fuera del lote a propósito**, porque el contexto de la skill sale más barato que un fallo:
+los que escriben o tienen gate (`rs-init`, `rs-pii`, `rs-cifrar`, `rs-erd`, `rs-sync-indexes`),
+los que resuelven una `.sln` (~25 comandos: la resolución de solución vive en la skill y sacarla
+a un dueño compartido es un cambio de diseño aparte), y los que enrutan a otra skill.
+
+`hooks/skill-trigger.ps1` deja de disparar por `^/rs-` y se queda solo con la `.sln` explícita.
+Ese disparo era redundante —cuando hay comando, Claude Code ya carga `commands/rs-<x>.md`, que
+dice a qué subagente despachar— y desde este cambio además **contradecía** al comando: inyectaba
+"OBLIGATORIO invocar la skill" justo encima de un fichero que declara lo contrario. Los comandos
+que sí necesitan la skill la piden en su propio texto.
+
+#### 4. Las 48 tools MCP respondían con JSON indentado
+
+La salida de una tool no la lee una persona, la lee el modelo: la indentación son tokens que no
+dicen nada. Medido sobre un resultado típico de `find_symbol` (40 coincidencias con ruta
+absoluta): **7901 caracteres con `indent=2` contra 6213 compactos, un 21% menos**, en cada
+respuesta de cada etapa del pipeline.
+
+Las 53 llamadas `json.dumps(..., indent=2)` del server pasan a `separators=(",", ":")` vía la
+constante `_JSON_SEP`. ⛔ No aplica a lo que se escribe en disco: el `model.json` lo sigue
+formateando `scripts/_modeljson.py` (§7.1 de `docs/plugin-architecture.md`) y la caché de
+`_load_model` ya iba sin indentar. `tests/test_mcp.py` en verde (61) y la suite Python completa
+también (311).
+
+#### 5. `agents/rs-instalador.md` no tenía frontmatter válido
+
+Era el único `.md` con BOM UTF-8 de los ~100 de `agents/`, `commands/`, `skills/` y
+`references/`. Los tres bytes antes del `---` impedían parsear el frontmatter, así que el agente
+perdía su `description` (peor selección) y su allowlist `tools:` — y se exponía con **todas** las
+tools en vez de con las 7 que declara.
+
+⚠️ Esto **no** contradice la convención de `hooks/README.md` § Convención de codificación: el
+BOM es obligatorio en los `.ps1` (sin él, 5.1 no parsea el fichero) y solo en ellos.
+`tests/Encoding.Tests.ps1` filtra `*.ps1, *.psm1`, así que ni antes cubría este caso ni ahora
+entra en conflicto.
+
 ## 3.12.0 — 2026-08-07
 
 ### "No lo veo" no es "no existe", y el modelo se escribe de una sola forma

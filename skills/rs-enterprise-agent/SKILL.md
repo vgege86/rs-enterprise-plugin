@@ -112,13 +112,43 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 Control de flujo (vive en el orquestador):
 - **core** `STATUS=FAIL` (duda bloqueante) → detener, escalar, ir a Log con `status="partial"`.
 - **plan-check** `INCOMPLETE` → reinvocar `core` (+ `MISSING`, `plan`, foco en el hueco) → nuevo `FILES_CHANGED` → volver a plan-check. **Máx 1 ciclo** de re-implementación (independiente del presupuesto de fixer); si sigue `INCOMPLETE` → detener, escalar al usuario (el hueco requiere decisión funcional, no reintento ciego), Log `partial`. Ruta a `core`, no a `fixer`: un ítem faltante suele ser lógica nueva, y `fixer` tiene prohibido añadirla.
-- **Red de seguridad plan-check:** si `core` corrió y `plan-check` NO estaba en `STAGES` → ejecutarlo igualmente antes de validator y anotarlo (misma corrección empírica permitida que db-modeler). Sin él, un `core` que implementa medio plan pasaría en silencio.
+- **Red de seguridad plan-check:** si `core` corrió y `plan-check` NO estaba en `STAGES` → ejecutarlo igualmente antes de validator y anotarlo (ver § Redes de seguridad). Sin él, un `core` que implementa medio plan pasaría en silencio.
 - **validator** FAIL → `rs-editor-fixer` (+ `ERRORS`, `FILES_CHANGED`) → nuevo `FILES_CHANGED` → volver a validator. Máx **2 ciclos totales** (compartidos con tester). Agotado o `NO SAFE FIX` → detener, escalar, Log `partial`.
 - **tester** `NEEDS_TESTS` → `rs-crear-tests` (+ `FILES_CHANGED`) → reinvocar tester con marca anti-bucle. Advisory: si no compilan los tests, no abortar — continuar y Log `partial` motivo "tests pendientes". `FAIL` → fixer → validator → tester (mismo límite de 2 ciclos).
 - **build** solo si validator PASS + tester OK (o tester no estaba en `STAGES`) + sin dudas abiertas.
-- **Red de seguridad db-modeler:** si `core` devuelve `TABLES_TOUCHED` no vacío y `db-modeler` NO estaba en `STAGES` → ejecutarlo igualmente y anotarlo (única corrección empírica permitida sobre `STAGES`).
+- **Red de seguridad db-modeler:** si `core` devuelve `TABLES_TOUCHED` no vacío y `db-modeler` NO estaba en `STAGES` → ejecutarlo igualmente y anotarlo (ver § Redes de seguridad).
 - **Manual técnico (patrón nuevo):** si `core` devuelve `NEW_PATTERN` no vacío, asegurar que `documentar` corre (si no estaba en `STAGES`, ejecutarlo). `documentar` **propone** el cambio al manual de convenciones (`TECNICA_PROPUESTA`) — ⛔ **no se escribe** en `tecnica/`. El orquestador surface la propuesta en el reporte final: `⚠️ Patrón nuevo → propuesta de manual técnico: <fichero/sección/diff>. Confirma para aplicar.` Solo tras "confirmo" del usuario se aplica (turno siguiente).
 - **Configuración de los batch sin centralizar:** si `build` devuelve `BATCH_CONFIG` no vacío, el workspace sigue con un `app.config` por proyecto en lugar de `Batch\App.Batch.config` + `Batch\Directory.Build.targets` — de ahí salen los bindingRedirects desalineados (`FileLoadException` → `StackOverflow`) y los `*.dll.config` huérfanos. Mismo idioma que `NEW_PATTERN`: la etapa **propone**, ⛔ **no escribe**. El orquestador surface en el reporte final: `⚠️ Batch sin configuración centralizada → propuesta: centralizar N proyecto(s) (M excepción(es) se conservan). Confirma para aplicar.` Solo tras "confirmo" se ejecuta `.\hooks\batch-centralizar.ps1 "<workspace>" -Aplicar` (turno siguiente), y después hay que recompilar. Convención: `references/batch-config.md`.
+
+## Redes de seguridad sobre `STAGES`
+
+El orquestador **no re-decide** qué etapas corren: ejecuta la lista del Planner. Hay exactamente
+**tres** excepciones, todas de la misma forma —una señal empírica que el Planner no podía conocer
+al planificar obliga a añadir una etapa que omitió— y todas se **anotan** en el reporte final:
+
+| Señal | Etapa que se añade | Por qué no bastaba el plan |
+|---|---|---|
+| `core` corrió | `plan-check` (antes de validator) | Un `core` que implementa medio plan pasaría en silencio |
+| `core` devuelve `TABLES_TOUCHED` no vacío | `db-modeler` | Qué tablas se tocan solo se sabe al escribir el código |
+| `core` devuelve `NEW_PATTERN` no vacío | `documentar` | Que el patrón sea nuevo se descubre implementándolo |
+
+⛔ Añadir una etapa **fuera de esta tabla** no es una red de seguridad, es re-planificar. Si el
+resultado de una etapa sugiere que falta algo más, parar y escalar al usuario.
+
+## Etapas que pueden solaparse
+
+El orden de `STAGES` es secuencial **porque encadena el contrato**, no por ceremonia. Dos pares no
+lo encadenan y pueden lanzarse en el mismo turno, en un solo mensaje con varias llamadas Task:
+
+- `db-modeler` ∥ `documentar` — consumen `FILES_CHANGED`/`TABLES_TOUCHED` de `core`, no se leen
+  entre sí y ninguna alimenta a la otra. Van al final del pipeline, así que solapan limpio.
+- `plan-check` ∥ `validator` — uno comprueba cobertura del `PLAN`, el otro compila. Independientes.
+  ⚠️ Si `validator` da FAIL se tira el trabajo de `plan-check`; compensa porque `plan-check` es
+  Sonnet y la alternativa es esperar a la compilación completa. Con `fixer` en juego, **volver a
+  serializar**: tras un ciclo de fixer, `plan-check` se ejecuta sobre el `FILES_CHANGED` nuevo.
+
+⛔ El resto sigue estrictamente en orden: `core` → (`plan-check`/`validator`) → `tester` → `build`.
+`build` es el que no admite solapamiento de ningún tipo — necesita validator PASS y tester OK.
 
 **4. Checklist final** → **Gate B** (`references/gates.md`). ⛔ Verificar evidencia real antes de reportar éxito.
 **5. Log** → **siempre** (`references/gates.md`), con `agents=<etapas de STAGES ejecutadas>`.

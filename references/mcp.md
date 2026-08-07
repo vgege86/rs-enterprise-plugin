@@ -21,7 +21,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `get_table_schema(workspace, tables)` | Esquema completo (cols/tipos/relaciones/índices) de tablas específicas. ~3K tokens |
 | `search_model(workspace, keyword)` | Busca keyword en tablas/columnas/descripciones. Para localizar tablas sin saber el nombre |
 | `compare_model_tables(workspace, tables, conexion="")` | Drift BD solo de tablas específicas. Post-migración. `conexion` = id de `.rs-databases.json`; sin él, la principal |
-| `batch_find_symbols(symbols, scope_dirs)` | N símbolos en una llamada — evita N round-trips |
+| `batch_find_symbols(symbols, scope_dirs)` | N símbolos en una llamada — evita N round-trips **y** N recorridos del árbol: baja al hook una sola vez con `-Symbols` |
 | `search_code(workspace, sln_path, pattern)` | Regex en scope garantizado. Reemplaza 3-8× Grep |
 | `svn_status(workspace)` | Estado SVN → modificados, añadidos, eliminados, ? sin versionar |
 | `git_status(workspace)` | Estado Git → modificados, staged, ?? sin trackear, conflicto (U). Equivalente Git de `svn_status` |

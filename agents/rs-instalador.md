@@ -1,4 +1,4 @@
-﻿---
+---
 name: rs-instalador
 description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1 con backup, Ejecutar-Scripts.ps1, rutas.json, readme.txt). Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
 model: opus
