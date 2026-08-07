@@ -697,10 +697,13 @@ def db_query(workspace: Workspace, sql: str, max_rows: int = 200, conexion: str 
     }, ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Compara model.json con esquema real BD → tablas nuevas/eliminadas, columnas añadidas/eliminadas y columnas con tipo o nullable distinto (modified_columns). Usar para detectar drift completo.")
-def compare_model(workspace: Workspace) -> str:
+@mcp.tool(description="Compara model.json con esquema real BD → tablas nuevas/eliminadas, columnas añadidas/eliminadas y columnas con tipo o nullable distinto (modified_columns). Usar para detectar drift completo. conexion = id de conexión; si se omite, la principal. ⛔ 'tabla eliminada' con una cuenta que solo ve por GRANT puede ser una tabla que existe y no se ve: contrastar con sync_from_db (cobertura) antes de borrar nada del modelo.")
+def compare_model(workspace: Workspace, conexion: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("compare-model.ps1", workspace), ensure_ascii=False, indent=2)
+    args = [workspace]
+    if conexion:
+        args += ["-Conexion", conexion]
+    return json.dumps(_run_ps("compare-model.ps1", *args), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Extrae controles AIS de .aspx con textos para registrar en RIDIOMA y RCONTROLES.")
@@ -865,10 +868,13 @@ def security_scan(sln_path: str, max_findings: int = 50) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Actualiza tablas específicas de model.json desde BD real. Llamar post-migración. tables = coma-separadas.")
-def sync_model_tables(workspace: Workspace, tables: str) -> str:
+@mcp.tool(description="Actualiza tablas específicas de model.json desde BD real. Llamar post-migración. tables = coma-separadas. conexion = id de conexión; si se omite, la principal. ⛔ not_in_db[] son las tablas que no se leyeron: con una cuenta sin GRANT eso puede ser 'no existe' o 'no la veo'. No se toca ninguna de ellas.")
+def sync_model_tables(workspace: Workspace, tables: str, conexion: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("sync-model-tables.ps1", workspace, tables), ensure_ascii=False, indent=2)
+    args = [workspace, tables]
+    if conexion:
+        args += ["-Conexion", conexion]
+    return json.dumps(_run_ps("sync-model-tables.ps1", *args), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Mapa dependencias entre soluciones: proyectos compartidos (impacto), conflictos versión NuGet.")
@@ -919,16 +925,22 @@ def export_dmd(workspace: Workspace) -> str:
     return json.dumps(_run_ps("export-dmd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Sincroniza tablas y columnas del modelo BD desde el esquema real de la BD. No toca relaciones. Devuelve nº tablas sincronizadas.")
-def sync_from_db(workspace: Workspace) -> str:
+@mcp.tool(description="Sincroniza tablas y columnas del modelo BD desde el esquema real de la BD. No toca relaciones. conexion = id de conexión; si se omite, la principal. ⛔ Una tabla del modelo que no salga en la lectura NO se borra: se conserva y se marca visible=false, porque con una cuenta que solo ve por GRANT 'no lo veo' es indistinguible de 'no existe'. Devuelve table_count, tablas_leidas, no_visibles[] y el bloque cobertura (conteo del diccionario vs capturado); parcial=true cuando queda hueco.")
+def sync_from_db(workspace: Workspace, conexion: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("sync-from-db.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
+    args = [workspace, _proyecto(workspace)]
+    if conexion:
+        args += ["-Conexion", conexion]
+    return json.dumps(_run_ps("sync-from-db.ps1", *args), ensure_ascii=False, indent=2)
 
 
-@mcp.tool(description="Sincroniza índices Oracle (ALL_INDEXES) al modelo BD JSON. Reemplaza source='db', preserva source='manual'. Solo Oracle. Devuelve index_count y table_count.")
-def sync_indexes(workspace: Workspace) -> str:
+@mcp.tool(description="Sincroniza índices Oracle (ALL_INDEXES) al modelo BD JSON. Reemplaza source='db', preserva source='manual'. Solo Oracle. conexion = id de conexión; si se omite, la principal. ⛔ Solo toca las tablas que la lectura ve: una tabla sin GRANT conserva sus índices en vez de quedarse a 0. Devuelve index_count, table_count, tablas_intactas y cobertura; parcial=true cuando queda hueco.")
+def sync_indexes(workspace: Workspace, conexion: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("sync-indexes.ps1", workspace, _proyecto(workspace)), ensure_ascii=False, indent=2)
+    args = [workspace, _proyecto(workspace)]
+    if conexion:
+        args += ["-Conexion", conexion]
+    return json.dumps(_run_ps("sync-indexes.ps1", *args), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Infiere relaciones entre tablas analizando código DALC (JOINs, WHERE cruzados). Actualiza el modelo JSON. sln_path opcional para limitar scope.")
@@ -1057,10 +1069,13 @@ def search_code(workspace: Workspace, sln_path: str, pattern: str, file_glob: st
     )
 
 
-@mcp.tool(description="Compara solo tablas específicas del modelo con BD real. Usar post-migración cuando se conocen las tablas modificadas. Evita comparar las 362 tablas completas. tables = coma-separadas.")
-def compare_model_tables(workspace: Workspace, tables: str) -> str:
+@mcp.tool(description="Compara solo tablas específicas del modelo con BD real. Usar post-migración cuando se conocen las tablas modificadas. Evita comparar el esquema completo. tables = coma-separadas. conexion = id de conexión; si se omite, la principal.")
+def compare_model_tables(workspace: Workspace, tables: str, conexion: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("compare-model.ps1", workspace, "-Tables", tables), ensure_ascii=False, indent=2)
+    args = [workspace, "-Tables", tables]
+    if conexion:
+        args += ["-Conexion", conexion]
+    return json.dumps(_run_ps("compare-model.ps1", *args), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(description="Índice ligero del modelo BD: {TABLA: [COL1, COL2, ...]}. ~15K tokens vs 180K del modelo completo. Usar para impact analysis, búsqueda de columnas, verificar qué tablas existen.")

@@ -11,6 +11,34 @@
 
 ---
 
+# 👁️ "No lo veo" NO es "no existe" (CRÍTICO)
+
+La cuenta de consulta de un proyecto **no suele ser la dueña del esquema**: ve por GRANT
+per-object. Y Oracle **no da forma de distinguir las dos cosas** — ORA-00942 es deliberadamente
+ambiguo, y `ALL_TABLES`, `ALL_OBJECTS`, `ALL_SOURCE`, `ALL_INDEXES` y `ALL_SEQUENCES` están
+**todas** filtradas por privilegio. Un objeto sin GRANT no aparece en ningún sitio y no se
+distingue de uno borrado.
+
+- ⛔ **Nunca concluir que un objeto desapareció** porque una consulta no lo devolvió. La lectura
+  honesta es "esta cuenta no lo ve".
+- ⛔ **Nunca borrar ni degradar** una tabla, columna o índice del modelo por esa razón. Los hooks
+  ya no lo hacen: conservan la tabla entera y la marcan `visible: false`.
+- **Antes de decidir nada sobre el modelo, mirar `cobertura`** (la devuelven `sync_from_db`,
+  `sync_indexes` y `sync_model_objects`; queda en `_cobertura` del modelo). Con
+  `es_dueno: false` y hueco, la causa probable es un GRANT que falta.
+- **El PL/SQL exige `GRANT EXECUTE`, no `SELECT`.** Con cero grants EXECUTE, `ALL_OBJECTS` y
+  `ALL_SOURCE` devuelven **cero** procedimientos y paquetes **sin error**. Un "no hay
+  procedimientos" con `EXECUTE: 0` en `cobertura.grants` no es un hecho, es una ceguera.
+- **Los sinónimos PRIVADOS no los expone ningún GRANT**: solo se ven leyendo como dueño del
+  esquema.
+
+Para leer con otra cuenta, `conexion=<id>` en las tools y `-Conexion <id>` en los hooks —resuelve
+contra `conexiones[]` de `.rs-databases.json`—. ⛔ **No** editar a mano el fichero de credenciales
+para poner otra conexión la primera: eso es persistente, no queda registrado en ninguna salida y
+arrastra consigo la política PII (el modelo se resuelve **por conexión**).
+
+---
+
 # 🔒 Datos personales en los resultados de `db_query`
 
 `db_query` aplica la política de protección de datos personales del workspace y devuelve

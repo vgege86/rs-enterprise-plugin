@@ -7,12 +7,16 @@
 .PARAMETER Workspace
     Ruta raíz del proyecto
 
+.PARAMETER Conexion
+    Id de conexión de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+
 .EXAMPLE
     .\compare-model.ps1 "C:\SVN\RS\<Proyecto>\trunk"
 #>
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [string]$Tables = ""   # Coma-separadas. Vacío = todas las tablas.
+    [string]$Tables = "",  # Coma-separadas. Vacío = todas las tablas.
+    [string]$Conexion = ""
 )
 
 
@@ -22,7 +26,7 @@ $ErrorActionPreference = "Stop"
 $hooksDir   = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
 
-$configJson = & "$hooksDir\get-config.ps1" $Workspace | ConvertFrom-Json
+$configJson = & "$hooksDir\get-config.ps1" $Workspace -Conexion $Conexion | ConvertFrom-Json
 if ($configJson.error) {
     @{ success = $false; error = $configJson.error } | ConvertTo-Json; exit 1
 }
@@ -37,7 +41,12 @@ $dbCfg = Read-RsDatabases (Resolve-RsWorkspace $Workspace)
 if (-not $dbCfg.ok) {
     @{ success = $false; error = $dbCfg.error } | ConvertTo-Json; exit 1
 }
-$password = Unprotect-RsSecret (Get-CsPart -Cadena "$($dbCfg.conexiones[0].cadena)" -Clave "Password")
+$conSel = Select-RsConexion -Config $dbCfg -Id $Conexion
+if (-not $conSel) {
+    $validas = ($dbCfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
+    @{ success = $false; error = "Conexión '$Conexion' no existe. Válidas: $validas" } | ConvertTo-Json; exit 1
+}
+$password = Unprotect-RsSecret (Get-CsPart -Cadena "$($conSel.cadena)" -Clave "Password")
 
 if (-not (Test-Path $modelPath)) {
     @{ success = $false; error = "Modelo BD no encontrado: $modelPath. Ejecutar /rs-erd primero." } | ConvertTo-Json; exit 1

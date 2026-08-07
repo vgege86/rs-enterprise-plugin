@@ -180,3 +180,73 @@ class TestConstruir:
         b = mo.construir(self._salidas(), ["RCLIENTES", "RPEDIDOS"])
         assert a == b
         assert obj.comparar(a, b) == {}
+
+
+class TestCobertura:
+    """El contraste entre lo que el diccionario dice que hay y lo que se capturó.
+
+    ⛔ Por qué importa tanto. Sin este bloque, un inventario vacío y un esquema vacío son la
+    misma salida. Con una cuenta que no es dueña del esquema, Oracle NO permite distinguir "no
+    existe" de "no lo veo" (ORA-00942 es ambiguo y `ALL_*` está filtrada por privilegio), así que
+    la única defensa es contar y decir en voz alta lo que falta. Las cifras de estos tests son
+    las medidas en una instalación de cliente.
+    """
+
+    VIS = {"soportado": True, "es_dueno": False, "usuario": "CONSULTA", "esquema": "ESQ",
+           "grants": {"SELECT": 323},
+           "diccionario": {"tablas": 329, "secuencias": 18, "procedimientos": 12}}
+
+    def test_detecta_las_tablas_que_la_cuenta_no_ve(self):
+        cob = obj.cobertura(self.VIS, {"tablas": 323})
+        assert cob["huecos"] == 6
+        assert cob["parcial"] is True
+
+    def test_una_exclusion_declarada_no_cuenta_como_hueco(self):
+        # 18 en el diccionario, 17 scriptadas, 1 excluida a propósito (columna IDENTITY). Sin
+        # declarar la exclusión, esto sería un aviso permanente — y un aviso permanente es un
+        # aviso que nadie vuelve a mirar.
+        cob = obj.cobertura(self.VIS, {"secuencias": 17},
+                            {"secuencias": {"n": 1, "motivo": "columna IDENTITY"}})
+        assert cob["huecos"] == 0
+        assert cob["parcial"] is False
+
+    def test_cero_procedimientos_sin_EXECUTE_es_un_hueco_de_los_doce(self):
+        # El PL/SQL exige GRANT EXECUTE, no SELECT: con 0 EXECUTE, ALL_SOURCE devuelve cero
+        # filas SIN error. Los 12 procedimientos existen y no se ven.
+        cob = obj.cobertura(self.VIS, {"procedimientos": 0})
+        assert cob["huecos"] == 12
+        assert "EXECUTE" not in cob["grants"]
+
+    def test_siendo_dueno_el_descuadre_no_se_atribuye_a_permisos(self):
+        # Mandar a alguien a pedir GRANTs que ya tiene es peor que no decir nada.
+        vis = dict(self.VIS, es_dueno=True)
+        cob = obj.cobertura(vis, {"tablas": 323})
+        assert cob["parcial"] is True
+        assert "no son permisos" in cob["nota"]
+
+    def test_sin_dato_en_el_diccionario_no_se_inventa_hueco(self):
+        cob = obj.cobertura(self.VIS, {"vistas": 4})
+        assert cob["secciones"][0]["real"] is None
+        assert cob["huecos"] == 0
+
+    def test_capturar_de_mas_no_produce_hueco_negativo(self):
+        cob = obj.cobertura(self.VIS, {"tablas": 400})
+        assert cob["huecos"] == 0
+
+    def test_cuadrar_sin_ser_dueno_se_dice_igual(self):
+        cob = obj.cobertura(self.VIS, {"tablas": 329})
+        assert cob["parcial"] is False
+        assert cob["nota"]
+
+    def test_el_formato_nombra_la_cuenta_los_grants_y_el_hueco(self):
+        # El bloque se lee en un log: si no trae las tres cosas, no permite decidir nada.
+        texto = "\n".join(obj.formato_cobertura(obj.cobertura(self.VIS, {"tablas": 323})))
+        assert "CONSULTA" in texto and "ESQ" in texto
+        assert "SELECT 323" in texto
+        assert "HUECO 6" in texto
+        assert "EXECUTE" in texto  # la salida sugerida
+
+    def test_sin_visibilidad_no_revienta(self):
+        cob = obj.cobertura({}, {"tablas": 10})
+        assert cob["parcial"] is False
+        assert cob["es_dueno"] is False

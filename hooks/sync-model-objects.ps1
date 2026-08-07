@@ -19,15 +19,23 @@
 .PARAMETER DryRun
     No escribe el modelo: solo lista el inventario y el diff contra el actual.
 
+.PARAMETER Conexion
+    Id de conexion de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+    Leer como dueno del esquema es la unica forma de ver los sinonimos PRIVADOS y todo el
+    PL/SQL: ningun GRANT los expone.
+
 .EXAMPLE
     .\sync-model-objects.ps1 "C:\SVN\RS\<Proyecto>\trunk"
 .EXAMPLE
     .\sync-model-objects.ps1 "<trunk>" -DryRun
+.EXAMPLE
+    .\sync-model-objects.ps1 "<trunk>" -Conexion DUENO
 #>
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
     [string]$Proyecto = "",
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$Conexion = ""
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -49,19 +57,27 @@ if (!(Test-Path $py)) {
 }
 
 $argumentos = @($py, $Workspace, $Proyecto)
-if ($DryRun) { $argumentos += '--dry-run' }
+if ($DryRun)   { $argumentos += '--dry-run' }
+if ($Conexion) { $argumentos += @('--conexion', $Conexion) }
 
-# La salida del script va TAL CUAL a la consola: lleva el inventario por seccion y el diff
-# contra el modelo anterior, que es lo que hay que leer. El JSON de abajo es solo el veredicto.
+# La salida del script va TAL CUAL a la consola: lleva el inventario por seccion, el bloque de
+# cobertura y el diff contra el modelo anterior, que es lo que hay que leer. El JSON de abajo
+# es solo el veredicto.
 & python @argumentos
 $code = $LASTEXITCODE
 
-# exit 2 = algun tipo de objeto fallo pero el resto se sincronizo. No es un fallo total: el
-# modelo queda con lo que se pudo leer y conservando lo anterior de lo que no.
+# exit 2 = PARCIAL, por cualquiera de estas dos causas:
+#   - algun tipo de objeto fallo al extraerse (el resto si se sincronizo), o
+#   - hay hueco de cobertura: el diccionario ve mas objetos de los que esta cuenta capturo.
+# En ninguno de los dos casos es un fallo total, y en ninguno se ha borrado nada del modelo.
+# ⛔ Un inventario incompleto NO se puede leer como "estos objetos ya no existen": lo que
+# sigue —el delta de /rs-actualizador, el contraste del instalador— tiene que tratarlo como
+# "no se sabe", que es lo que significa.
 @{
     success  = ($code -eq 0 -or $code -eq 2)
     parcial  = ($code -eq 2)
     dry_run  = [bool]$DryRun
+    conexion = $Conexion
     proyecto = $Proyecto
     modelo   = (Join-Path $Workspace "BD\$Proyecto-model.json")
     exit     = $code

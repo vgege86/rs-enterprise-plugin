@@ -117,7 +117,23 @@ Ruta: `BD\<proyecto>-model.json`
 | `updated_at` | ISO8601 | Última actualización |
 | `subviews` | object | Mapa `<vista> → [tablas]`. La vista `Parametricas` la consume el instalador de cliente (`scripts/installer-inserts.py`) **y** la política PII, que trata esas tablas como no personales (ver abajo) |
 | `pii_policy` | object | Política de protección de datos personales en `db_query`. Ausente = `mode: "off"` (ver abajo) |
+| `_cobertura` | object | Cuánto del esquema alcanzó a ver la última sincronización (ver abajo). Lo escriben los hooks de sync; metadato, no datos del modelo |
 | `tables` | object | Mapa de tablas por nombre |
+
+### Formato del fichero (no es cosmético)
+
+El `model.json` vive en el repositorio y se revisa por diff, así que su serialización es parte
+del contrato: `indent=2`, `separators=(',', ': ')`, **`ensure_ascii=True`**, saltos **CRLF** y
+UTF-8 **con BOM**. Lo impone `scripts/_modeljson.py`, que es el **único** escritor del plugin
+—desde PowerShell se llega por `Save-RsModelJson` (`hooks/lib-modeljson.ps1`)—, y lo verifica
+sobre el temporal antes de sustituir al modelo bueno: BOM, cero LF sueltos, cero bytes no-ASCII,
+reparseo y comparación con el objeto que se quería escribir.
+
+⛔ **Nunca escribir el modelo con `ConvertTo-Json` de PowerShell 5.1 ni con `json.dump` a pelo.**
+El primero alinea cada valor a la columna de la clave padre (x3,2 de tamaño y todas las líneas
+resangradas: diff inservible aunque el BOM y los CRLF sean correctos); el segundo, con
+`ensure_ascii=False` y sin BOM, deja los acentos como bytes crudos y hace que el fichero cambie
+de codificación según qué proceso lo tocó el último.
 
 ### Nivel tabla
 
@@ -127,6 +143,27 @@ Ruta: `BD\<proyecto>-model.json`
 | `source` | `db\|dalc\|manual` | Cómo se detectó esta tabla |
 | `columns` | object | Mapa de columnas por nombre |
 | `relations` | array | Relaciones con otras tablas |
+| `visible` | boolean | Presente y `false` = la última sincronización **no vio** esta tabla. ⛔ No significa que no exista: con una cuenta que solo ve por GRANT, Oracle no permite distinguirlo. La tabla se conserva entera —columnas, relaciones e índices— y la marca desaparece sola cuando vuelve a verse. **Ausente = visible**, que es el caso normal (así el modelo no engorda con un campo por tabla) |
+| `visible_check` | ISO8601 | Cuándo se dejó de ver, para distinguir una tabla que hoy no se ve de una que lleva meses sin verse |
+
+### Nivel `_cobertura`
+
+Lo que la sincronización alcanzó a ver frente a lo que el diccionario dice que hay. Existe
+porque **un conteo bajo no significa "no hay"**: una cuenta que no es dueña del esquema ve por
+GRANT per-object, y el PL/SQL exige GRANT `EXECUTE` (no `SELECT`) — con cero, `ALL_OBJECTS` y
+`ALL_SOURCE` devuelven cero procedimientos **sin error**.
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `conexion` / `usuario` / `esquema` | string | Con qué se leyó. Sin esto, una lectura hecha como dueño es indistinguible de una hecha con la cuenta de consulta |
+| `es_dueno` | boolean | `true` = visibilidad total; un descuadre es entonces un fallo del script, no de permisos |
+| `grants` | object | `{PRIVILEGIO: n}` sobre el esquema (directos, por PUBLIC o por rol) |
+| `secciones` | object | `{sección: {real, capturado, excluido, motivo, hueco, origen, fecha}}`. `excluido` es lo que el script descarta **a propósito** (secuencias de columna IDENTITY, recycle bin); declararlo evita que una exclusión legítima cuente como pérdida |
+| `actualizado` | ISO8601 | Última escritura del bloque |
+
+Se **mezcla por sección**, no se reescribe: cada sync conoce solo su parte (`sync-from-db` las
+tablas, `sync-indexes` los índices, `sync-model-objects` los objetos), y cada sección guarda su
+`origen` y su `fecha` para que un bloque viejo no se lea como si fuera de esta ejecución.
 
 ### Nivel `objetos` (inventario de objetos de BD)
 
