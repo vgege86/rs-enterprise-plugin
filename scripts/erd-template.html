@@ -177,6 +177,7 @@
   <div class="tb-sep"></div>
   <button onclick="fitView()" title="Ajustar todas las tablas en vista (F)">Fit view</button>
   <button id="btn-pkonly" onclick="togglePkOnly()" title="Mostrar solo columnas clave">PKs</button>
+  <button id="btn-objetos" onclick="openObjetosPanel()" title="Vistas, procedimientos, paquetes, funciones, triggers, sinónimos y secuencias del modelo">Objetos</button>
   <button class="primary" onclick="saveModel()">Guardar</button>
   <div class="tb-sep"></div>
   <button class="menu-btn" id="btn-menu-vista"    onclick="toggleMenu(this,'menu-vista')">Vista ▾</button>
@@ -220,6 +221,9 @@
 // — así el HTML no caduca cuando cambia BD/<proyecto>-model.json.
 let MODEL = {model_json};
 if (!MODEL.subviews) MODEL.subviews = {};
+// Inventario de objetos de BD (3.10.0+). Los modelos anteriores no lo traen: sin esta guarda,
+// cada acceso a MODEL.objetos.<seccion> seria un TypeError al abrir un ERD viejo.
+if (!MODEL.objetos) MODEL.objetos = {};
 const positions = {};
 let scale = 1, panX = 0, panY = 0;
 let dragging = null, dragStart = {};
@@ -917,6 +921,17 @@ function openPanel(type, tableName, colName) {
     content.innerHTML = `
       <label>Descripción</label>
       <textarea id="edit-desc" onchange="MODEL.tables['${tableName}'].description=this.value">${t.description || ''}</textarea>
+      ${(() => {
+        // Analisis de impacto: que objetos de BD tocan esta tabla. Es la pregunta que se hace
+        // antes de cambiar una columna, y hasta ahora habia que ir a buscarla a la BD a mano.
+        const usan = objetosQueUsan(tableName);
+        if (!usan.length) return '';
+        return `<label style="margin-top:10px">Objetos que la usan (${usan.length})</label>` +
+          usan.map(u => `<div class="col-row" style="cursor:pointer"
+              onclick="openObjetoPanel('${u.sec}','${u.nombre.replace(/'/g, "\\'")}')">
+              <span class="col-name">${u.nombre}</span>
+              <span class="col-type">${u.etiqueta}</span></div>`).join('');
+      })()}
       <label style="margin-top:10px;display:flex;align-items:center;justify-content:space-between">
         Columnas (${Object.keys(t.columns||{}).length})
         <button onclick="openAddColumnForm('${tableName}')" style="padding:1px 7px;font-size:11px">+ Col</button>
@@ -1903,6 +1918,123 @@ function confirmAddColumn(tableName) {
   buildFkMap();
   openPanel('table', tableName);
   showDDLModal('Añadir columna — '+tableName+'.'+cname, ddlAddColumn(tableName, cname, colDef), tableName+'-ADD-'+cname+'.sql');
+}
+
+// ─── Objetos de BD (vistas, procs, paquetes, funciones, triggers, sinonimos, secuencias) ─────
+//
+// El modelo guarda la FICHA y una FIRMA del cuerpo, no el cuerpo: el instalador sigue
+// extrayendo de la BD viva. Aqui, por tanto, no se edita ni se muestra codigo — se muestra
+// QUE hay, en que estado, y que tablas toca cada cosa. Ver scripts/_dbobjetos.py.
+
+const OBJ_SECCIONES = [
+  ['secuencias',     'Secuencias'],
+  ['vistas',         'Vistas'],
+  ['funciones',      'Funciones'],
+  ['procedimientos', 'Procedimientos'],
+  ['paquetes',       'Paquetes'],
+  ['triggers',       'Triggers'],
+  ['sinonimos',      'Sinónimos'],
+];
+
+function _objSec(sec) {
+  // Las claves que empiezan por '_' son metadatos del inventario (_firma, _nota), no objetos.
+  const d = (MODEL.objetos || {})[sec] || {};
+  return Object.keys(d).filter(k => !k.startsWith('_')).sort();
+}
+
+function _objTotal() {
+  return OBJ_SECCIONES.reduce((n, [sec]) => n + _objSec(sec).length, 0);
+}
+
+// Indice inverso tabla -> objetos que la usan. Es el analisis de impacto: antes de tocar una
+// columna, saber que procedimientos la leen. Se construye a demanda y no se cachea porque el
+// modelo se puede recargar en caliente con "Abrir modelo…".
+function objetosQueUsan(tabla) {
+  const res = [];
+  OBJ_SECCIONES.forEach(([sec, etiqueta]) => {
+    _objSec(sec).forEach(nombre => {
+      const d = MODEL.objetos[sec][nombre] || {};
+      if ((d.tablas_usadas || []).includes(tabla)) res.push({ sec, etiqueta, nombre, d });
+    });
+  });
+  return res;
+}
+
+function openObjetosPanel(secAbierta) {
+  const panel = document.getElementById('panel');
+  const title = document.getElementById('panel-title');
+  const content = document.getElementById('panel-content');
+  panel.classList.add('open');
+  title.textContent = 'Objetos de BD (' + _objTotal() + ')';
+
+  if (_objTotal() === 0) {
+    content.innerHTML = `<p style="font-size:12px;line-height:1.6;color:#a6adc8">
+      El modelo no tiene inventario de objetos.<br><br>
+      Se rellena con <code>hooks\\sync-model-objects.ps1</code>, que lo lee de la BD.
+      Guarda la ficha y una <b>firma</b> del cuerpo, no el cuerpo: el instalador sigue
+      extrayendo de la BD viva, y la firma es lo que permite saber qué cambió desde la última
+      entrega.</p>`;
+    return;
+  }
+
+  content.innerHTML = OBJ_SECCIONES.map(([sec, etiqueta]) => {
+    const nombres = _objSec(sec);
+    const abierta = (secAbierta === sec) || (!secAbierta && nombres.length > 0 && nombres.length <= 12);
+    return `<div style="margin-bottom:6px">
+      <div style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0"
+           onclick="openObjetosPanel('${sec}')">
+        ${abierta ? '▾' : '▸'} ${etiqueta}
+        <span style="color:#6c7086;font-weight:400">(${nombres.length})</span>
+      </div>
+      ${abierta ? nombres.map(n => {
+        const d = MODEL.objetos[sec][n] || {};
+        const roto = d.estado && d.estado !== 'VALID';
+        return `<div class="col-row" style="cursor:pointer"
+                     onclick="openObjetoPanel('${sec}','${n.replace(/'/g, "\\'")}')">
+          <span class="col-name">${n}</span>
+          <span class="col-type">${d.lineas || 0} ln</span>
+          ${roto ? `<span class="col-pk" style="background:#f38ba8">${d.estado}</span>` : ''}
+        </div>`;
+      }).join('') : ''}
+    </div>`;
+  }).join('');
+}
+
+function openObjetoPanel(sec, nombre) {
+  const d = ((MODEL.objetos || {})[sec] || {})[nombre] || {};
+  const panel = document.getElementById('panel');
+  panel.classList.add('open');
+  document.getElementById('panel-title').textContent = nombre;
+  const tablas = (d.tablas_usadas || []);
+  document.getElementById('panel-content').innerHTML = `
+    <button style="font-size:11px;margin-bottom:8px" onclick="openObjetosPanel('${sec}')">← Objetos</button>
+    <label>Estado</label>
+    <div style="font-size:12px;color:${d.estado === 'VALID' ? '#a6e3a1' : '#f38ba8'}">${d.estado || '?'}</div>
+    <label style="margin-top:8px">Líneas</label>
+    <div style="font-size:12px">${d.lineas || 0}</div>
+    <label style="margin-top:8px">Firma</label>
+    <div style="font-size:11px;font-family:monospace;color:#a6adc8">${d.firma || '—'}</div>
+    <div style="font-size:10px;color:#6c7086;line-height:1.5;margin-top:2px">
+      Firma del cuerpo, no el cuerpo. Si cambia entre entregas, lo que instalaría el
+      cliente ha cambiado.
+    </div>
+    <label style="margin-top:10px">Tablas que usa (${tablas.length})</label>
+    ${tablas.length
+      ? tablas.map(t => `<div class="col-row" style="cursor:${MODEL.tables[t] ? 'pointer' : 'default'}"
+            ${MODEL.tables[t] ? `onclick="focusTable('${t}')"` : ''}>
+            <span class="col-name">${t}</span></div>`).join('')
+      : '<div style="font-size:11px;color:#6c7086">Ninguna del modelo</div>'}
+    <div style="font-size:10px;color:#6c7086;line-height:1.5;margin-top:6px">
+      Derivado por coincidencia de texto con las tablas del modelo, no del diccionario de
+      dependencias: un nombre dentro de un comentario cuenta igual.
+    </div>`;
+}
+
+function focusTable(t) {
+  if (!MODEL.tables[t]) return;
+  openPanel('table', t);
+  const el = document.getElementById('tbl-' + t);
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
 }
 
 // ─── Toggle column PK ─────────────────────────────────────────────────────────

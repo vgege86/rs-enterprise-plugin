@@ -23,6 +23,20 @@ Ruta: `BD\<proyecto>-model.json`
     "patterns_add": ["OBSERVACION*", "*_CONTACTO"],
     "patterns_remove": ["NOMBRE*"]
   },
+  "objetos": {
+    "_firma": "sha256-16",
+    "vistas": {
+      "V_CLIENTES_ACTIVOS": {
+        "estado": "VALID",
+        "firma": "38e734fea6450050",
+        "lineas": 12,
+        "tablas_usadas": ["CLIENTES"],
+        "source": "db"
+      }
+    },
+    "secuencias": {}, "funciones": {}, "procedimientos": {},
+    "paquetes": {}, "triggers": {}, "sinonimos": {}
+  },
   "tables": {
     "CLIENTES": {
       "description": "Tabla maestra de clientes",
@@ -113,6 +127,31 @@ Ruta: `BD\<proyecto>-model.json`
 | `source` | `db\|dalc\|manual` | Cómo se detectó esta tabla |
 | `columns` | object | Mapa de columnas por nombre |
 | `relations` | array | Relaciones con otras tablas |
+
+### Nivel `objetos` (inventario de objetos de BD)
+
+Siete secciones fijas —`secuencias`, `vistas`, `funciones`, `procedimientos`, `paquetes`,
+`triggers`, `sinonimos`— cada una un mapa `nombre` → ficha. Las claves que empiezan por `_`
+son metadatos, no objetos. Lo rellena `hooks/sync-model-objects.ps1`.
+
+⛔ **Se guarda la ficha y una firma del cuerpo, nunca el cuerpo.** El instalador sigue
+extrayendo el DDL de la BD viva: esa es la garantía de que un paquete no puede entregar código
+viejo. Si el modelo fuera la fuente, un `model.json` desactualizado entregaría un procedimiento
+de hace meses sin que nada avisara. La firma da lo que faltaba —saber **qué cambió** desde la
+última entrega, que el delta por VCS de `/rs-actualizador` no puede ver porque un procedimiento
+modificado en BD no está en el repo— sin renunciar a esa garantía.
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `estado` | string | `VALID`, `INVALID`, `DISABLED`… tal como lo reporta el motor. Un trigger `DISABLED` en origen se instala deshabilitado |
+| `firma` | string | 16 hex de SHA-256 sobre el cuerpo **normalizado** (CRLF→LF, sin relleno a la derecha, sin líneas en blanco finales). La indentación sí cuenta: es del autor. Se calcula sobre el mismo texto que emitiría el instalador, así que "la firma cambió" significa "lo que se entregaría ha cambiado" |
+| `lineas` | integer | Tamaño del cuerpo normalizado |
+| `tablas_usadas` | array | Tablas del modelo que aparecen en el cuerpo. ⛔ **Derivado por coincidencia de texto**, no del diccionario de dependencias: un nombre dentro de un comentario cuenta igual. Sirve para "qué procedimientos tocan `RCLIENTES`" antes de cambiar una columna, donde un falso positivo se descarta de un vistazo y un falso negativo duele |
+| `source` | string | `db` |
+
+En Oracle, la especificación y el cuerpo de un package son dos objetos en `ALL_SOURCE` pero
+**una sola ficha** en `paquetes`: se firman los dos textos concatenados. SQL Server no tiene
+paquetes, así que allí esa sección va siempre vacía.
 
 ### Nivel columna
 

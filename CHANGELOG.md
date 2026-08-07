@@ -1,5 +1,94 @@
 # RS Enterprise Agent — Changelog
 
+## 3.10.0 — 2026-08-07
+
+### Los objetos de BD entran en el modelo: vistas, procedimientos, paquetes, funciones, triggers, sinónimos y secuencias
+
+Hasta ahora el `model.json` solo conocía tablas. Los demás objetos existían en la BD y en el
+paquete del instalador —que los extrae en vivo— pero **nunca en el modelo**, así que no había
+forma de verlos en el ERD, de preguntar qué procedimientos tocan una tabla antes de cambiarle
+una columna, ni de saber que uno había cambiado.
+
+Eso último es el agujero que más costaba: el delta de `/rs-actualizador` es por VCS
+(`FECHA_CORTE` + `vcs_delta` sobre ficheros del repo) y **un procedimiento modificado en BD no
+está en el repo**. Hasta hoy solo viajaba si alguien se acordaba de escribir su script a mano.
+
+#### Ficha y firma, no el cuerpo
+
+La decisión de diseño que lo ordena todo. Del objeto se guarda su ficha —estado, nº de líneas,
+tablas que usa— y una **firma** del cuerpo. El cuerpo no.
+
+El instalador **sigue extrayendo de la BD viva**, y esa es la garantía que hace que un paquete
+no pueda entregar código viejo: lo que viaja es literalmente lo que hay en la BD. Si el modelo
+pasara a ser la fuente, un `model.json` desactualizado entregaría un procedimiento de hace tres
+meses a un cliente y nada lo avisaría. La firma da lo que faltaba —saber qué cambió— sin
+renunciar a esa garantía. Y de paso un package de miles de líneas no acaba dentro del HTML del
+ERD, que embebe el modelo entero.
+
+⛔ La firma se calcula sobre el **mismo texto que emitiría el instalador** (los bloques que
+devuelven sus extractores), no sobre otra lectura de la BD. Es lo que hace que "la firma
+cambió" signifique exactamente "lo que se entregaría ha cambiado" y no "alguien reformateó
+algo". Por eso los extractores de `installer-objects.py` pasan a exponer sus bloques y
+`model-objects.py` los reutiliza: **cero consultas duplicadas**.
+
+Normalización antes de firmar: CRLF→LF, sin relleno a la derecha, sin líneas en blanco finales.
+Sin eso la firma cambiaría en cada extracción —la BD devuelve CRLF y sqlplus vuelve a convertir
+el LF— y el actualizador reportaría el esquema entero como modificado hasta que nadie volviera
+a mirarlo. La **indentación sí cuenta**: es del autor.
+
+#### Qué hay ahora
+
+- **`hooks/sync-model-objects.ps1`** — sincroniza el inventario. `-DryRun` lista y diffea sin
+  escribir. Si un tipo de objeto falla, su sección se **conserva** del modelo anterior en vez
+  de vaciarse: si no, el diff siguiente leería "se han eliminado todas las vistas" por un error
+  de conexión puntual.
+- **Siete secciones en el ERD**, con el estado de cada objeto y las tablas que usa. Y en el
+  panel de cada tabla, **qué objetos la usan** — el análisis de impacto que antes había que ir
+  a buscar a la BD a mano.
+- **El instalador contrasta** modelo contra BD y reporta la deriva. No bloquea (el paquete se
+  genera de la BD viva, así que es correcto), pero un objeto que está en BD y no en el modelo
+  suele significar que alguien lo creó a mano y nadie lo sabe.
+- **El actualizador pregunta.** Su paso de scripts incorpora la comprobación: todo objeto que
+  salga como nuevo/modificado/con el estado cambiado y no esté cubierto por un script de la
+  entrega se le plantea al usuario, en vez de decidirlo por cuenta propia.
+
+`tablas_usadas` se deriva **por coincidencia de texto** con las tablas del modelo, no del
+diccionario de dependencias. Se llama así y no `depende_de` para no prometer una autoridad que
+no tiene: un nombre dentro de un comentario cuenta igual. Vale para la pregunta que se quiere
+responder —"qué toca `RCLIENTES`"— donde un falso positivo se descarta de un vistazo y un falso
+negativo duele.
+
+En Oracle, especificación y cuerpo de un package son dos objetos en `ALL_SOURCE` y **una sola
+ficha**: se firman los textos concatenados. SQL Server no tiene paquetes; allí esa sección va
+vacía.
+
+### Tests
+
+`tests/test_dbobjetos.py` (24 casos). La extracción SQL no se puede probar sin un motor
+delante, así que el gate está donde puede estar: en la lógica que decide qué entra en el
+modelo, que tiene tres sitios donde un fallo no daría error sino un modelo sutilmente falso —
+la firma (cambia por lo que no debe, o no cambia por lo que sí), la clasificación PL/SQL
+(`PACKAGE BODY` probado después de `PACKAGE` archiva el cuerpo como especificación) y el diff
+(un `estado_cambiado` no detectado deja un trigger deshabilitado en el cliente).
+
+Se fija además que dos extracciones iguales den el mismo inventario: si no, cada sync produce
+un diff falso en el `model.json` y nadie revisa los reales.
+
+El JavaScript del ERD se verificó con node (7 casos: metadatos `_`, orden, análisis de impacto
+y modelo antiguo sin la sección), pero eso **no queda como gate** — el repo no tiene runner de
+JS y montarlo es otra cosa.
+
+⛔ **Sin verificar contra un motor real**: la extracción en sí. Se apoya en los extractores que
+ya existían y que tampoco lo estaban, pero el reparto por secciones y el contraste solo se han
+probado con bloques sintéticos. Conviene un `sync-model-objects.ps1 -DryRun` contra DESA antes
+de fiarse del inventario.
+
+Ficheros: `scripts/_dbobjetos.py` (nuevo), `scripts/model-objects.py` (nuevo),
+`hooks/sync-model-objects.ps1` (nuevo), `scripts/installer-objects.py`,
+`scripts/erd-template.html`, `agents/rs-instalador.md`, `agents/rs-actualizador.md`,
+`references/json-schema.md`, `references/hooks.md`, `hooks/README.md`,
+`tests/test_dbobjetos.py` (nuevo).
+
 ## 3.9.1 — 2026-08-07
 
 ### El toggle de PK del ERD podía reintroducir la clave invertida que acababa de arreglarse

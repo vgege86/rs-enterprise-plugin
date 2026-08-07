@@ -79,6 +79,13 @@ _spec = importlib.util.spec_from_file_location("_installer_inserts", _INS_PATH)
 _ins = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ins)
 
+# Inventario del modelo: para CONTRASTAR lo extraído contra lo que el modelo dice que hay.
+# El paquete se sigue generando de la BD viva —esa es la garantía de que no entrega código
+# viejo—; el contraste solo delata deriva, no cambia lo que viaja.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _dbobjetos as _inv
+
 OBJ_MARK = "##OBJ##"
 END_MARK = "##END##"
 
@@ -224,6 +231,23 @@ def cab(titulo: str, proyecto: str, motor: str, extra: list = None) -> list:
     return l
 
 
+# ---------------------------------------------------------------- contrato de los extractores
+def _resultado(lines, nombres, nstrip=0, disabled=None, bloques=None):
+    """Lo que devuelve cada extractor.
+
+    ⛔ Antes eran tuplas de 3 o 4 elementos y `main` adivinaba la forma con `len(res)`. Añadir
+    un campo por esa vía es pedir un desempaquetado silenciosamente equivocado, así que el
+    contrato pasa a ser un dict con nombres.
+
+    `bloques` es {nombre visible: texto del objeto} — el MISMO texto que acaba en el .sql. Lo
+    consume scripts/model-objects.py para firmarlo: que la firma se calcule sobre lo que
+    entregaría el instalador, y no sobre otra lectura de la BD, es lo que hace que un cambio
+    de firma signifique exactamente "lo que se entregaría ha cambiado".
+    """
+    return {"lines": lines, "nombres": nombres, "nstrip": nstrip,
+            "disabled": disabled or [], "bloques": bloques or {}}
+
+
 # ---------------------------------------------------------------- SECUENCIAS
 def gen_secuencias(cfg: dict) -> tuple:
     S = cfg["schema"]
@@ -245,15 +269,16 @@ def gen_secuencias(cfg: dict) -> tuple:
 """
     out = run_sqlplus(cfg, sql)
     bloques = parse_blocks(out)
-    lines, nombres = [], []
+    lines, nombres, cuerpos = [], [], {}
     for nombre, buf in bloques:
         if IDENTITY_SEQ_RE.match(nombre):
             continue
         nombres.append(nombre)
+        cuerpos[nombre] = "\n".join(buf).strip()
         lines.append(f"-- Secuencia {nombre}")
         lines.extend(buf)
         lines.append("")
-    return lines, nombres, 0
+    return _resultado(lines, nombres, bloques=cuerpos)
 
 
 # ---------------------------------------------------------------- VISTAS
@@ -279,15 +304,16 @@ END;
 """
     out = run_sqlplus(cfg, blk)
     bloques = parse_blocks(out)
-    lines, nombres, nstrip = [], [], 0
+    lines, nombres, nstrip, cuerpos = [], [], 0, {}
     for nombre, buf in bloques:
         nombres.append(nombre)
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
+        cuerpos[nombre] = txt.strip()
         lines.append(f"-- Vista {nombre}")
         lines.append(txt)
         lines.append("")
-    return lines, nombres, nstrip
+    return _resultado(lines, nombres, nstrip, bloques=cuerpos)
 
 
 # ---------------------------------------------------------------- PL/SQL (ALL_SOURCE)
@@ -304,16 +330,17 @@ def gen_source(cfg: dict, tipos: list) -> tuple:
     out = run_sqlplus(cfg, sql)
     # Sin END_MARK por línea: cada nuevo OBJ_MARK cierra el anterior (parse_blocks lo maneja)
     bloques = parse_blocks(out)
-    lines, nombres, nstrip = [], [], 0
+    lines, nombres, nstrip, cuerpos = [], [], 0, {}
     for nombre, buf in bloques:
         nombres.append(nombre)
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
+        cuerpos[nombre] = txt.strip()
         lines.append(f"-- {nombre}")
         lines.append(txt.rstrip())
         lines.append("/")
         lines.append("")
-    return lines, nombres, nstrip
+    return _resultado(lines, nombres, nstrip, bloques=cuerpos)
 
 
 # ---------------------------------------------------------------- TRIGGERS
@@ -337,12 +364,13 @@ END;
 """
     out = run_sqlplus(cfg, blk)
     bloques = parse_blocks(out)
-    lines, nombres, nstrip, disabled = [], [], 0, []
+    lines, nombres, nstrip, disabled, cuerpos = [], [], 0, [], {}
     for cabecera, buf in bloques:
         nombre, _, status = cabecera.partition("|")
         nombres.append(nombre)
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
+        cuerpos[nombre] = txt.strip()
         lines.append(f"-- Trigger {nombre}")
         lines.append(txt.rstrip())
         lines.append("/")
@@ -352,7 +380,7 @@ END;
             disabled.append(nombre)
             lines.append(f"ALTER TRIGGER {nombre} DISABLE;")
         lines.append("")
-    return lines, nombres, nstrip, disabled
+    return _resultado(lines, nombres, nstrip, disabled, cuerpos)
 
 
 # ---------------------------------------------------------------- SINÓNIMOS
@@ -370,13 +398,14 @@ def gen_sinonimos(cfg: dict) -> tuple:
 """
     out = run_sqlplus(cfg, sql)
     bloques = parse_blocks(out)
-    lines, nombres = [], []
+    lines, nombres, cuerpos = [], [], {}
     for nombre, buf in bloques:
         nombres.append(nombre)
         txt, _ = strip_schema("\n".join(buf), S)
+        cuerpos[nombre] = txt.strip()
         lines.append(txt)
         lines.append("")
-    return lines, nombres, 0
+    return _resultado(lines, nombres, bloques=cuerpos)
 
 
 # ================================================================ SQL SERVER
@@ -413,13 +442,14 @@ JOIN sys.schemas s ON s.schema_id = o.schema_id
 WHERE o.type IN ({in_tipos}) AND o.is_ms_shipped = 0
 ORDER BY s.name, o.name;"""
     out = run_sqlcmd(cfg, sql)
-    lines, nombres = [], []
+    lines, nombres, cuerpos = [], [], {}
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
+        cuerpos[nombre] = "\n".join(buf).strip()
         lines.append(f"-- {nombre}")
         lines.append("\n".join(buf).rstrip())
         lines.append("")
-    return lines, nombres, 0
+    return _resultado(lines, nombres, bloques=cuerpos)
 
 
 def ss_secuencias(cfg: dict) -> tuple:
@@ -443,13 +473,14 @@ JOIN sys.schemas s ON s.schema_id = q.schema_id
 JOIN sys.types   t ON t.user_type_id = q.user_type_id
 ORDER BY s.name, q.name;"""
     out = run_sqlcmd(cfg, sql)
-    lines, nombres = [], []
+    lines, nombres, cuerpos = [], [], {}
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
+        cuerpos[nombre] = "\n".join(buf).strip()
         lines.append(f"-- Secuencia {nombre}")
         lines.extend(buf)
         lines.append("")
-    return lines, nombres, 0
+    return _resultado(lines, nombres, bloques=cuerpos)
 
 
 def ss_triggers(cfg: dict) -> tuple:
@@ -474,16 +505,17 @@ JOIN sys.schemas     s ON s.schema_id = o.schema_id
 WHERE tr.is_ms_shipped = 0 AND tr.parent_class = 1
 ORDER BY s.name, tr.name;"""
     out = run_sqlcmd(cfg, sql)
-    lines, nombres, disabled = [], [], []
+    lines, nombres, disabled, cuerpos = [], [], [], {}
     for cabecera, buf in parse_blocks(out):
         nombre, _, status = cabecera.partition("|")
         nombres.append(nombre)
+        cuerpos[nombre] = "\n".join(buf).strip()
         if status.strip().upper() == "DISABLED":
             disabled.append(nombre)
         lines.append(f"-- Trigger {nombre}")
         lines.append("\n".join(buf).rstrip())
         lines.append("")
-    return lines, nombres, 0, disabled
+    return _resultado(lines, nombres, disabled=disabled, bloques=cuerpos)
 
 
 def ss_sinonimos(cfg: dict) -> tuple:
@@ -496,12 +528,13 @@ FROM sys.synonyms sy
 JOIN sys.schemas s ON s.schema_id = sy.schema_id
 ORDER BY s.name, sy.name;"""
     out = run_sqlcmd(cfg, sql)
-    lines, nombres = [], []
+    lines, nombres, cuerpos = [], [], {}
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
+        cuerpos[nombre] = "\n".join(buf).strip()
         lines.extend(buf)
         lines.append("")
-    return lines, nombres, 0
+    return _resultado(lines, nombres, bloques=cuerpos)
 
 
 # ---------------------------------------------------------------- etapas por motor
@@ -589,11 +622,10 @@ def main():
             resumen.append((titulo, "ERROR"))
             continue
 
-        disabled = []
-        if len(res) == 4:
-            lines, nombres, nstrip, disabled = res
-        else:
-            lines, nombres, nstrip = res
+        lines    = res["lines"]
+        nombres  = res["nombres"]
+        nstrip   = res["nstrip"]
+        disabled = res["disabled"]
 
         extra = []
         if nstrip:
@@ -663,6 +695,44 @@ def main():
         "",
     ]
     maestro.write_text("\n".join(ml), encoding="utf-8")
+
+    # ---- contraste contra el inventario del modelo ----
+    # Un objeto que está en la BD y no en el modelo casi siempre significa que alguien lo creó
+    # a mano y nadie lo sabe. Uno cuya firma cambió es un cambio que va a viajar al cliente sin
+    # que figure en ninguna tarea. Ninguna de las dos cosas bloquea la entrega —el paquete es
+    # correcto— pero las dos hay que verlas antes de entregar.
+    inventario_modelo = model.get("objetos") or {}
+    if inventario_modelo:
+        actual = _inv.inventario_vacio()
+        # ⛔ `salidas` va indexada por el NUMERO de etapa ("01".."06"), no por el nombre de
+        # fichero. Indexarla por el nombre devolvia siempre None y el contraste habria dado
+        # todo el inventario por eliminado, que es justo la alarma falsa que nadie vuelve a mirar.
+        for num, fichero, _t, _fn in etapas:
+            res = (salidas.get(num) or (None, None, 0))[0]
+            if not res:
+                continue
+            seccion = _inv.ETAPA_A_SECCION.get(fichero)
+            if not seccion:
+                continue
+            for nombre, cuerpo in (res.get("bloques") or {}).items():
+                destino, limpio = (_inv.clasificar_plsql(nombre)
+                                   if seccion == "procedimientos" else (seccion, nombre))
+                actual[destino][limpio] = {"firma": _inv.firma(cuerpo), "estado": "VALID"}
+
+        cambios = _inv.comparar(inventario_modelo, actual)
+        if cambios:
+            print("\n---- Deriva entre el modelo y la BD ----")
+            for sec, c in cambios.items():
+                for etiqueta, texto in (("nuevos", "en BD y NO en el modelo"),
+                                        ("eliminados", "en el modelo y NO en BD"),
+                                        ("modificados", "firma distinta")):
+                    if c[etiqueta]:
+                        print(f"   {sec:<15} {texto:<24} {', '.join(c[etiqueta][:6])}"
+                              f"{' ...' if len(c[etiqueta]) > 6 else ''}")
+            print("   El paquete se genera de la BD viva, así que es correcto. Pero conviene")
+            print("   resincronizar el modelo (hooks\\sync-model-objects.ps1) y revisar la lista.")
+        else:
+            print("\nModelo y BD coinciden: sin deriva en el inventario de objetos.")
 
     print("\n---- Resumen objetos (conteo real en BD) ----")
     for titulo, n in resumen:

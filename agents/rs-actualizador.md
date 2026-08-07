@@ -210,6 +210,24 @@ Para cada ID de tarea del delta, descargar los adjuntos `.sql` a `<destino>\scri
 Renombrar con prefijo de orden: `01-<TAREA>-<nombre>.sql`, `02-...`. El orden importa; si hay
 dependencias entre scripts, preguntar el orden al usuario.
 
+**Antes de cerrar la lista, comprobar qué objetos de BD han cambiado.** El delta de esta entrega
+es por VCS, y un procedimiento, vista o trigger modificado **no está en el repo**: hasta ahora
+solo viajaba si alguien se acordaba de escribir su script a mano. Ejecutar vía runner:
+
+```
+.\hooks\sync-model-objects.ps1 "<workspace>" -DryRun
+```
+
+Compara la BD contra el inventario del `model.json` y lista, por sección, lo `nuevo`,
+`eliminado`, `modificado` (firma distinta) y `estado_cambiado` (p.ej. un trigger que pasó a
+DISABLED — la firma no lo ve porque el cuerpo es el mismo). Todo lo que salga ahí y no esté ya
+cubierto por un script de la entrega hay que **preguntárselo al usuario**: o entra como script,
+o se decide explícitamente que no entra. ⛔ No decidirlo por cuenta propia: un objeto que cambió
+en desarrollo y no viaja deja al cliente con una versión que ya no existe en ningún sitio.
+
+Si el modelo no trae inventario todavía, el `-DryRun` lo dice; entonces esta comprobación no
+está disponible y hay que decirlo en el SUMMARY en vez de darla por hecha.
+
 Después escribir `<destino>\scripts\scripts.json` declarando ese orden explícitamente — formato en
 `assets\instalacion\scripts.json.tpl`. Cuando existe, **manda sobre el descubrimiento alfabético**
 de `Ejecutar-Scripts.ps1`, así que el orden acordado con el usuario queda fijado en el paquete y no
