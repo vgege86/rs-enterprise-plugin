@@ -144,11 +144,16 @@ def _unprotect_secret(value: str) -> str:
         ctypes.windll.kernel32.LocalFree(blob_out.pbData)
 
 
-def _read_password(workspace: str) -> str:
-    """Mirror de _get_db_password del MCP: password directo de docs/.rs-databases.json
-    (conexión principal, conexiones[0]). No pasar por get-config.ps1, que la omite deliberadamente.
+def _read_password(workspace: str, conexion: str = "") -> str:
+    """Mirror de _get_db_password del MCP: password directo de docs/.rs-databases.json.
+    No pasar por get-config.ps1, que la omite deliberadamente.
     Normaliza el workspace igual que Resolve-RsWorkspace: si apunta a una subcarpeta
-    docs/BD/Batch/OnLine, sube al trunk — si no, la password sale vacía."""
+    docs/BD/Batch/OnLine, sube al trunk — si no, la password sale vacía.
+
+    `conexion` vacío → la principal (conexiones[0]). ⛔ Un id que NO existe lanza, nunca cae a
+    conexiones[0]: mezclar la password de una conexión con los datos de otra produce un fallo de
+    autenticación cuyo mensaje no apunta a ningún sitio — o, peor, entra en el entorno que no era.
+    Misma regla que Select-RsConexion en hooks/lib-dbconfig.ps1."""
     ws = Path(workspace)
     if ws.name in ("docs", "BD", "Batch", "OnLine"):
         ws = ws.parent
@@ -157,10 +162,22 @@ def _read_password(workspace: str) -> str:
         return ""
     try:
         cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
-        conexiones = cfg.get("conexiones") or []
-        if not conexiones:
-            return ""
+    except Exception:
+        return ""
+
+    conexiones = cfg.get("conexiones") or []
+    if not conexiones:
+        return ""
+    if conexion:
+        sel = next((c for c in conexiones
+                    if str(c.get("id", "")).lower() == conexion.lower()), None)
+        if sel is None:
+            validas = ", ".join(str(c.get("id", "")) for c in conexiones)
+            raise SystemExit(f"ERROR: conexión '{conexion}' no existe en .rs-databases.json. Válidas: {validas}")
+    else:
         sel = conexiones[0]
+
+    try:
         for part in str(sel.get("cadena", "")).split(";"):
             part = part.strip()
             if part.lower().startswith("password="):
@@ -171,7 +188,54 @@ def _read_password(workspace: str) -> str:
     return ""
 
 
-def read_db_config(workspace: str, model: dict) -> dict:
+def arg_conexion(argv: list) -> str:
+    """Lee `--conexion <id>` de la línea de comandos. "" si no viene.
+
+    Un único parser para los tres scripts que lo aceptan: si cada uno lo troceara a su manera,
+    `--conexion` acabaría significando algo distinto según qué script lo recibe."""
+    for i, a in enumerate(argv):
+        if a == "--conexion" and i + 1 < len(argv):
+            return argv[i + 1].strip()
+        if a.startswith("--conexion="):
+            return a.split("=", 1)[1].strip()
+    return ""
+
+
+def read_visibilidad(workspace: str, conexion: str = "") -> dict:
+    """Diagnóstico de visibilidad de la conexión sobre su esquema: si la cuenta es dueña, qué
+    GRANTs tiene y cuántos objetos de cada tipo ve el diccionario.
+
+    ⛔ Delega en hooks/db-visibilidad.ps1 en vez de repetir aquí las consultas. Es la misma
+    razón por la que `read_db_config` llama a get-config.ps1: dos implementaciones de la misma
+    regla acaban divergiendo, y esta decide si un cero significa "no hay" o "no lo veo".
+
+    Se cachea en RS_DB_VISIBILIDAD_JSON igual que la config: arrancar PowerShell cuesta ~1s y
+    esto lo consultan varios scripts de la misma etapa.
+
+    Nunca lanza: devuelve `{"ok": False, "soportado": False, "error": ...}` si no se pudo
+    diagnosticar. El llamante decide (avisar y seguir, o cortar)."""
+    cache = os.environ.get("RS_DB_VISIBILIDAD_JSON", "")
+    if cache and Path(cache).exists():
+        try:
+            return json.loads(Path(cache).read_text(encoding="utf-8-sig"))
+        except Exception:
+            pass
+
+    hook = Path(__file__).resolve().parent.parent / "hooks" / "db-visibilidad.ps1"
+    if not hook.exists():
+        return {"ok": False, "soportado": False, "error": f"no se encuentra {hook}"}
+    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+           "-File", str(hook), workspace]
+    if conexion:
+        cmd += ["-Conexion", conexion]
+    try:
+        r = subprocess.run(cmd, capture_output=True)
+        return json.loads((r.stdout or b"").decode("utf-8", errors="replace").strip())
+    except Exception as e:
+        return {"ok": False, "soportado": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def read_db_config(workspace: str, model: dict, conexion: str = "") -> dict:
     """Obtiene la config de conexión llamando a get-config.ps1 (el mismo parser que usa db_query),
     para tolerar dataSource en formato connection-string ODP.NET. El password se lee aparte
     (get-config.ps1 lo omite deliberadamente).
@@ -179,20 +243,25 @@ def read_db_config(workspace: str, model: dict) -> dict:
     Si el hook ya resolvió la config y exportó su ruta en RS_DB_CONFIG_JSON, se lee de ahí:
     arrancar PowerShell cuesta ~1s y esta función se llama una vez por cada script Python de
     la etapa. ⛔ Ese fichero NO contiene la password (get-config.ps1 no la emite); la password
-    la sigue leyendo _read_password del .rs-databases.json."""
+    la sigue leyendo _read_password del .rs-databases.json.
+
+    ⛔ Con `conexion` explícita NO se usa la caché: RS_DB_CONFIG_JSON lo escribió el hook para
+    la conexión que él resolvió, y devolverlo aquí daría los datos de una conexión con la
+    password de otra."""
     out = ""
     cache = os.environ.get("RS_DB_CONFIG_JSON", "")
-    if cache and Path(cache).exists():
+    if cache and not conexion and Path(cache).exists():
         try:
             out = Path(cache).read_text(encoding="utf-8-sig").strip()
         except Exception:
             out = ""
     if not out:
         hook = Path(__file__).resolve().parent.parent / "hooks" / "get-config.ps1"
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-File", str(hook), workspace],
-            capture_output=True)
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+               "-File", str(hook), workspace]
+        if conexion:
+            cmd += ["-Conexion", conexion]
+        r = subprocess.run(cmd, capture_output=True)
         out = (r.stdout or b"").decode("utf-8", errors="replace").strip()
     try:
         cfg = json.loads(out)
@@ -205,13 +274,17 @@ def read_db_config(workspace: str, model: dict) -> dict:
     datasource = cfg.get("datasource") or ""
     schema     = cfg.get("schema") or ""
     user       = cfg.get("user") or ""
-    password   = _read_password(workspace)
+    password   = _read_password(workspace, conexion)
 
     if motor == "ORACLE" and not schema:
         schema = (model.get("schema") or user).upper()
 
+    # `conexion` viaja en el dict para que el llamante lo publique en su salida: sin eso, una
+    # lectura hecha con una conexión privilegiada es indistinguible de una hecha con la de
+    # consulta, que es justo lo que hacía inseguro editar el fichero a mano.
     return {"motor": motor, "datasource": datasource, "schema": schema,
-            "user": user, "password": password}
+            "user": user, "password": password,
+            "conexion": conexion or (cfg.get("conexion") or "")}
 
 
 def read_max_paralelo(workspace: str, proyecto: str, default: int = 8) -> int:
@@ -672,13 +745,17 @@ def write_master_script(out_dir: Path, tables: list, motor: str, proyecto: str) 
 
 def main():
     if len(sys.argv) < 4:
-        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir> [ORACLE|SQLSERVER]")
+        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir> [ORACLE|SQLSERVER] [--conexion <id>]")
         sys.exit(1)
 
     workspace = sys.argv[1]
     proyecto  = sys.argv[2]
     out_dir   = Path(sys.argv[3])
-    motor_override = sys.argv[4].upper() if len(sys.argv) > 4 else ""
+    conexion  = arg_conexion(sys.argv[4:])
+    # El motor posicional es opcional y `--conexion` puede ocupar su sitio: solo se toma como
+    # motor si no empieza por guion.
+    motor_override = (sys.argv[4].upper()
+                      if len(sys.argv) > 4 and not sys.argv[4].startswith("-") else "")
 
     model_path = Path(workspace) / "BD" / f"{proyecto}-model.json"
     if not model_path.exists():
@@ -687,7 +764,9 @@ def main():
     with open(model_path, encoding="utf-8-sig") as f:
         model = json.load(f)
 
-    cfg = read_db_config(workspace, model)
+    cfg = read_db_config(workspace, model, conexion)
+    if cfg.get("conexion"):
+        print(f"Conexión: {cfg['conexion']}")
     if motor_override:
         cfg["motor"] = motor_override
     if cfg["motor"] not in ("ORACLE", "SQLSERVER"):

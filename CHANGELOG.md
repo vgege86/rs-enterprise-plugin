@@ -1,5 +1,168 @@
 # RS Enterprise Agent — Changelog
 
+## 3.12.0 — 2026-08-07
+
+### "No lo veo" no es "no existe", y el modelo se escribe de una sola forma
+
+Cinco defectos del modelado de BD detectados en una sesión real sobre una instalación de cliente
+(Oracle 19c, cuenta de solo-consulta que **no** es dueña del esquema). Comparten raíz: el plugin
+concluía la ausencia de lo que no podía ver, y escribía el `model.json` en dos formatos que
+destrozaban el diff del control de versiones.
+
+#### 1. Un único escritor canónico del `model.json`
+
+Había **cinco** puntos de escritura y todos lo rompían, de dos maneras distintas:
+
+- Los scripts Python (`model-objects.py`, `analyze-dalc.py`) serializaban con
+  `ensure_ascii=False` y sin BOM. Medido: BOM ausente y 12 bytes no-ASCII.
+- Los hooks PowerShell (`sync-from-db.ps1`, `sync-indexes.ps1`, `sync-model-tables.ps1`) usaban
+  `ConvertTo-Json`. El de PS 5.1 no indenta con dos espacios por nivel: **alinea cada valor a la
+  columna de la clave padre**. El fichero pasaba de 1,1 MB a 3,5 MB (x3,2) y cambiaba el sangrado
+  de todas las líneas, así que el diff quedaba inservible **aunque el BOM y los CRLF fueran
+  correctos**. Es el peor de los dos porque el JSON es válido y el contenido idéntico: solo se ve
+  al abrir el diff, cuando ya está subido.
+
+Ahora hay uno solo. **`scripts/_modeljson.py`** impone el formato canónico del repositorio
+—`indent=2`, `separators=(',', ': ')`, `ensure_ascii=True`, CRLF y UTF-8 **con** BOM—, escribe de
+forma atómica y **verifica lo escrito antes de sustituir el modelo bueno**: BOM presente, cero LF
+sueltos, cero bytes no-ASCII, reparseo correcto y comparación con el objeto que se quería
+escribir. Si algo no cuadra, el modelo anterior no se toca y la escritura falla.
+
+**`hooks/lib-modeljson.ps1`** (`Save-RsModelJson`) **no serializa**: transporta la estructura con
+`ConvertTo-Json -Compress` —donde el bug de indentación ni llega a manifestarse— y delega en el
+escritor de Python. Reimplementar el formato en PowerShell habría dejado dos escritores otra vez,
+que es el camino que ya recorrió el mapeo de tipos antes de `scripts/_dbtypes.py`. Verificado:
+un modelo escrito por Python, leído y reescrito por PowerShell, sale **byte a byte idéntico**.
+
+⛔ `pk` sigue siendo **ordinal** (1, 2, 3…) y todo-o-nada, según manda
+`scripts/_dbmodel.py::pk_columns`. No se ha tocado.
+
+#### 2. Ceguera por permisos tratada como ausencia — el fallo más caro
+
+Una cuenta que no es dueña del esquema ve por GRANT per-object, y **Oracle no permite distinguir
+"no existe" de "no lo veo"**: ORA-00942 es deliberadamente ambiguo y `ALL_TABLES`, `ALL_OBJECTS` y
+`ALL_SOURCE` están todas filtradas por privilegio. Lo medido:
+
+- `sync_from_db` daba 323 tablas; tras conceder los GRANT que faltaban, 329. Seis tablas reales
+  figuraban como inexistentes y estuvieron a punto de borrarse del modelo.
+- Peor: `sync-indexes.ps1` recorría **todas** las tablas del modelo y les reescribía `indexes` con
+  lo que hubiera en la lectura — que para una tabla sin GRANT está vacío. Esas seis tablas se
+  quedaron con **0 índices**: el modelo salía de la sincronización peor de como entró, en silencio.
+- El PL/SQL exige GRANT **EXECUTE**, no SELECT. Con 0 grants EXECUTE, `ALL_OBJECTS` y `ALL_SOURCE`
+  devuelven cero procedimientos y cero paquetes **sin error**. Tras conceder 13, aparecieron 12
+  procedimientos y 1 paquete.
+
+La regla nueva es que **si no se puede distinguir, no se concluye**:
+
+- Una tabla que no sale en la lectura **se conserva entera** —columnas, relaciones e índices— y se
+  marca `visible: false` + `visible_check` con la fecha. La marca desaparece sola cuando vuelve a
+  verse. `sync-indexes.ps1` solo toca las tablas que la lectura ve.
+- **`hooks/lib-dbvisibilidad.ps1`** + **`hooks/db-visibilidad.ps1`** diagnostican lo que sí es
+  distinguible: si la cuenta es dueña, qué GRANTs tiene por privilegio y cuántos objetos de cada
+  tipo ve el diccionario. `0 EXECUTE` explica un 0 de procedimientos sin ninguna ambigüedad.
+- **Bloque de cobertura automático** (`_cobertura` en el modelo y en el log): conteo real por tipo
+  frente a lo capturado, con las exclusiones deliberadas declaradas aparte para que no cuenten
+  como hueco. Sustituye a escribirlo a mano.
+- **exit 2 = parcial** cuando queda hueco. `_run_ps` lo propaga como `parcial: true` en el JSON;
+  no es un fallo, es "el modelo está incompleto" — que no es lo mismo que "esos objetos no están".
+
+El hook existe además de la librería para que los scripts Python usen **la misma**
+implementación por subproceso (cacheada en `RS_DB_VISIBILIDAD_JSON`), en vez de reescribir las
+consultas por su cuenta.
+
+#### 3. El instalador entregaba sin PL/SQL, en silencio
+
+`scripts/installer-objects.py` lee de `ALL_SOURCE`. Con la cuenta sin EXECUTE, `/rs-instalador` y
+`/rs-actualizador` generaban el paquete con los ficheros de procedimientos **vacíos** y lo daban
+por bueno: el cliente recibía una instalación limpia sin nada de lógica de servidor y el fallo
+aparecía en producción.
+
+Ahora es **error duro** (exit 1), comprobado **antes** de extraer para no gastar seis sesiones de
+BD en un paquete que no se va a poder entregar. El mensaje da las tres salidas en orden: conceder
+los GRANT, repetir con `--conexion <dueño>`, o confirmar con `--sin-plsql` que el esquema de
+verdad no tiene PL/SQL. `hooks/installer-scripts.ps1` lo propaga y lo nombra en el resumen.
+
+Además, un tipo de objeto vacío ya no se reporta como "no se encontró ninguno" cuando la cuenta no
+es dueña, sino como "ninguno **visible para esta cuenta**".
+
+#### 4. Se puede elegir la conexión: `-Conexion <id>`
+
+`read_db_config` y `_read_password` usaban siempre `conexiones[0]`. Leer como dueño —única forma
+de ver los sinónimos **privados**, que ningún GRANT expone: 1 visible de 7— obligaba a **editar a
+mano el fichero de credenciales**, que es estrictamente peor: es persistente, es invisible en
+todas las salidas, y arrastra consigo la política PII (el `model_path` se resuelve por conexión).
+
+`-Conexion <id>` / `--conexion <id>` / `conexion=` llega a `sync-from-db`, `sync-indexes`,
+`sync-model-tables`, `sync-model-objects`, `compare-model`, `get-config`, `installer-scripts`,
+`installer-objects.py`, `installer-inserts.py`, `model-objects.py` y a las tools MCP
+`sync_from_db`, `sync_indexes`, `sync_model_tables`, `compare_model` y `compare_model_tables`
+—mismo contrato que ya tenía `db_query`—, con tres guardarraíles en `Select-RsConexion`
+(`hooks/lib-dbconfig.ps1`), que es el único sitio que resuelve el id:
+
+1. Sin `-Conexion`, **siempre** `conexiones[0]`. No se infiere, no se prueba otra si la primera
+   falla, no se "elige la mejor". Esa elección la hizo una persona al escribir el fichero.
+2. Un id que no existe **corta** con la lista de válidas. ⛔ Nunca cae a `conexiones[0]`:
+   seleccionar en silencio una conexión distinta de la pedida es como se acaba leyendo —o
+   escribiendo— contra el entorno equivocado.
+3. La conexión usada **se publica** en la salida de todo hook y script que la acepte. Sin eso, una
+   lectura hecha con una cuenta privilegiada es indistinguible de una hecha con la de consulta.
+
+#### 5. El conteo de secuencias ahora se explica solo
+
+17 secuencias reportadas frente a 18 en `ALL_OBJECTS`, sin forma de saber por qué. Tres causas
+posibles y ninguna descartable sin la BD delante, así que se han cerrado las tres y el script pasa
+a **nombrar la razón** en vez de dejar el descuadre:
+
+- **Concatenación con NULL**: un solo atributo nulo (`MIN_VALUE`, `MAX_VALUE`, `LAST_NUMBER`,
+  `CACHE_SIZE`…) anulaba la cadena `||` entera, la fila salía NULL, el marcador nunca se emitía y
+  la secuencia desaparecía del paquete sin error y sin rastro. Todo va ahora envuelto en `NVL`.
+- **Recycle bin**: `ALL_OBJECTS` cuenta los `BIN$…`; ahora se excluyen explícitamente.
+- **Columnas IDENTITY**: el filtro `ISEQ$$` sale de la `WHERE` y pasa a Python, así que el número
+  de bloques leídos es el del diccionario y la diferencia es atribuible.
+
+Las exclusiones se **declaran** (`excluido` en el contrato de los extractores) en vez de
+descartarse en silencio: si no, una exclusión legítima se cuenta como pérdida y el aviso de
+cobertura se vuelve permanente — y un aviso permanente es un aviso que nadie vuelve a mirar.
+
+#### Al actualizar
+
+La primera sincronización reescribe el `model.json` entero al formato canónico. Es un commit
+grande, **una sola vez**; a partir de ahí el diff vuelve a ser línea a línea. Conviene aislarlo en
+su propio commit.
+
+#### Tests
+
+Los tres fallos de formato y los dos de cobertura son **silenciosos** —el JSON sigue siendo
+válido, el conteo sigue saliendo—, así que la única defensa es probarlos:
+
+- **`tests/test_modeljson.py`** (18 casos): el formato exacto (BOM, CRLF, `ensure_ascii`, dos
+  espacios, sin espacios finales), la **idempotencia** —reescribir no cambia ni un byte, y el
+  orden de las claves se respeta—, que la verificación rechaza de verdad cada uno de los cuatro
+  síntomas, y que un fallo de escritura **deja intacto el modelo anterior**.
+- **`tests/test_dbobjetos.py`** (+10 casos): la cobertura con las cifras reales medidas —329 vs
+  323 tablas, 18 vs 17 secuencias con 1 excluida, 12 procedimientos invisibles con `EXECUTE 0`—,
+  que una exclusión declarada no cuenta como hueco, y que siendo dueño el descuadre **no** se
+  atribuye a permisos (mandar a alguien a pedir GRANTs que ya tiene es peor que callar).
+
+Verificado además a mano el camino PowerShell→Python: un modelo escrito por `_modeljson.py`,
+leído y reescrito con `Save-RsModelJson`, sale **byte a byte idéntico**. Suite completa en verde
+(311 Python, 609 Pester).
+
+#### Ficheros
+
+- **Nuevos**: `scripts/_modeljson.py`, `hooks/lib-modeljson.ps1`, `hooks/lib-dbvisibilidad.ps1`,
+  `hooks/db-visibilidad.ps1`, `tests/test_modeljson.py`.
+- **Modificados**: `hooks/lib-dbconfig.ps1` (`Select-RsConexion`), `hooks/sync-from-db.ps1`,
+  `hooks/sync-indexes.ps1`, `hooks/sync-model-tables.ps1`, `hooks/sync-model-objects.ps1`,
+  `hooks/compare-model.ps1`, `hooks/get-config.ps1`, `hooks/installer-scripts.ps1`,
+  `hooks/db-query.ps1` (tenía su propia copia de la resolución de conexión; pasa a usar
+  `Select-RsConexion` como el resto),
+  `scripts/_dbobjetos.py` (`cobertura`, `formato_cobertura`), `scripts/model-objects.py`,
+  `scripts/analyze-dalc.py`, `scripts/installer-objects.py`, `scripts/installer-inserts.py`,
+  `mcp/rs-workspace-server.py`, `tests/test_dbobjetos.py`, `references/{hooks,mcp,json-schema,bd}.md`,
+  `docs/plugin-architecture.md`, `README.md`, `agents/rs-editor-db-modeler.md`,
+  `agents/rs-instalador.md`, `agents/rs-actualizador.md`.
+
 ## 3.11.1 — 2026-08-07
 
 ### La política PII es de `db_query`, y en ningún sitio estaba escrito

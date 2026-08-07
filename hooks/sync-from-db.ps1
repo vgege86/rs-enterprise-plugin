@@ -8,10 +8,16 @@
 
 .PARAMETER Proyecto
     Nombre del proyecto AIS (ej: <Proyecto>)
+
+.PARAMETER Conexion
+    Id de conexion de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+    Sirve para leer con una cuenta distinta a la de consulta (p.ej. la duena del esquema, que
+    es la unica que ve TODO) sin tener que editar a mano el fichero de credenciales.
 #>
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [Parameter(Mandatory=$true)][string]$Proyecto
+    [Parameter(Mandatory=$true)][string]$Proyecto,
+    [string]$Conexion = ""
 )
 
 
@@ -27,13 +33,19 @@ trap {
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
 . (Join-Path $hooksDir "lib-dbmodel.ps1")
+. (Join-Path $hooksDir "lib-dbvisibilidad.ps1")
+. (Join-Path $hooksDir "lib-modeljson.ps1")
 
 $Workspace = Resolve-RsWorkspace $Workspace
 
 $cfg = Read-RsDatabases $Workspace
 if (-not $cfg.ok) { throw $cfg.error }
 
-$c      = $cfg.conexiones[0]
+$c = Select-RsConexion -Config $cfg -Id $Conexion
+if (-not $c) {
+    $validas = ($cfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
+    throw "Conexion '$Conexion' no existe en .rs-databases.json. Validas: $validas"
+}
 $motor  = "$($c.motor)".ToUpper()
 $cadena = "$($c.cadena)"
 
@@ -88,6 +100,10 @@ if (Test-Path $modelPath) {
 # pasada que la normalizacion de relations/indexes. $tblIdx[$tabla] = @{ obj = <PSCustomObject tabla>;
 # cols = @{ <col>: <PSCustomObject col> } }.
 $tblIdx = @{}
+# Tablas que ESTA lectura ha visto. Lo que no esté aquí al terminar no se borra ni se degrada:
+# con una cuenta que solo ve por GRANT, "no ha salido en la consulta" no significa "ya no
+# existe". Ver hooks\lib-dbvisibilidad.ps1.
+$vistas = @{}
 foreach ($tp in $model.tables.PSObject.Properties) {
     $tName = $tp.Name
     $t     = $tp.Value
@@ -163,6 +179,7 @@ EXIT;
         $pkPos      = ConvertTo-RsPkPosicion $parts[4]
 
         if (-not $tableName -or -not $colName) { continue }
+        $vistas[$tableName] = $true
 
         # Tabla (lookup O(1) via indice)
         $entry = $tblIdx[$tableName]
@@ -240,6 +257,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
         $pkPos     = ConvertTo-RsPkPosicion $parts[4]
 
         if (-not $tableName -or -not $colName) { continue }
+        $vistas[$tableName] = $true
 
         # Tabla (lookup O(1) via indice)
         $entry = $tblIdx[$tableName]
@@ -293,23 +311,59 @@ if ($defRes.ok) {
     $defaultsAviso = "no se pudieron leer los valores DEFAULT: $($defRes.error)"
 }
 
-# --- Guardar JSON actualizado (escritura atómica: tmp → rename) ---
-$model.updated_at = (Get-Date -Format "o")
-$tmpPath = $modelPath + ".tmp"
-$model | ConvertTo-Json -Depth 10 | Set-Content $tmpPath -Encoding UTF8
-Move-Item $tmpPath $modelPath -Force
+# --- Tablas que NO han salido en esta lectura ---
+# ⛔ No se borran. Con una cuenta que solo ve por GRANT, una tabla sin conceder es
+# indistinguible de una borrada, y de las dos lecturas posibles solo una destruye informacion.
+# Se conservan enteras —columnas, relaciones e indices intactos— y se marcan como no visibles.
+$ahora     = (Get-Date -Format "o")
+$noVisibles = @()
+foreach ($tName in @($tblIdx.Keys)) {
+    $vista = $vistas.ContainsKey($tName)
+    Set-RsTablaVisible -Tabla $tblIdx[$tName].obj -Vista $vista -Fecha $ahora
+    if (-not $vista) { $noVisibles += $tName }
+}
+
+# --- Cobertura: cuantas tablas dice el diccionario que hay, frente a las que se capturaron ---
+$cobertura = $null
+$vis = Get-RsVisibilidad -Motor $motor -Esquema $(if ($motor -eq "ORACLE") { $schema } else { $database }) `
+                         -DataSource $dataSource -Usuario $user -Password $password
+if ($vis.soportado) {
+    $cobertura = New-RsCobertura -Visibilidad $vis -Capturado @{ tablas = $vistas.Count }
+    $cobertura.conexion = "$($c.id)"
+    Merge-RsCobertura -Model $model -Cobertura $cobertura -Origen "sync-from-db" | Out-Null
+    Format-RsCobertura -Cobertura $cobertura | ForEach-Object { Write-Host $_ }
+} elseif ($vis.error) {
+    Write-Host "AVISO: sin diagnostico de cobertura ($($vis.error))"
+}
+if ($noVisibles.Count -gt 0) {
+    Write-Host "   $($noVisibles.Count) tabla(s) del modelo no visibles en esta lectura, CONSERVADAS: $(($noVisibles | Select-Object -First 10) -join ', ')$(if ($noVisibles.Count -gt 10) { ' ...' })"
+}
+
+# --- Guardar JSON actualizado (formato canonico, atomico y verificado) ---
+$model.updated_at = $ahora
+Save-RsModelJson -Model $model -Path $modelPath | Out-Null
 
 # Cleanup
 Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
 
 $tableCount = ($model.tables | Get-Member -MemberType NoteProperty).Count
+# parcial = hay hueco entre el diccionario y lo capturado, o tablas del modelo que no se ven.
+# El llamante debe tratarlo como "el modelo esta incompleto", NO como "estas tablas ya no estan".
+$parcial = [bool](($cobertura -and $cobertura.parcial) -or $noVisibles.Count -gt 0)
 @{
-    success     = $true
-    motor       = $motor
-    schema      = if ($motor -eq "ORACLE") { $schema } else { $database }
-    table_count = $tableCount
-    defaults    = $defaultsCount
-    warning     = $defaultsAviso
-    model_path  = $modelPath
-    updated_at  = $model.updated_at
-} | ConvertTo-Json
+    success      = $true
+    parcial      = $parcial
+    conexion     = "$($c.id)"
+    motor        = $motor
+    schema       = if ($motor -eq "ORACLE") { $schema } else { $database }
+    table_count  = $tableCount
+    tablas_leidas = $vistas.Count
+    no_visibles  = @($noVisibles)
+    cobertura    = $cobertura
+    defaults     = $defaultsCount
+    warning      = $defaultsAviso
+    model_path   = $modelPath
+    updated_at   = $model.updated_at
+} | ConvertTo-Json -Depth 6
+
+if ($parcial) { exit 2 }

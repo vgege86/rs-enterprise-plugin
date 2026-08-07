@@ -7,11 +7,16 @@
 .PARAMETER Workspace
     Ruta raíz del proyecto (ej: C:\SVN\RS\<Proyecto>\trunk)
 
+.PARAMETER Conexion
+    Id de conexión de docs\.rs-databases.json a publicar en los campos planos. Si se omite, la
+    principal (conexiones[0]). El array conexiones[] sale entero en los dos casos.
+
 .EXAMPLE
     .\get-config.ps1 "C:\SVN\RS\<Proyecto>\trunk"
 #>
 param(
-    [Parameter(Mandatory=$true)][string]$Workspace
+    [Parameter(Mandatory=$true)][string]$Workspace,
+    [string]$Conexion = ""
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -76,11 +81,24 @@ foreach ($c in $cfg.conexiones) {
     }
 }
 
+# Campos planos = la conexión pedida, o la principal si no se pidió ninguna. La resolución del
+# id la hace Select-RsConexion (lib-dbconfig.ps1), único sitio que la conoce; aquí solo se
+# traduce a la posición dentro de $resueltas, que va en el mismo orden que $cfg.conexiones.
 $principal = $resueltas[0]
+if ($Conexion) {
+    $sel = Select-RsConexion -Config $cfg -Id $Conexion
+    if (-not $sel) {
+        $validas = ($cfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
+        @{ error = "Conexión '$Conexion' no existe. Válidas: $validas" } | ConvertTo-Json
+        exit 1
+    }
+    $principal = $resueltas | Where-Object { $_.id -eq "$($sel.id)" } | Select-Object -First 1
+}
 
 @{
     proyecto     = $proyecto
     workspace    = $Workspace
+    conexion     = $principal.id
     motor        = $principal.motor
     datasource   = $principal.datasource
     schema       = $principal.schema

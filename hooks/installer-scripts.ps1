@@ -35,17 +35,27 @@
 .PARAMETER destino    Carpeta Instalador
 .PARAMETER Solo       todo (default) | ddl | objetos | inserts — qué parte regenerar
 .PARAMETER Tablas     Lista "T1;T2" de tablas paramétricas a regenerar. Implica -Solo inserts.
+.PARAMETER Conexion   Id de conexión de docs\.rs-databases.json. Si se omite, la principal.
+                      Leer como dueño del esquema es la única forma de ver los sinónimos
+                      PRIVADOS y todo el PL/SQL: ningún GRANT los expone.
+.PARAMETER SinPlsql   Confirma que el esquema NO tiene PL/SQL y permite generar el paquete sin
+                      procedimientos. Sin esto, 0 grants EXECUTE es un error duro — ver
+                      scripts\installer-objects.py.
 
 .EXAMPLE
     .\installer-scripts.ps1 "C:\SVN\RS\<Proyecto>\trunk" "C:\AIS\<Proyecto>\Instalador"
 .EXAMPLE
     .\installer-scripts.ps1 "<trunk>" "<destino>" -Tablas "RTABLA1;RTABLA2"
+.EXAMPLE
+    .\installer-scripts.ps1 "<trunk>" "<destino>" -Conexion DUENO
 #>
 param(
     [Parameter(Mandatory=$true)][string]$workspace,
     [Parameter(Mandatory=$true)][string]$destino,
     [ValidateSet("todo","ddl","objetos","inserts")][string]$Solo = "todo",
-    [string]$Tablas = ""
+    [string]$Tablas = "",
+    [string]$Conexion = "",
+    [switch]$SinPlsql
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -65,7 +75,14 @@ New-Item -ItemType Directory -Path $insertsDir -Force | Out-Null
 
 $avisos  = $false
 $cfgTmp  = ""
+$visTmp  = ""
 $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
+
+# Argumentos comunes de los scripts Python que tocan BD. -Conexion se propaga a TODOS: si solo
+# lo recibiera uno, el paquete mezclaría objetos leídos como dueño con inserts leídos con la
+# cuenta de consulta.
+$argsConexion = @()
+if ($Conexion) { $argsConexion = @("--conexion", $Conexion) }
 
 # Los seis tipos de objeto, por nombre. El inventario final los recorre UNO A UNO y marca el
 # que falte: antes era un Get-ChildItem con comodín y, si no se había generado ninguno, el
@@ -82,17 +99,31 @@ try {
     if ($Solo -ne "ddl") {
         $getCfg = Join-Path $PSScriptRoot "get-config.ps1"
         try {
-            $cfgJson = (& $getCfg $workspace) -join "`n"
+            $cfgJson = (& $getCfg $workspace -Conexion $Conexion) -join "`n"
             $parsed  = $cfgJson | ConvertFrom-Json
             if ($parsed.PSObject.Properties.Name -contains "error") {
-                Write-Host "AVISO: get-config.ps1 devolvió error ($($parsed.error)) — cada script resolverá la config por su cuenta"
+                Write-Host "ERROR: get-config.ps1 devolvió error ($($parsed.error))"
+                exit 1
             } else {
                 $cfgTmp = [System.IO.Path]::GetTempFileName()
                 [System.IO.File]::WriteAllText($cfgTmp, $cfgJson, (New-Object System.Text.UTF8Encoding($false)))
                 $env:RS_DB_CONFIG_JSON = $cfgTmp
+                Write-Host "Conexión BD: $($parsed.conexion)  (esquema $($parsed.schema), usuario $($parsed.user))"
             }
         } catch {
             Write-Host "AVISO: no se pudo cachear la config de BD ($($_.Exception.Message)) — cada script la resolverá por su cuenta"
+        }
+
+        # Visibilidad de la conexión sobre el esquema: la resuelve UNA vez y la comparten los
+        # scripts Python por RS_DB_VISIBILIDAD_JSON. Es lo que decide si un tipo de objeto
+        # vacío significa "no hay" o "esta cuenta no lo ve" — ver hooks\db-visibilidad.ps1.
+        try {
+            $visJson = (& (Join-Path $PSScriptRoot "db-visibilidad.ps1") $workspace -Conexion $Conexion) -join "`n"
+            $visTmp  = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($visTmp, $visJson, (New-Object System.Text.UTF8Encoding($false)))
+            $env:RS_DB_VISIBILIDAD_JSON = $visTmp
+        } catch {
+            Write-Host "AVISO: no se pudo diagnosticar la visibilidad del esquema ($($_.Exception.Message))"
         }
     }
 
@@ -107,10 +138,14 @@ try {
     # --- Resto de objetos desde la BD viva ---
     if ($Solo -eq "todo" -or $Solo -eq "objetos") {
         Write-Host "`n== Objetos BD: secuencias, vistas, funciones, procedimientos, triggers, sinónimos =="
-        python "$scriptsDir\installer-objects.py" "$workspace" "$proyecto" "$outScripts"
+        $argsObj = @("$scriptsDir\installer-objects.py", "$workspace", "$proyecto", "$outScripts") + $argsConexion
+        if ($SinPlsql) { $argsObj += "--sin-plsql" }
+        python @argsObj
         $objCode = $LASTEXITCODE
-        if ($objCode -eq 1) { Write-Host "ERROR: installer-objects.py falló (exit 1)"; exit 1 }
-        if ($objCode -eq 2) { Write-Host "AVISO: algún tipo de objeto dio error (exit 2) — revisar log arriba."; $avisos = $true }
+        # exit 1 incluye ahora el caso "esta cuenta no ve NADA del PL/SQL": antes el paquete se
+        # generaba igual, con los ficheros de procedimientos vacíos y sin un solo aviso.
+        if ($objCode -eq 1) { Write-Host "ERROR: installer-objects.py falló (exit 1) — el paquete NO es entregable."; exit 1 }
+        if ($objCode -eq 2) { Write-Host "AVISO: extracción PARCIAL (exit 2) — algún tipo de objeto falló o quedó hueco de cobertura. Revisar log arriba."; $avisos = $true }
 
         if (!(Test-Path $maestro)) { Write-Host "ERROR: no se generó el maestro $maestro"; exit 1 }
     }
@@ -122,7 +157,8 @@ try {
             $env:RS_INSERTS_TABLAS = $Tablas
             Write-Host "   Solo estas tablas: $Tablas"
         }
-        python "$scriptsDir\installer-inserts.py" "$workspace" "$proyecto" "$insertsDir"
+        $argsIns = @("$scriptsDir\installer-inserts.py", "$workspace", "$proyecto", "$insertsDir") + $argsConexion
+        python @argsIns
         $insCode = $LASTEXITCODE
         if ($insCode -eq 1) { Write-Host "ERROR: installer-inserts.py falló (exit 1)"; exit 1 }
         if ($insCode -eq 2) { Write-Host "AVISO: algunas tablas paramétricas dieron error (exit 2) — revisar log arriba."; $avisos = $true }
@@ -151,6 +187,8 @@ finally {
     # Las variables de entorno son del proceso del hook, pero se limpian igual: el runner
     # puede reutilizar el proceso para otra etapa y no debe heredar un filtro de tablas.
     if ($cfgTmp -and (Test-Path $cfgTmp)) { Remove-Item $cfgTmp -Force -ErrorAction SilentlyContinue }
+    if ($visTmp -and (Test-Path $visTmp)) { Remove-Item $visTmp -Force -ErrorAction SilentlyContinue }
     Remove-Item Env:RS_DB_CONFIG_JSON -ErrorAction SilentlyContinue
+    Remove-Item Env:RS_DB_VISIBILIDAD_JSON -ErrorAction SilentlyContinue
     Remove-Item Env:RS_INSERTS_TABLAS -ErrorAction SilentlyContinue
 }

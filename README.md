@@ -488,6 +488,28 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 - Export a DDL y Oracle Data Modeler (`.dmd`).
 - Detección de drift + generación de scripts de migración.
 - **Merge seguro**: preserva siempre `source="manual"` y descripciones; tablas ausentes se marcan `orphan`, nunca se borran.
+- **Formato estable**: lo escribe un único serializador canónico (`indent=2`, `ensure_ascii`,
+  CRLF, UTF-8 con BOM), verificado tras cada escritura. El fichero vive en el repositorio y se
+  revisa por diff, así que dos escritores con dos formatos hacían el diff inservible aunque el
+  contenido fuera idéntico.
+
+#### "No lo veo" no es "no existe"
+
+Si la cuenta de BD **no es dueña del esquema**, ve solo lo que tiene concedido por GRANT — y
+Oracle no permite distinguir un objeto inexistente de uno sin permiso. Por eso:
+
+- Una tabla que no sale en la sincronización **se conserva entera** (columnas, relaciones e
+  índices) y se marca `visible: false`. Nunca se borra ni se degrada.
+- Cada sincronización emite un **bloque de cobertura**: cuántos objetos de cada tipo ve el
+  diccionario frente a los capturados, con qué cuenta se leyó y qué GRANTs tiene. Con hueco,
+  devuelve `parcial` — "el modelo está incompleto", que no es lo mismo que "eso ya no está".
+- El **PL/SQL exige `GRANT EXECUTE`**, no `SELECT`. Sin él, el diccionario devuelve cero
+  procedimientos sin error; `/rs-instalador` y `/rs-actualizador` ahora **fallan** en ese caso en
+  vez de entregar un paquete sin lógica de servidor.
+- Para leer con otra cuenta: `-Conexion <id>` en los hooks y `conexion=<id>` en las tools, contra
+  las `conexiones[]` de `.rs-databases.json`. Es la única forma de ver los **sinónimos privados**.
+  Sin `-Conexion` se usa siempre la conexión principal; un id que no existe corta con la lista de
+  válidas, y la conexión usada aparece en la salida.
 
 ---
 

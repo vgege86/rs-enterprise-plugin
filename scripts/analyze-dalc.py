@@ -11,6 +11,12 @@ import re
 import json
 from pathlib import Path
 
+# El model.json se escribe SIEMPRE por el escritor canónico: es lo único que garantiza que el
+# formato del fichero no cambia según qué proceso lo tocó el último. Ver scripts/_modeljson.py.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _modeljson
+
 SQL_KEYWORDS = {
     'SELECT', 'FROM', 'WHERE', 'JOIN', 'ON', 'AND', 'OR', 'NOT', 'IN',
     'EXISTS', 'BETWEEN', 'LIKE', 'IS', 'NULL', 'ORDER', 'GROUP', 'BY',
@@ -245,8 +251,7 @@ def main():
 
     model['updated_at'] = __import__('datetime').datetime.now().isoformat()
 
-    with open(model_path, 'w', encoding='utf-8') as f:
-        json.dump(model, f, ensure_ascii=False, indent=2)
+    _modeljson.guardar(model, model_path)
 
     print(f"OK — {len(dalc_files)} ficheros analizados")
     print(f"     {new_tables} tablas nuevas detectadas en DALCs")

@@ -91,7 +91,25 @@ END_MARK = "##END##"
 
 # Secuencias creadas por Oracle para columnas IDENTITY: no se scriptan (las crea el
 # CREATE TABLE de la columna identity; scriptarlas da ORA-32794 al borrar/recrear).
-IDENTITY_SEQ_RE = re.compile(r"^ISEQ\$\$_", re.IGNORECASE)
+# El `_` no es obligatorio (Oracle nombra ISEQ$$_<id>, pero el filtro SQL usa ISEQ$$%): se
+# aceptan las dos formas para que el regex y la WHERE no puedan discrepar entre sí.
+IDENTITY_SEQ_RE = re.compile(r"^ISEQ\$\$", re.IGNORECASE)
+
+# Objetos del recycle bin (DROP sin PURGE). ALL_OBJECTS SÍ los cuenta, así que sin excluirlos
+# explícitamente el contraste con el diccionario los lee como objetos perdidos.
+RECYCLE_RE = re.compile(r"^BIN\$", re.IGNORECASE)
+
+# (número, fichero, título) de las seis etapas. Idénticos en los dos motores por diseño — ver
+# etapas_por_motor —, así que viven aquí para que el contraste de cobertura pueda resolver la
+# sección del modelo sin necesitar la config de BD.
+ETAPAS_NOMBRES = [
+    ("01", "Secuencias",     "SECUENCIAS"),
+    ("02", "Vistas",         "VISTAS"),
+    ("03", "Funciones",      "FUNCIONES"),
+    ("04", "Procedimientos", "PROCEDIMIENTOS"),
+    ("05", "Triggers",       "TRIGGERS"),
+    ("06", "Sinonimos",      "SINÓNIMOS"),
+]
 
 
 # ---------------------------------------------------------------- ejecución sqlplus
@@ -232,7 +250,7 @@ def cab(titulo: str, proyecto: str, motor: str, extra: list = None) -> list:
 
 
 # ---------------------------------------------------------------- contrato de los extractores
-def _resultado(lines, nombres, nstrip=0, disabled=None, bloques=None):
+def _resultado(lines, nombres, nstrip=0, disabled=None, bloques=None, excluido=None):
     """Lo que devuelve cada extractor.
 
     ⛔ Antes eran tuplas de 3 o 4 elementos y `main` adivinaba la forma con `len(res)`. Añadir
@@ -243,42 +261,97 @@ def _resultado(lines, nombres, nstrip=0, disabled=None, bloques=None):
     consume scripts/model-objects.py para firmarlo: que la firma se calcule sobre lo que
     entregaría el instalador, y no sobre otra lectura de la BD, es lo que hace que un cambio
     de firma signifique exactamente "lo que se entregaría ha cambiado".
+
+    `excluido` es {"n": <cuántos>, "motivo": "<por qué>", "nombres": [...]} — lo que el
+    extractor descarta A PROPÓSITO. Va en el contrato porque el contraste con el diccionario no
+    puede distinguir una exclusión deliberada de una pérdida: sin declararla, una secuencia de
+    columna IDENTITY que nunca debió scriptarse aparece como un objeto perdido y la cobertura
+    cría un aviso permanente que nadie vuelve a mirar.
     """
     return {"lines": lines, "nombres": nombres, "nstrip": nstrip,
-            "disabled": disabled or [], "bloques": bloques or {}}
+            "disabled": disabled or [], "bloques": bloques or {},
+            "excluido": excluido or {"n": 0, "motivo": "", "nombres": []}}
+
+
+def exclusiones_cobertura(salidas: dict) -> dict:
+    """{sección del modelo: {"n": k, "motivo": "..."}} a partir de lo que devolvieron los
+    extractores. Lo consumen `_dbobjetos.cobertura` y `scripts/model-objects.py`.
+
+    `salidas` puede venir indexada por número de etapa ("01".."06") —como en el `main` de este
+    script— o por nombre de fichero —como en model-objects.py—; se acepta cualquiera de las dos
+    porque la sección se resuelve por el nombre de fichero de la etapa, no por la clave.
+    """
+    res = {}
+    for num, fichero, _titulo in ETAPAS_NOMBRES:
+        entrada = salidas.get(num, salidas.get(fichero))
+        if isinstance(entrada, tuple):
+            entrada = entrada[0]
+        if not entrada:
+            continue
+        exc = entrada.get("excluido") or {}
+        if not exc.get("n"):
+            continue
+        seccion = _inv.ETAPA_A_SECCION.get(fichero)
+        if seccion:
+            res[seccion] = {"n": exc["n"], "motivo": exc.get("motivo", "")}
+    return res
 
 
 # ---------------------------------------------------------------- SECUENCIAS
 def gen_secuencias(cfg: dict) -> tuple:
+    """Secuencias del esquema, sin las que Oracle crea solo.
+
+    ⛔ TODO atributo va envuelto en NVL. En Oracle, un solo operando NULL anula la cadena `||`
+    entera: la fila sale NULL, el marcador nunca se emite y la secuencia DESAPARECE del paquete
+    sin error, sin aviso y sin dejar rastro en el conteo. Es un modo de fallo silencioso que
+    solo se nota contando contra ALL_OBJECTS — que es exactamente cómo apareció (17 scriptadas
+    frente a 18 en el diccionario, en una instalación de cliente). Los defaults elegidos son
+    los de un CREATE SEQUENCE sin cláusulas.
+
+    Las exclusiones se DECLARAN (`excluido`) en vez de descartarse en silencio: si no, el
+    contraste con el diccionario las cuenta como pérdida y el aviso pasa a ser permanente.
+    """
     S = cfg["schema"]
     sql = f"""SELECT '{OBJ_MARK}'||SEQUENCE_NAME||CHR(10)
        ||'CREATE SEQUENCE '||SEQUENCE_NAME
-       ||' MINVALUE '||MIN_VALUE
-       ||CASE WHEN MAX_VALUE >= 9999999999999999999999999999 THEN ' NOMAXVALUE'
-              ELSE ' MAXVALUE '||MAX_VALUE END
-       ||' START WITH '||LAST_NUMBER
-       ||' INCREMENT BY '||INCREMENT_BY
-       ||CASE WHEN CACHE_SIZE = 0 THEN ' NOCACHE' ELSE ' CACHE '||CACHE_SIZE END
-       ||CASE WHEN CYCLE_FLAG = 'Y' THEN ' CYCLE' ELSE ' NOCYCLE' END
-       ||CASE WHEN ORDER_FLAG = 'Y' THEN ' ORDER' ELSE ' NOORDER' END
+       ||' MINVALUE '||NVL(TO_CHAR(MIN_VALUE), '1')
+       ||CASE WHEN NVL(MAX_VALUE, 0) >= 9999999999999999999999999999 THEN ' NOMAXVALUE'
+              ELSE ' MAXVALUE '||NVL(TO_CHAR(MAX_VALUE), '9999999999999999999999999999') END
+       ||' START WITH '||NVL(TO_CHAR(LAST_NUMBER), '1')
+       ||' INCREMENT BY '||NVL(TO_CHAR(INCREMENT_BY), '1')
+       ||CASE WHEN NVL(CACHE_SIZE, 0) = 0 THEN ' NOCACHE' ELSE ' CACHE '||CACHE_SIZE END
+       ||CASE WHEN NVL(CYCLE_FLAG, 'N') = 'Y' THEN ' CYCLE' ELSE ' NOCYCLE' END
+       ||CASE WHEN NVL(ORDER_FLAG, 'N') = 'Y' THEN ' ORDER' ELSE ' NOORDER' END
        ||';'||CHR(10)||'{END_MARK}'
   FROM ALL_SEQUENCES
  WHERE SEQUENCE_OWNER = '{S}'
-   AND SEQUENCE_NAME NOT LIKE 'ISEQ$$%'
  ORDER BY SEQUENCE_NAME;
 """
     out = run_sqlplus(cfg, sql)
     bloques = parse_blocks(out)
     lines, nombres, cuerpos = [], [], {}
+    excluidas = []
     for nombre, buf in bloques:
+        # El filtro ya no está en la WHERE: así el conteo de bloques leídos es el del
+        # diccionario y la diferencia es atribuible, en vez de un descuadre sin explicación.
         if IDENTITY_SEQ_RE.match(nombre):
+            excluidas.append((nombre, "columna IDENTITY"))
+            continue
+        if RECYCLE_RE.match(nombre):
+            excluidas.append((nombre, "recycle bin"))
             continue
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
         lines.append(f"-- Secuencia {nombre}")
         lines.extend(buf)
         lines.append("")
-    return _resultado(lines, nombres, bloques=cuerpos)
+
+    exc = None
+    if excluidas:
+        motivos = sorted({m for _n, m in excluidas})
+        exc = {"n": len(excluidas), "motivo": " / ".join(motivos),
+               "nombres": [n for n, _m in excluidas]}
+    return _resultado(lines, nombres, bloques=cuerpos, excluido=exc)
 
 
 # ---------------------------------------------------------------- VISTAS
@@ -540,34 +613,42 @@ ORDER BY s.name, sy.name;"""
 # ---------------------------------------------------------------- etapas por motor
 def etapas_por_motor(cfg: dict) -> list:
     """(numero, nombre_fichero, titulo, extractor) — mismo orden de dependencias en los dos
-    motores, para que el maestro y el manifiesto del paquete no dependan del motor."""
+    motores, para que el maestro y el manifiesto del paquete no dependan del motor.
+
+    Los tres primeros campos salen de ETAPAS_NOMBRES: aquí solo se elige el extractor. Así el
+    contraste de cobertura puede resolver la sección del modelo sin config de BD, y no hay dos
+    listas de etapas que puedan desalinearse."""
     if cfg["motor"] == "ORACLE":
-        return [
-            ("01", "Secuencias",     "SECUENCIAS",     lambda: gen_secuencias(cfg)),
-            ("02", "Vistas",         "VISTAS",         lambda: gen_vistas(cfg)),
-            ("03", "Funciones",      "FUNCIONES",      lambda: gen_source(cfg, ["FUNCTION"])),
-            ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: gen_source(cfg, ["PROCEDURE", "PACKAGE", "PACKAGE BODY"])),
-            ("05", "Triggers",       "TRIGGERS",       lambda: gen_triggers(cfg)),
-            ("06", "Sinonimos",      "SINÓNIMOS",      lambda: gen_sinonimos(cfg)),
+        extractores = [
+            lambda: gen_secuencias(cfg),
+            lambda: gen_vistas(cfg),
+            lambda: gen_source(cfg, ["FUNCTION"]),
+            lambda: gen_source(cfg, ["PROCEDURE", "PACKAGE", "PACKAGE BODY"]),
+            lambda: gen_triggers(cfg),
+            lambda: gen_sinonimos(cfg),
         ]
-    return [
-        ("01", "Secuencias",     "SECUENCIAS",     lambda: ss_secuencias(cfg)),
-        ("02", "Vistas",         "VISTAS",         lambda: ss_modulos(cfg, ["V"], "VIEW")),
-        # FN escalar, IF inline-table, TF table-valued, FS/FT ensambladas (CLR)
-        ("03", "Funciones",      "FUNCIONES",      lambda: ss_modulos(cfg, ["FN", "IF", "TF", "FS", "FT"], "FUNCTION")),
-        ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: ss_modulos(cfg, ["P", "PC"], "PROCEDURE")),
-        ("05", "Triggers",       "TRIGGERS",       lambda: ss_triggers(cfg)),
-        ("06", "Sinonimos",      "SINÓNIMOS",      lambda: ss_sinonimos(cfg)),
-    ]
+    else:
+        extractores = [
+            lambda: ss_secuencias(cfg),
+            lambda: ss_modulos(cfg, ["V"], "VIEW"),
+            # FN escalar, IF inline-table, TF table-valued, FS/FT ensambladas (CLR)
+            lambda: ss_modulos(cfg, ["FN", "IF", "TF", "FS", "FT"], "FUNCTION"),
+            lambda: ss_modulos(cfg, ["P", "PC"], "PROCEDURE"),
+            lambda: ss_triggers(cfg),
+            lambda: ss_sinonimos(cfg),
+        ]
+    return [(n, f, t, fn) for (n, f, t), fn in zip(ETAPAS_NOMBRES, extractores)]
 
 
 # ---------------------------------------------------------------- main
 def main():
     if len(sys.argv) < 4:
-        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir>")
+        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir> [--conexion <id>] [--sin-plsql]")
         sys.exit(1)
 
     workspace, proyecto, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+    conexion   = _ins.arg_conexion(sys.argv[4:])
+    sin_plsql  = "--sin-plsql" in sys.argv[4:]
     model_path = Path(workspace) / "BD" / f"{proyecto}-model.json"
     if not model_path.exists():
         print(f"ERROR: Modelo no encontrado: {model_path}")
@@ -575,7 +656,7 @@ def main():
     with open(model_path, encoding="utf-8-sig") as f:
         model = json.load(f)
 
-    cfg = _ins.read_db_config(workspace, model)
+    cfg = _ins.read_db_config(workspace, model, conexion)
     if cfg["motor"] not in ("ORACLE", "SQLSERVER"):
         print(f"ERROR: motor no soportado para la extracción de objetos: {cfg['motor']}")
         sys.exit(1)
@@ -587,6 +668,37 @@ def main():
     else:
         print(f"Base de datos origen: {cfg['schema']} | usuario: {cfg['user'] or '(autenticación integrada)'}")
         print("Fuente: catálogo sys.* (sys.sql_modules trae el CREATE literal)")
+    if cfg.get("conexion"):
+        print(f"Conexión: {cfg['conexion']}")
+
+    # ---- GATE: ¿esta cuenta puede ver el PL/SQL siquiera? ----
+    # ⛔ Error DURO, no aviso. El PL/SQL de ALL_SOURCE exige GRANT EXECUTE, no SELECT. Con cero
+    # grants EXECUTE, ALL_OBJECTS y ALL_SOURCE devuelven CERO procedimientos y CERO paquetes SIN
+    # ERROR: el instalador generaba el paquete completo, con sus ficheros de procedimientos
+    # vacíos, y lo daba por bueno. Un cliente recibía una instalación limpia sin nada de lógica
+    # de servidor y el fallo aparecía en producción, no aquí. Se comprueba ANTES de extraer para
+    # no gastar seis sesiones de BD en un paquete que no se va a poder entregar.
+    visibilidad = _ins.read_visibilidad(workspace, conexion)
+    if visibilidad.get("soportado") and not visibilidad.get("es_dueno"):
+        grants = visibilidad.get("grants") or {}
+        if not grants.get("EXECUTE"):
+            if sin_plsql:
+                print("AVISO: 0 grants EXECUTE sobre el esquema. Se continúa por --sin-plsql:")
+                print("       el paquete saldrá SIN procedimientos ni paquetes, a propósito.")
+            else:
+                print(f"ERROR: la cuenta '{visibilidad.get('usuario')}' no es dueña de "
+                      f"'{visibilidad.get('esquema')}' y NO tiene ningún GRANT EXECUTE sobre él.")
+                print("       Funciones, procedimientos y paquetes saldrían VACÍOS sin dar ningún")
+                print("       error: ALL_SOURCE devuelve cero filas por falta de privilegio, no")
+                print("       porque no existan. El paquete resultante no sería instalable.")
+                print("       Salidas, en orden de preferencia:")
+                print("         1. Conceder GRANT EXECUTE sobre los objetos PL/SQL del esquema.")
+                print("         2. Repetir con --conexion <id de la conexión dueña del esquema>.")
+                print("         3. Si el esquema DE VERDAD no tiene PL/SQL, repetir con --sin-plsql.")
+                sys.exit(1)
+    elif visibilidad.get("error"):
+        print(f"AVISO: no se pudo comprobar la visibilidad del esquema ({visibilidad['error']}).")
+        print("       Un fichero de procedimientos vacío puede significar 'sin permiso', no 'no hay'.")
 
     resumen, errores = [], []
 
@@ -627,13 +739,21 @@ def main():
         nstrip   = res["nstrip"]
         disabled = res["disabled"]
 
+        excluido = res.get("excluido") or {}
+
         extra = []
         if nstrip:
             extra.append(f"{nstrip} referencias a schema '{cfg['schema']}' eliminadas del DDL")
         if disabled:
             extra.append(f"DISABLED en origen (se replica con ALTER TRIGGER ... DISABLE): {', '.join(disabled)}")
+        if excluido.get("n"):
+            extra.append(f"{excluido['n']} excluido(s) a propósito ({excluido['motivo']}): "
+                         f"{', '.join(excluido.get('nombres') or [])}")
         if not nombres:
-            extra.append("No se encontró ningún objeto de este tipo en el schema origen.")
+            # ⛔ "No se encontró" es una afirmación que esta cuenta no siempre puede hacer.
+            extra.append("Ningún objeto de este tipo VISIBLE para esta cuenta en el schema origen."
+                         if not visibilidad.get("es_dueno") else
+                         "No hay ningún objeto de este tipo en el schema origen.")
 
         out_path = out_dir / f"{proyecto}-{num}-{fname}.sql"
         contenido = cab(titulo, proyecto, cfg["motor"], extra) + lines
@@ -734,13 +854,31 @@ def main():
         else:
             print("\nModelo y BD coinciden: sin deriva en el inventario de objetos.")
 
-    print("\n---- Resumen objetos (conteo real en BD) ----")
+    # ---- cobertura: lo capturado frente a lo que el diccionario dice que hay ----
+    # Es lo que convierte "17 secuencias" en una cifra comprobable. Sin este contraste, un
+    # descuadre con ALL_OBJECTS solo se veía contando a mano y sin poder atribuir la causa.
+    cobertura = None
+    if visibilidad.get("soportado"):
+        capturado = {}
+        for num, fichero, _t, _fn in etapas:
+            seccion = _inv.ETAPA_A_SECCION.get(fichero)
+            res = (salidas.get(num) or (None, None, 0))[0]
+            if seccion and res:
+                capturado[seccion] = len(res["nombres"])
+        cobertura = _inv.cobertura(visibilidad, capturado, exclusiones_cobertura(salidas))
+        print()
+        for ln in _inv.formato_cobertura(cobertura):
+            print(ln)
+
+    print("\n---- Resumen objetos (conteo capturado) ----")
     for titulo, n in resumen:
         print(f"   {titulo:<16} {n}")
     print(f"   Maestro: {maestro.name}")
     print(f"   Tiempo:  {time.perf_counter() - t_total:.1f}s")
 
-    if errores:
+    # exit 2 = PARCIAL: el paquete está generado y es correcto con lo que se pudo leer, pero no
+    # está completo. El hook llamante lo convierte en un aviso visible, no en un éxito.
+    if errores or (cobertura and cobertura.get("parcial")):
         sys.exit(2)
 
 

@@ -225,15 +225,14 @@ if (-not $cfg.ok) {
     exit 1
 }
 
-if ($Conexion) {
-    $c = $cfg.conexiones | Where-Object { "$($_.id)" -eq $Conexion } | Select-Object -First 1
-    if (-not $c) {
-        $validas = ($cfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
-        @{ success = $false; error = "Conexión '$Conexion' no existe. Válidas: $validas" } | ConvertTo-Json
-        exit 1
-    }
-} else {
-    $c = $cfg.conexiones[0]
+# Resolución en Select-RsConexion (lib-dbconfig.ps1), único sitio que la conoce. Este hook
+# tenía su propia copia de la regla: la misma en el fondo, pero dos implementaciones de "qué
+# conexión se usa" acaban divergiendo, y el resto de hooks ya dependen de esa función.
+$c = Select-RsConexion -Config $cfg -Id $Conexion
+if (-not $c) {
+    $validas = ($cfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
+    @{ success = $false; error = "Conexión '$Conexion' no existe. Válidas: $validas" } | ConvertTo-Json
+    exit 1
 }
 
 # Modelo BD de LA CONEXION SELECCIONADA (no el de la principal): lleva la politica PII

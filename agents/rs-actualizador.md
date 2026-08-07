@@ -228,6 +228,15 @@ en desarrollo y no viaja deja al cliente con una versión que ya no existe en ni
 Si el modelo no trae inventario todavía, el `-DryRun` lo dice; entonces esta comprobación no
 está disponible y hay que decirlo en el SUMMARY en vez de darla por hecha.
 
+⛔ **`eliminado` no significa "lo borraron de la BD".** El `-DryRun` imprime antes un bloque
+`---- Cobertura ----` con la cuenta usada, si es dueña del esquema y sus GRANTs. Si la cuenta no
+es dueña, Oracle no permite distinguir "no existe" de "no lo veo": un objeto sin GRANT sale como
+`eliminado` siendo perfectamente real. Y `EXECUTE 0` hace que **todos** los procedimientos y
+paquetes salgan así a la vez — que es la señal de que el problema son los permisos, no la BD.
+Con `parcial` (exit 2) o con cualquier `<< HUECO` en la cobertura: **no cerrar la lista de
+scripts**. Repetir con `-Conexion <id de la conexión dueña del esquema>` o pedir los GRANT, y
+decirlo en el SUMMARY.
+
 Después escribir `<destino>\scripts\scripts.json` declarando ese orden explícitamente — formato en
 `assets\instalacion\scripts.json.tpl`. Cuando existe, **manda sobre el descubrimiento alfabético**
 de `Ejecutar-Scripts.ps1`, así que el orden acordado con el usuario queda fijado en el paquete y no

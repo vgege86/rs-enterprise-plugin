@@ -412,6 +412,24 @@ usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálo
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,
 VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira_attach`).
 
+**Librería** (`hooks/lib-*.ps1`) — no se invocan solas: se dot-sourcean. Aíslan una regla que
+más de un hook necesita, para que no haya dos implementaciones que puedan divergir (el camino
+que ya recorrió el mapeo de tipos antes de `scripts/_dbtypes.py`). Cuando un script Python
+necesita la misma regla, la librería se acompaña de un **hook ejecutable delgado** que la emite
+como JSON y el script lo invoca por subproceso —patrón `lib-dbconfig.ps1` + `get-config.ps1`, y
+`lib-dbvisibilidad.ps1` + `db-visibilidad.ps1`—, en vez de reescribir la regla en Python.
+
+### 7.1 Reglas con un solo dueño
+
+Tres decisiones del dominio BD viven en **un único sitio** cada una. Si un cambio necesita
+tocarlas, se toca ahí, no en el hook que las consume:
+
+| Regla | Dueño | Por qué duele si se duplica |
+|---|---|---|
+| Formato del `model.json` | `scripts/_modeljson.py` (desde PS: `Save-RsModelJson`) | Dos escritores produjeron dos formatos incompatibles y el diff del repositorio quedó inservible — sin que el JSON dejara de ser válido |
+| "No lo veo" vs "no existe" | `hooks/lib-dbvisibilidad.ps1` (+ `db-visibilidad.ps1` para Python) | Decide si un cero significa "no hay" o "sin permiso". Divergir aquí es borrar tablas reales del modelo |
+| Elección de conexión | `Select-RsConexion` en `hooks/lib-dbconfig.ps1` | Sus tres guardarraíles (defecto fijo, id inexistente corta, id elegido publicado) solo valen si los cumplen todos los hooks igual |
+
 ---
 
 ## 8. References
