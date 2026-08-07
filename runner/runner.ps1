@@ -13,6 +13,43 @@ $hooksRoot  = Join-Path $skillRoot "hooks"
 
 $content = $null
 
+# Extrae el texto del ULTIMO mensaje 'assistant' de un bloque de lineas JSONL de transcript.
+# Recorre de atras hacia delante y corta en el primer 'assistant' que encuentra, que por
+# construccion es el ultimo del bloque.
+#
+# Devuelve @{ ok; texto }. `ok` distingue "he llegado a un assistant" de "en estas lineas no
+# habia ninguno" -- el llamante necesita esa diferencia para decidir si le vale con la cola del
+# fichero o tiene que leerlo entero.
+#
+# ⛔ Se devuelve el texto del ultimo assistant AUNQUE venga vacio, sin seguir buscando hacia
+# atras. Es lo que hacia el recorrido hacia delante que habia antes (dejaba $lastText en ese
+# valor) y es lo correcto: un texto anterior puede llevar un COMMAND ya ejecutado en un turno
+# previo, y reejecutarlo seria lanzar un build de nuevo a espaldas del usuario.
+function Get-RsUltimoTextoAssistant {
+    param([string[]]$Lineas)
+
+    for ($i = $Lineas.Count - 1; $i -ge 0; $i--) {
+        $linea = "$($Lineas[$i])".Trim()
+        if (-not $linea) { continue }
+        try { $msg = $linea | ConvertFrom-Json } catch { continue }
+        if ($msg.role -ne "assistant") { continue }
+
+        if ($msg.content -is [string]) { return @{ ok = $true; texto = $msg.content } }
+
+        $texto = $null
+        foreach ($block in @($msg.content)) {
+            if ($block.type -eq "text" -and $block.text) { $texto = $block.text }
+        }
+        return @{ ok = $true; texto = $texto }
+    }
+    return @{ ok = $false; texto = $null }
+}
+
+# Cuantas lineas del final se leen en el camino rapido. El contrato TYPE:/COMMAND: lo emiten
+# los agentes en su mensaje final, asi que lo que se busca esta siempre a un puñado de lineas
+# del final; 400 da margen de sobra para los tool_result que vengan detras.
+$LineasCola = 400
+
 # =====================================
 # MODO 1: InputFile (inline / manual)
 # Prioridad alta: si se pasa -InputFile no leer stdin
@@ -38,23 +75,22 @@ if (-not $content) {
             $transcriptPath = $hookData.transcript_path
             if ($transcriptPath -and (Test-Path $transcriptPath)) {
                 Write-Host "Mode: Stop hook (transcript)"
-                $lastText = $null
-                Get-Content $transcriptPath -Encoding UTF8 | ForEach-Object {
-                    $line = $_.Trim()
-                    if (-not $line) { return }
-                    try {
-                        $msg = $line | ConvertFrom-Json
-                        if ($msg.role -eq "assistant") {
-                            if ($msg.content -is [string]) { $lastText = $msg.content }
-                            elseif ($msg.content -is [array]) {
-                                foreach ($block in $msg.content) {
-                                    if ($block.type -eq "text" -and $block.text) { $lastText = $block.text }
-                                }
-                            }
-                        }
-                    } catch {}
+
+                # Este hook corre al final de CADA turno, y solo tres agentes (build, instalador,
+                # actualizador) llegan a emitir un TYPE:/COMMAND:. Parsear el transcript entero
+                # -- una linea JSON por mensaje, creciendo toda la sesion -- para quedarse con el
+                # ultimo mensaje es coste lineal pagado en cada turno: medido, 594 ms sobre un
+                # transcript de 1500 lineas (0,7 MB), y sigue subiendo. Se lee la cola primero.
+                $resultado = Get-RsUltimoTextoAssistant (Get-Content $transcriptPath -Encoding UTF8 -Tail $LineasCola)
+
+                # Si en la cola no habia ningun 'assistant', se lee el fichero entero. El camino
+                # rapido no puede perder nada: o encuentra el ultimo assistant (que por estar en
+                # la cola es el mismo que encontraria el recorrido completo) o cede aqui.
+                if (-not $resultado.ok) {
+                    $resultado = Get-RsUltimoTextoAssistant (Get-Content $transcriptPath -Encoding UTF8)
                 }
-                $content = $lastText
+
+                $content = $resultado.texto
             }
         }
     } catch {}

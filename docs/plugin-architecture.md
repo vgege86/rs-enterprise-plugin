@@ -111,9 +111,25 @@ solución y scope, y despacha cada etapa como subagente Task-tool aislado.
    STAGES ⊆ { core⇄[plan-check], validator⇄[fixer], tester⇄[crear-tests], build, db-modeler, documentar }
 ```
 
+⛔ **La definición del pipeline vive SOLO en `SKILL.md`.** `commands/rs-enterprise-agent.md` es un
+wrapper fino que apunta ahí. Hasta 3.14.0 repetía las etapas y su control de flujo, y la copia se
+quedó atrás: `plan-check` entró en 2.18.0 y nunca llegó al comando, así que los dos documentos
+describían pipelines distintos dentro del mismo contexto. Si hace falta tocar el pipeline, se toca
+`SKILL.md` y nada más.
+
 El **planner** analiza con acceso al modelo BD y al código, y emite `PLAN` (para el humano) + `STAGES`
 (lista ordenada, autoritativa). El orquestador **ejecuta `STAGES` sin re-decidir** qué etapas corren —
-el resto de agentes solo aplican el plan. `validator` absorbe el antiguo `analyzer`; la validación BD
+el resto de agentes solo aplican el plan.
+
+**Excepciones a "sin re-decidir": exactamente tres redes de seguridad** (§ Redes de seguridad de
+`SKILL.md`), todas de la misma forma —una señal que el planner no podía conocer al planificar
+obliga a añadir una etapa que omitió— y todas anotadas en el reporte: `core` corrió → `plan-check`;
+`TABLES_TOUCHED` no vacío → `db-modeler`; `NEW_PATTERN` no vacío → `documentar`. Cada una se
+describía a sí misma como "la única", lo que dejaba las otras dos sin respaldo escrito.
+
+**Etapas que pueden solaparse:** `db-modeler` ∥ `documentar` (no se encadenan) y
+`plan-check` ∥ `validator` (uno mira cobertura del PLAN, el otro compila). El resto es estrictamente
+secuencial, y `build` no solapa con nada. `validator` absorbe el antiguo `analyzer`; la validación BD
 (antiguo `bd`) la hace el planner. Ya no hay flags `CREATE_TESTS`/`UPDATE_DOCS`: todo se lee de `STAGES`.
 
 **Documentación:** el planner también clasifica la tarea contra el índice maestro técnico (tabla
@@ -347,6 +363,30 @@ Frontmatter solo `description` (+ `Uso:`). Cuerpo en inglés. Los comandos de VC
 (`rs-diff`, `rs-commit`) llaman `detect_vcs` y despachan al subagente unificado (`rs-diff`/`rs-commit`),
 que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-svn`/`-git` separados.
 
+### 5.1 Dos formas de comando: con skill y autosuficiente
+
+Desde 3.13.0 la primera línea del cuerpo no es siempre `Invoke the ... skill`. Hay dos formas, y
+la que aplica depende de **qué necesita el comando de `SKILL.md`**, no de gusto:
+
+| Forma | Cuándo | Primera línea |
+|---|---|---|
+| **Con skill** | Resuelve una `.sln`, escribe, tiene gate, o es el pipeline | `Invoke the \`rs-enterprise-agent\` skill in <mode> mode.` |
+| **Autosuficiente** | Solo lectura, despacho mecánico a un subagente, sin resolución de ruta | `⛔ Self-contained — do NOT invoke the \`rs-enterprise-agent\` skill.` |
+
+`SKILL.md` son ~7k tokens. Cargarlos para despachar `/rs-stats` a un Haiku que lee un JSON es
+peaje puro. Autosuficientes hoy: `rs-stats`, `rs-dashboard`, `rs-help`, `rs-deps`, `rs-env`,
+`rs-schema`, `rs-word`, `rs-comparar-modelo`, `rs-comparar-entornos`, `rs-historial`.
+
+⛔ Un comando autosuficiente **no cita** `SKILL.md`: escribe la regla entera. Son dos, cortas —
+`workspace` = cwd de la sesión ("Primary working directory"), y la normalización de `plugin_root`
+(subir dos niveles si acaba en `\skills\<x>`, verificar `hooks\` y `runner\` con Glob, nunca
+`${CLAUDE_PLUGIN_ROOT}`). Si un comando llegara a necesitar la **resolución de solución**, deja de
+ser autosuficiente: esa regla vive en `SKILL.md` y duplicarla en 25 comandos es cómo divergen.
+
+⚠️ Al añadir un comando autosuficiente, comprobar que `hooks/skill-trigger.ps1` no lo contradice
+(§7): ese hook dispara **solo** por `.sln` explícita, precisamente para no imponer la skill
+encima de un comando que declara no necesitarla.
+
 ---
 
 ## 6. MCP server `rs-workspace`
@@ -360,6 +400,11 @@ bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
 Protección de contexto (por qué es preferente sobre leer ficheros a pelo):
 - Truncado configurable: `max_errors` (compile_check, 20), `max_failures` (run_tests, 10),
   `max_results` (find_symbol, 50), `max_rows` (db_query, 200).
+- **Salida compacta** (`_JSON_SEP = (",", ":")`, desde 3.13.0): la respuesta de una tool la lee el
+  modelo, no una persona, así que la indentación son tokens sin contenido. Medido sobre 40
+  coincidencias de `find_symbol`: 7901 caracteres con `indent=2` contra 6213 compactos, −21%.
+  ⛔ Es solo para lo que va al contexto: el `model.json` lo formatea `scripts/_modeljson.py`
+  (§7.1) con su propio contrato de indentado, y ese no se toca.
 - `render_erd`/`generate_sql`/`export_dmd` **generan ficheros**, nunca cargan contenido en contexto.
 - El modelo BD **nunca se carga entero** (~180K tokens): `search_model` → `get_model_index`
   → `get_table_schema`.
@@ -379,11 +424,20 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
   para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS. Fail-fast si
   `cwd` es inaccesible (unidad de red caída) para no bloquear el evento.
+  ⛔ Dispara **solo** por `.sln` explícita. El disparo por `^/rs-` que tuvo hasta 3.13.0 era
+  redundante (con un comando, Claude Code ya carga `commands/rs-<x>.md`, que dice a qué subagente
+  despachar) y contradecía a los comandos autosuficientes de §5.1, que declaran justo lo
+  contrario. Los comandos que necesitan la skill la piden en su propio texto.
 
 ⚠️ Los 3 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
 de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output discarded`). Ver
 CHANGELOG 2.15.9.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / service-build / copy-ais).
+  Corre al final de **cada** turno, así que lee la **cola** del transcript (`-Tail 400`) hacia
+  atrás y corta en el primer `assistant`; si ahí no hay ninguno, cae a la lectura completa. Antes
+  parseaba el fichero entero siempre: 1709 ms sobre 15 000 líneas contra 478 ms ahora, y subiendo
+  con la sesión. Devuelve el texto del último `assistant` **aunque venga vacío** — un texto
+  anterior puede llevar un `COMMAND:` ya consumido, y reejecutarlo lanzaría un build sin pedirlo.
 
 ⛔ **Todo `.ps1` del repo va en UTF-8 con BOM.** No es estilo: sin BOM, Windows PowerShell 5.1
 decodifica con la codepage ANSI y cualquier no-ASCII (un `—` basta) impide que el fichero **parsee**.
@@ -395,22 +449,35 @@ defecto.
 
 ⛔ **El intérprete de referencia es Windows PowerShell 5.1**, el que usa `plugin.json` con
 `powershell -File`. Todo lo que se escriba aquí —hooks y también los tests que los ejercitan— tiene
-que funcionar en 5.1, no solo en `pwsh`. Dos trampas ya pagadas, ambas verificadas hoy por
-`tests/Encoding.Tests.ps1` y detalladas en `hooks/README.md`:
+que funcionar en 5.1, no solo en `pwsh`. Tres trampas ya pagadas, detalladas en `hooks/README.md`:
 
 - `Join-Path` admite **dos** argumentos posicionales; el tercero (`-AdditionalChildPath`) es de
   PowerShell 6+. Usar `Join-Path $base "a/b/c"`, que vale en Windows y en Linux.
 - `$IsWindows` **no existe en 5.1** (vale `$null`), así que `-not $IsWindows` se cumple en Windows.
   Comparar contra `$false` explícito.
+- `Get-Command <nombre>` con un nombre que **aún no existe** no falla: recorre `PSModulePath`
+  entero analizando módulos por si alguno lo exporta. **1763 ms medidos**, sobre un suelo de
+  arranque de 228 ms. Para "¿está ya definida esta función?" usar `Test-Path Function:\<nombre>`
+  (291 ms), que resuelve por la cadena de scopes igual que la invocación. `Get-Command` sigue
+  siendo lo correcto para un **binario externo** (`dotnet`, `sqlplus`): ahí no hay alternativa
+  y el caso normal es que exista, que es el camino barato. Ver 3.13.0.
 
-Los dos fallan en **ejecución, no al parsear**, así que el parser no los caza y hacen falta
-comprobaciones aparte. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
+Las tres fallan en **ejecución, no al parsear** —la última ni siquiera falla, solo cuesta—, así
+que el parser no las caza y hacen falta comprobaciones aparte. Las dos primeras las verifica hoy
+`tests/Encoding.Tests.ps1`. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
 producción, `pwsh` porque es el del CI.
 
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
 usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,
 VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira_attach`).
+
+⚡ **Buscar en el árbol tiene un solo motor: `hooks/lib-buscar.ps1`** (desde 3.14.0). `find-symbol`,
+`search-code` y `security-scan` hacían cada uno su propio recorrido con `Get-ChildItem` +
+`Get-Content` + `-match`, que es el camino más caro de PowerShell. El motor usa
+`[IO.Directory]::EnumerateFiles` + `Select-String` multi-patrón: 6650 ms → 1480 ms sobre 3200
+`.cs` (detalle y trampas en `hooks/README.md` § Buscar en el árbol). ⛔ No hay ripgrep disponible
+para los hooks: `rg` es una función del shell de la herramienta Bash, no un binario del PATH.
 
 **Librería** (`hooks/lib-*.ps1`) — no se invocan solas: se dot-sourcean. Aíslan una regla que
 más de un hook necesita, para que no haya dos implementaciones que puedan divergir (el camino
@@ -426,6 +493,7 @@ tocarlas, se toca ahí, no en el hook que las consume:
 
 | Regla | Dueño | Por qué duele si se duplica |
 |---|---|---|
+| Búsqueda de texto en el scope | `hooks/lib-buscar.ps1` | Tres recorridos distintos = tres criterios distintos de qué carpetas se miran, y dos bugs que solo estaban en uno de ellos |
 | Formato del `model.json` | `scripts/_modeljson.py` (desde PS: `Save-RsModelJson`) | Dos escritores produjeron dos formatos incompatibles y el diff del repositorio quedó inservible — sin que el JSON dejara de ser válido |
 | "No lo veo" vs "no existe" | `hooks/lib-dbvisibilidad.ps1` (+ `db-visibilidad.ps1` para Python) | Decide si un cero significa "no hay" o "sin permiso". Divergir aquí es borrar tablas reales del modelo |
 | Elección de conexión | `Select-RsConexion` en `hooks/lib-dbconfig.ps1` | Sus tres guardarraíles (defecto fijo, id inexistente corta, id elegido publicado) solo valen si los cumplen todos los hooks igual |

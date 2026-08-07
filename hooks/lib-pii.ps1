@@ -133,7 +133,16 @@ function Remove-RsPii {
 # Resolucion del modelo BD: una sola implementacion, la de lib-dbconfig.ps1 (Get-RsModelPath es
 # "el unico sitio que resuelve el campo model"). Se carga solo si quien nos dot-sourcea no la
 # traia ya -- check-env.ps1 carga las dos librerias.
-if (-not (Get-Command Get-RsModelPath -ErrorAction SilentlyContinue)) {
+#
+# ⛔ La comprobacion va por el proveedor Function:, NO por Get-Command. Con un nombre que NO
+# existe todavia -que es el caso normal aqui-, Get-Command en Windows PowerShell 5.1 no se
+# limita a mirar la tabla de comandos: recorre PSModulePath entero analizando modulos por si
+# alguno lo exporta. Medido en esta maquina: 1763 ms con Get-Command contra 291 ms con
+# Test-Path, sobre un baseline de 228 ms de arranque de powershell. Y esto se paga en CADA
+# Bash y CADA Write/Edit, porque las dos guardas PreToolUse dot-sourcean este fichero antes
+# de decidir siquiera si tienen que actuar. Test-Path Function:\ resuelve por la cadena de
+# scopes igual que la invocacion, asi que ve la funcion la dot-sourcee quien la dot-sourcee.
+if (-not (Test-Path Function:\Get-RsModelPath)) {
     . (Join-Path $PSScriptRoot "lib-dbconfig.ps1")
 }
 

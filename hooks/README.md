@@ -53,7 +53,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 |--------|-----|
 | `validate-solution.ps1 <path>` | Verifica que existe la .sln |
 | `parse-sln.ps1 <sln>` | Parsea .sln → scope_dirs, tipo, workspace |
-| `find-symbol.ps1 <nombre> <scope_dirs>` | Localiza clase/método/propiedad → archivo:línea |
+| `find-symbol.ps1 <nombre> <scope_dirs>` · `find-symbol.ps1 -Symbols "A,B,C" -ScopeDirs <dirs>` | Localiza clase/método/propiedad → archivo:línea. Con `-Symbols`, los N en una sola pasada sobre el árbol |
 | `compile-check.ps1 <sln> [-NoRestore]` | dotnet build → errors[], warnings[], success |
 | `test-runner-check.ps1 <sln> [-NoBuild]` | dotnet test → has_test_project (bool), passed/failed/failures[], skipped (conteo). Sin proyecto → solo has_test_project=false |
 | `create-test-project.ps1 <sln> [-Framework xunit\|mstest\|nunit]` | Crea proyecto de test |
@@ -65,6 +65,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | Script | Uso |
 |--------|-----|
 | `get-config.ps1 <workspace>` | Lee .rs-databases.json → motor, datasource, schema, conexiones[], motores[] |
+| `lib-buscar.ps1` | Librería, no se invoca directamente — motor de búsqueda de texto (`Get-RsFicherosDeScope`, `Invoke-RsBusqueda`) compartido por `find-symbol.ps1`, `search-code.ps1` y `security-scan.ps1`. Usa `Select-String` sobre una lista de ficheros enumerada con `[IO.Directory]::EnumerateFiles`, no `Get-ChildItem` + `Get-Content` (ver § Buscar en el árbol). Mismo patrón que `lib-dbconfig.ps1` |
 | `lib-dbmodel.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`; pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL) y `New-RsColumnaModelo` / `ConvertTo-RsPkPosicion` (construye la columna del modelo con la posición real dentro de la PK y conservando `description` y las marcas manuales `pii`/`safe`, que la BD no conoce). Mismo patrón que `lib-dbconfig.ps1` |
 | `lib-dbconfig.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Get-CsPart`, `Read-RsDatabases`, `Resolve-RsWorkspace`, `Get-RsProyecto`) |
 | `lib-deploy-gates.ps1` | Librería, no se invoca directamente — gates de carpeta de despliegue batch (`Test-RsCoherenciaBuild`, `Test-RsBindingRedirects`, `Test-RsOdpDependencies`, `Get-RsDllConfigHuerfanos`). Deciden y devuelven; los `Write-Host` y los `exit` se quedan en `installer-batch.ps1`. Mismo patrón que `lib-dbconfig.ps1` |
@@ -164,6 +165,63 @@ bloque justo en Windows**. Comprobar siempre contra el `$false` explícito:
 if (-not $IsWindows) { ... }        # ⛔ se cumple en 5.1-Windows
 if ($IsWindows -eq $false) { ... }  # ✅ solo PS Core fuera de Windows
 ```
+
+## Buscar en el árbol: `Select-String`, no `Get-ChildItem` + `Get-Content`
+
+Recorrer el scope abriendo cada fichero con `Get-Content` y comparando línea a línea con `-match`
+es la forma más cara de buscar en PowerShell: se construye un objeto por línea y el regex se
+recompila en cada comparación. Medido sobre 3200 ficheros `.cs` de 65 líneas, buscando un símbolo
+(6 patrones):
+
+| | ms |
+|---|---|
+| `Get-ChildItem` + `Get-Content` + `-match` | 6650 |
+| `EnumerateFiles` + `ReadAllLines` + regex compilado | 2836 |
+| `EnumerateFiles` + `ReadAllText` + `Matches` | 2969 |
+| **`Select-String` multi-patrón** | **1480** |
+
+Suelo de la operación: 121 ms enumerar + 468 ms leer los 3200 ficheros. `Select-String` gana
+porque el bucle de líneas y el motor de regex viven dentro del cmdlet, en C#, y acepta N patrones
+en una sola llamada. Ese motor está en `lib-buscar.ps1`; no reimplementarlo en cada hook.
+
+Dos trampas que costaron un bug cada una y que el motor ya resuelve:
+
+```powershell
+# Get-Content sobre un fichero de UNA linea devuelve String, no String[].
+$l = Get-Content "unalinea.cs"     # -> String
+$l[0]                              # -> 'p'  (el primer CARACTER, no la primera linea)
+
+# Sort-Object -Unique con UN elemento devuelve el objeto, no un array de uno.
+@($resultados | Sort-Object { $_.file } -Unique).Count   # ✅ 1
+ ($resultados | Sort-Object { $_.file } -Unique).Count   # ⛔ 4 = las CLAVES del hashtable
+```
+
+⛔ **No hay ripgrep.** `rg` está disponible dentro de la herramienta Bash del agente, pero como
+función del shell, no como `rg.exe` en el PATH: los hooks PowerShell —que es como Claude Code
+ejecuta esto— no lo alcanzan. Se comprobó recorriendo el PATH y buscando el binario en el árbol.
+
+## `Get-Command` no es para preguntar si una función ya está cargada
+
+Esta no rompe nada: cuesta. `Get-Command` con un nombre que **todavía no existe** —el caso normal
+cuando se pregunta "¿me la ha traído ya quien me dot-sourcea?"— no se queda en la tabla de
+comandos: recorre `PSModulePath` entero analizando módulos por si alguno lo exporta. Medido sobre
+un arranque de `powershell -NoProfile` de 228 ms:
+
+```powershell
+if (-not (Get-Command Get-RsModelPath -EA SilentlyContinue)) { ... }  # ⛔ 1763 ms
+if (-not (Test-Path Function:\Get-RsModelPath))              { ... }  # ✅  291 ms
+```
+
+`Test-Path Function:\` resuelve por la cadena de scopes igual que la invocación, así que ve la
+función la dot-sourcee quien la dot-sourcee — que es exactamente lo que se quería comprobar.
+
+Duele donde el script corre muchas veces. `lib-pii.ps1` lo hacía a nivel de módulo y lo
+dot-sourcean las dos guardas `PreToolUse`, así que se pagaba en **cada Bash y cada Write/Edit**,
+también fuera de un workspace uCollect/RS: 2021 ms por llamada, hoy 477 ms (CHANGELOG 3.13.0).
+
+⚠️ Para un **binario externo** (`dotnet`, `sqlplus`, `sqlcmd`, `python`) `Get-Command` sigue
+siendo lo correcto: no hay proveedor equivalente, y ahí el caso normal es que el binario exista,
+que es el camino barato. El coste solo aparece cuando lo habitual es no encontrar nada.
 
 ## Ejecutar la suite
 

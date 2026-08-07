@@ -17,6 +17,7 @@ param(
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $hooksDir = Split-Path $PSCommandPath -Parent
+. (Join-Path $hooksDir "lib-buscar.ps1")
 
 # Obtener scope via parse-sln
 $scopeJson = & "$hooksDir\parse-sln.ps1" $SlnPath | ConvertFrom-Json
@@ -103,43 +104,45 @@ $patterns = @(
     }
 )
 
-$findings = @()
+$findings = New-Object System.Collections.ArrayList
+$excluidas = @('bin', 'obj', '.vs', 'packages')
 
-foreach ($dir in $scopeDirs) {
-    if (-not (Test-Path $dir)) { continue }
-    $files = Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue |
-             Where-Object { $_.FullName -notmatch '\\(bin|obj|\.vs|packages)\\' }
+# El árbol se enumera UNA vez, con la unión de las extensiones que miran los patrones, y cada
+# patrón trabaja después sobre el subconjunto que le toca. Antes se recorría el scope entero y
+# se abría cada fichero una vez POR PATRÓN aplicable —hasta 8 lecturas del mismo .cs— para
+# descartar casi todas.
+$extensiones = @($patterns | ForEach-Object { $_.ext } | Sort-Object -Unique)
+$todosLosFicheros = Get-RsFicherosDeScope -Directorios @($scopeDirs) `
+                                          -Globs @($extensiones | ForEach-Object { "*$_" }) `
+                                          -CarpetasExcluidas $excluidas
 
-    foreach ($file in $files) {
-        $ext = $file.Extension.ToLower()
-        foreach ($p in $patterns) {
-            if ($ext -notin $p.ext) { continue }
-            if ($p.onlineOnly -and $tipo -ne "Online") { continue }
+# Una búsqueda por PATRÓN, no un `break` por línea: una misma línea puede disparar varios
+# patrones y cada uno es un hallazgo distinto con su propio `id`. Es lo que hacía el recorrido
+# anterior (bucle de patrones sin corte) y lo que espera quien lee el informe.
+foreach ($p in $patterns) {
+    if ($p.onlineOnly -and $tipo -ne "Online") { continue }
 
-            $lines = Get-Content $file.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
-            if (-not $lines) { continue }
+    $suyos = @($todosLosFicheros | Where-Object { [IO.Path]::GetExtension($_).ToLower() -in $p.ext })
+    if (-not $suyos) { continue }
 
-            $lineNum = 0
-            foreach ($line in $lines) {
-                $lineNum++
-                if ($line -match $p.regex) {
-                    $snippet = $line.Trim()
-                    if ($snippet.Length -gt 100) { $snippet = $snippet.Substring(0,100) + "..." }
-                    $relPath = $file.FullName.Replace($scopeJson.workspace,"").TrimStart("\")
-                    $findings += [PSCustomObject]@{
-                        id       = $p.id
-                        severity = $p.severity
-                        desc     = $p.desc
-                        file     = $relPath
-                        line     = $lineNum
-                        snippet  = $snippet
-                        context  = $p.context
-                    }
-                }
-            }
-        }
+    $coincidencias = Invoke-RsBusqueda -Patrones @($p.regex) -Ficheros $suyos
+
+    foreach ($c in $coincidencias) {
+        $snippet = $c.texto.Trim()
+        if ($snippet.Length -gt 100) { $snippet = $snippet.Substring(0,100) + "..." }
+        $relPath = $c.file.Replace($scopeJson.workspace,"").TrimStart("\")
+        [void]$findings.Add([PSCustomObject]@{
+            id       = $p.id
+            severity = $p.severity
+            desc     = $p.desc
+            file     = $relPath
+            line     = $c.line
+            snippet  = $snippet
+            context  = $p.context
+        })
     }
 }
+$findings = @($findings.ToArray())
 
 $critical = @($findings | Where-Object { $_.severity -eq "critical" })
 $high     = @($findings | Where-Object { $_.severity -eq "high" })
