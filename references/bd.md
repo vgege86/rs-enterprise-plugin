@@ -31,6 +31,31 @@ nunca ignorarlo en silencio.** Tabla completa de campos y de qué decir en cada 
 rodear el filtro** (misma columna con otra expresión, `sqlplus`/`sqlcmd` directos). Si un dato
 se necesita en claro, declarar la columna como segura en el modelo BD (`/rs-pii`).
 
+## La política es de `db_query`, no del plugin entero
+
+`db_query` es la **única** tool que enmascara. Las que mantienen el modelo y leen estructura
+—`sync_from_db`, `sync_indexes`, `compare_model`, `analyze_dalc`, `generate_sql`,
+`generate_migration`, `export_dmd`, `render_erd`— van a su hook con conexión directa y no
+importan `pii_*`; `get_table_schema`, `search_model` y `get_model_index` leen el
+`model.json` y ni tocan la BD. Nombres de tabla, columna, vista, índice y objeto salen
+**siempre en claro**, también con `mode=enforce`. (`sync-from-db.ps1` menciona `pii` solo para
+**conservar** las marcas `pii`/`safe` que ya tenga el modelo al re-sincronizar.)
+
+⚠️ **El catálogo del sistema consultado con `db_query` sí sale enmascarado.** `ALL_TAB_COLUMNS`,
+`INFORMATION_SCHEMA.COLUMNS`, `USER_OBJECTS`… no están en el modelo → `clasificar()` devuelve
+`NO_RESUELTA/sin_definicion` → `resolver_no_resuelta()` ve texto, no números, y devuelve
+`MASCARA/valores_no_numericos`. Los nombres vuelven como `pii:xxxxxxxx`. Los patrones ni
+intervienen: la lista base es española (`NOMBRE*`, `TELEFON*`…) y `TABLE_NAME`/`COLUMN_NAME` no
+casan — pero el fallback por forma de valor los tapa igual.
+
+Para leer estructura, usar las tools de modelo, no `db_query`. Si aun así hace falta un cruce
+por SQL: **nombres en el `SELECT`, números de vuelta** (recuentos o códigos), que salen en claro
+por `valores_numericos`. Dos bordes: un entero de **9+ dígitos sin decimales** se enmascara
+(forma de identificador) y una columna que salga **entera vacía**, también.
+
+⛔ No abrir excepciones de catálogo en `pii_sqlscope`/`pii_policy` sin decisión explícita: cada
+una es un camino más por el que un `SELECT` puede salir sin filtrar.
+
 ---
 
 # 🧠 Motores soportados
