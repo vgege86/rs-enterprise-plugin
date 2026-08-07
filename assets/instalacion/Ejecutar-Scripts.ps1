@@ -37,6 +37,11 @@
                 se empieza a medias)
       entorno   solo se ejecuta si coincide con -Entorno
       purga     solo se ejecuta con -Recargar, y va antes que el resto
+      ejecutar  false = el fichero viaja en el paquete y NO se ejecuta. Es para los maestros
+                que encadenan a otros (<Proyecto>-CreacionObjetos.sql, Inserts\_run_all.sql):
+                sirven para lanzarlo todo a mano desde una sesion, pero ejecutarlos ADEMAS
+                crearia cada objeto y cada fila dos veces. Declararlos asi evita tambien el
+                aviso de "presente en disco y no declarado", que en su caso seria ruido
 
     Un .sql presente en disco pero NO declarado en el manifiesto se avisa y NO se ejecuta:
     lanzar SQL no declarado contra la BD de un cliente es peor que omitirlo, y el aviso
@@ -198,6 +203,11 @@ function Get-RsScriptsManifiesto {
         $abs = Join-Path $DirScripts $rel
         $declaradas += $rel.ToLowerInvariant()
 
+        # ejecutar:false -> declarado (no sale como "no declarado") pero no se ejecuta. Va
+        # ANTES del Test-Path a proposito: un maestro ausente no es una entrega incompleta,
+        # porque nadie lo iba a lanzar.
+        if ($item.PSObject.Properties.Name -contains 'ejecutar' -and $item.ejecutar -eq $false) { continue }
+
         # Filtro por entorno: la fila base de RVERSIONES solo se aplica a su entorno.
         if ($item.entorno -and ("$($item.entorno)").ToUpperInvariant() -ne $Entorno.ToUpperInvariant()) { continue }
 
@@ -217,8 +227,11 @@ function Get-RsScriptsManifiesto {
     }
 
     # Un .sql que viaja en el paquete pero nadie declaro: no se ejecuta, pero se dice.
+    # La ruta se normaliza a '\' en los DOS lados: las declaradas ya vienen convertidas, y
+    # aqui el separador lo pone el sistema de ficheros. Sin normalizar, toda ruta con
+    # subcarpeta (Inserts\..., PorEntorno\...) se daba por no declarada fuera de Windows.
     foreach ($f in @(Get-ChildItem $DirScripts -Filter *.sql -File -Recurse -ErrorAction SilentlyContinue)) {
-        $rel = $f.FullName.Substring($DirScripts.Length).TrimStart('\','/')
+        $rel = $f.FullName.Substring($DirScripts.Length).TrimStart('\','/').Replace('/', '\')
         if ($declaradas -notcontains $rel.ToLowerInvariant()) {
             $res.avisos += "presente en disco y NO declarado en scripts.json, no se ejecuta: $rel"
         }

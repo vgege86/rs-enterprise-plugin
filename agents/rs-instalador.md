@@ -19,7 +19,15 @@ C:\AIS\<Proyecto>\Instalador\
 │   └── Modulos\     DLLs de los módulos activos del cliente
 ├── Scripts\
 │   ├── 00-RVERSIONES.sql               DDL de la tabla de versiones (registro de entregas)
-│   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas, SIN schema
+│   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas + índices + DEFAULT, SIN schema
+│   ├── <Proyecto>-01-Secuencias.sql    ┐
+│   ├── <Proyecto>-02-Vistas.sql        │
+│   ├── <Proyecto>-03-Funciones.sql     │ objetos extraídos de la BD viva: NO están en el
+│   ├── <Proyecto>-04-Procedimientos.sql│ model.json, solo existen si la etapa 5 los sacó
+│   ├── <Proyecto>-05-Triggers.sql      │
+│   ├── <Proyecto>-06-Sinonimos.sql     ┘
+│   ├── <Proyecto>-CreacionObjetos.sql  maestro para lanzarlo a mano; NO lo ejecuta el paquete
+│   ├── scripts.json                    manifiesto: fija el ORDEN de ejecución en el cliente
 │   ├── Inserts\
 │   │   └── <TABLA>.sql                 un fichero por tabla paramétrica
 │   └── PorEntorno\
@@ -192,16 +200,38 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
 - **ServiceManager:** `host OK` + `<destino>\ServiceManager\Modulos` con las DLL de los módulos.
 - **Scripts:** `<destino>\Scripts\<proyecto>-CreacionTablas.sql` + N ficheros en `Scripts\Inserts`
   (los ejecuta `Ejecutar-Scripts.ps1` como segunda tanda; sin eso las paramétricas quedarían vacías).
-  - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD → reportarlo como AVISO,
-    no como éxito silencioso.
+  - ⛔ **Y los SEIS ficheros de objetos**, uno por tipo: `-01-Secuencias`, `-02-Vistas`,
+    `-03-Funciones`, `-04-Procedimientos`, `-05-Triggers`, `-06-Sinonimos`. El log los lista con su
+    tamaño y marca `AUSENTE` los que falten; una línea `AUSENTE` es **AVISO, no OK**: ese tipo de
+    objeto no viajaría al cliente. Vistas y procedimientos son los que más duele perder, y su
+    ausencia **no da ningún error en la instalación** — la aplicación simplemente falla al primer
+    uso. Un fichero con `0 objeto(s)` sí es válido si el schema no tiene ninguno de ese tipo (el
+    log lo dice explícitamente), pero contrastarlo con lo que se espera del proyecto.
+  - **Reportar en el SUMMARY el conteo real por tipo** que imprime la etapa
+    (`---- Resumen objetos (conteo real en BD) ----`). Es lo único que distingue "el schema no
+    tiene vistas" de "la extracción de vistas falló".
+  - **Valores DEFAULT**: el log del DDL dice `N tablas | M índices | K defaults`. Si `K` es 0 y el
+    proyecto tiene columnas con valor por defecto, **el modelo está desactualizado**, no la BD:
+    el campo `default` de cada columna lo rellena `hooks\sync-from-db.ps1`, y un `model.json`
+    sincronizado antes de eso no lo lleva. Resincronizar (`/rs-erd`) y repetir `-Solo ddl` antes de
+    entregar; si no, en el cliente toda columna con DEFAULT queda a NULL y no salta ningún error.
+  - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD, algún tipo de objeto
+    falló, o falta algún fichero de objetos → reportarlo como AVISO, no como éxito silencioso.
   - El log trae los tiempos (`~ sesión k/N: ... en X.Xs`, `Tiempo: X.Xs`, `OK — Scripts en ... (X.Xs)`):
     **inclúyelos en el SUMMARY**. Son la única forma de saber si esta etapa se está degradando, y
     de decidir si toca ajustar `parametricas.max_paralelo`.
   - `Reintentando N tabla(s) con TO_CLOB` en el log **no es un error**: es la red de seguridad del
     camino rápido de generación del SELECT; esas tablas acaban OK en el reintento.
 - **Paquete:** `OK — paquete de instalacion preparado en <destino>` + existen `Instalar.ps1`,
-  `Ejecutar-Scripts.ps1`, `rutas.json`, `Scripts\00-RVERSIONES.sql` y un
+  `Ejecutar-Scripts.ps1`, `rutas.json`, `Scripts\00-RVERSIONES.sql`, `Scripts\scripts.json` y un
   `Scripts\PorEntorno\99-RVERSIONES-<ENTORNO>.sql` por entorno declarado.
+  - `Scripts\scripts.json (N entradas, orden de dependencias)` es **obligatorio** en el paquete:
+    es lo que fija el orden de ejecución en el cliente. Sin él, `Ejecutar-Scripts.ps1` descubre los
+    `.sql` por convención y los ordena **por nombre**, con lo que `02-Vistas` y `05-Triggers` caen
+    antes que `CreacionTablas` (los triggers revientan sobre tablas que aún no existen y, al ser
+    fail-fast, la instalación aborta ahí) y el maestro `CreacionObjetos.sql` vuelve a crearlo todo.
+  - `AVISO: el paquete NO lleva N de los ficheros de objetos esperados` = la etapa 5 no los generó
+    → **no entregar**: repetir `installer-scripts.ps1 -Solo objetos` y volver a la etapa 6.
   - `AVISO: no habia bloque 'entornos'...` = `rutas.json` va como **plantilla** → decírselo al
     usuario: hay que rellenar rutas de instalación, backup y conexión antes de entregar. En ese caso
     la fila base se genera para `DESA`/`TEST`/`PROD` por defecto.
@@ -218,8 +248,10 @@ error, y NO continuar con las siguientes etapas.
 Tras la etapa 6, con `Write`:
 
 **`readme.txt`** con contenido real, en orden de ejecución: (1) scripts SQL —
-`Ejecutar-Scripts.ps1 -Entorno <E>`, que lanza en una sola pasada el DDL, los inserts paramétricos y
-la fila base de `RVERSIONES` del entorno elegido; (2) instalación de ficheros —
+`Ejecutar-Scripts.ps1 -Entorno <E>`, que lanza en una sola pasada, y en el orden que fija
+`Scripts\scripts.json`, el DDL de `RVERSIONES`, las secuencias, las tablas e índices, las vistas,
+las funciones, los procedimientos, los triggers, los sinónimos, los inserts paramétricos y la fila
+base de `RVERSIONES` del entorno elegido; (2) instalación de ficheros —
 `Instalar.ps1 -Entorno <E>`; (3) parámetros de configuración a revisar en `web.config` /
 `*.exe.config` (en instalación limpia **sí** viajan, pero llevan valores de desarrollo: listar los
 que el cliente debe ajustar — cadenas de conexión, rutas, credenciales).
@@ -243,8 +275,9 @@ Destino: C:\AIS\<Proyecto>\Instalador
 - EXES:          <N procesos batch>  [OK|FAIL]
 - AgendaWeb:     <N ficheros>        [OK|FAIL|OMITIDO]
 - ServiceManager:<host + N módulos>  [OK|FAIL]
-- Scripts:       DDL + <N> inserts   [OK|AVISO|FAIL]
-- Paquete:       Instalar.ps1 + Ejecutar-Scripts.ps1 + rutas.json + readme.txt  [OK|PLANTILLA|FAIL]
+- Scripts:       <N> tablas (<K> defaults) + <N> inserts   [OK|AVISO|FAIL]
+- Objetos BD:    sec <n> · vistas <n> · func <n> · procs <n> · trig <n> · sinón <n>  [OK|AVISO|FAIL]
+- Paquete:       Instalar.ps1 + Ejecutar-Scripts.ps1 + rutas.json + scripts.json + readme.txt  [OK|PLANTILLA|FAIL]
 - RVERSIONES:    DDL + fila base de <N> soluciones en <entornos>  [OK|AVISO|FAIL]
 
 STATUS: OK | PARCIAL | FAIL

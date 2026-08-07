@@ -1,0 +1,260 @@
+﻿<#
+.SYNOPSIS
+    Lo que le falta a una columna de `model.json` cuando se reconstruye desde la BD.
+    Compartido por sync-from-db.ps1 y sync-model-tables.ps1. Son dos huecos opuestos:
+
+      Get-RsColumnDefaults  lo que la BD SI sabe y el SELECT principal no puede traer:
+                            el valor DEFAULT de cada columna, como mapa
+                            "TABLA.COLUMNA" -> expresion (campo `default` del modelo).
+
+      New-RsColumnaModelo   lo que la BD NO sabe y por tanto no puede volver a decir:
+                            la descripcion semantica y las marcas manuales de la politica
+                            PII (`pii` / `safe`). Los hooks reconstruyen cada columna desde
+                            cero en cada sincronizacion, asi que lo que no se copie a mano
+                            aqui se pierde.
+
+    Sin el campo `default` en el modelo, `installer-ddl.py` no puede emitirlo: el
+    <Proyecto>-CreacionTablas.sql del instalador sale con los tipos y los NOT NULL pero SIN
+    los valores por defecto, y en el cliente toda columna con DEFAULT queda a NULL en el
+    primer INSERT que no la nombre.
+
+    ⛔ Y sin New-RsColumnaModelo, una columna marcada a mano como `pii` volvia a salir EN
+    CLARO despues de cualquier resincronizacion del modelo, sin que nadie tocara nada y sin
+    ningun aviso. La politica PII se relajaba sola.
+
+.NOTES
+    POR QUE UNA PASADA APARTE, Y NO UNA COLUMNA MAS EN EL SELECT PRINCIPAL
+
+    En Oracle `ALL_TAB_COLS.DATA_DEFAULT` es de tipo LONG. Un LONG no se puede concatenar ni
+    pasar por REPLACE/TRIM/SUBSTR dentro de una sentencia SQL (ORA-00932/ORA-00997), y sacado
+    tal cual por sqlplus con `SET COLSEP '|'` arrastra sus saltos de linea a la salida: la fila
+    se parte en varias lineas y el troceo por '|' del hook llamante devuelve basura. En un
+    bloque PL/SQL, en cambio, una variable LONG se comporta como VARCHAR2(32760) y admite
+    REPLACE: los saltos se neutralizan ANTES de imprimir. De ahi el DBMS_OUTPUT con marcador,
+    el mismo patron que usa scripts/installer-objects.py para ALL_VIEWS.TEXT.
+
+    En SQL Server `COLUMN_DEFAULT` es nvarchar(4000) y no tendria ese problema, pero se extrae
+    igual en su propia pasada para que el hook llamante tenga UN solo camino de mezcla y las
+    consultas principales (que ya funcionan) no se toquen.
+
+    QUE NO SE DEVUELVE
+      - Columnas IDENTITY de Oracle: su DATA_DEFAULT es `"<ESQ>"."ISEQ$$_1234".nextval`, que no
+        es un DEFAULT reescribible — lo crea el propio CREATE TABLE de la columna identity.
+        Emitirlo produciria un DDL que apunta a una secuencia inexistente en el destino.
+      - Columnas virtuales y ocultas (VIRTUAL_COLUMN / HIDDEN_COLUMN): su "default" es la
+        expresion de la columna generada, no un valor por defecto.
+#>
+
+
+# Marcas que decide una persona, no la BD: no se pueden re-derivar de ALL_TAB_COLUMNS ni de
+# INFORMATION_SCHEMA, asi que una sincronizacion que no las copie las destruye.
+# `safe` va en la lista por el mismo motivo que `pii`, y ademas `safe: false` EQUIVALE a
+# `pii: true` (ver references/json-schema.md): por eso la comprobacion es por PRESENCIA de la
+# propiedad y nunca por su verdad — un `-not $col.safe` daria por ausente justo esa marca.
+$script:RsMarcasManuales = @('pii', 'safe')
+
+function ConvertTo-RsPkPosicion {
+    <#  Convierte a entero la columna de posicion de PK que devuelve el SELECT.
+
+        Tolerante a proposito: si el valor no es un numero (una fila de basura, una cabecera
+        que se colo) se devuelve 0 = "no es PK". Es preferible perder una marca de PK a
+        escribir un ordinal inventado, que reordenaria el indice de la clave en el DDL
+        entregado al cliente.  #>
+    param([string]$Valor)
+    $n = 0
+    if ([int]::TryParse("$Valor".Trim(), [ref]$n) -and $n -gt 0) { return $n }
+    return 0
+}
+
+function New-RsColumnaModelo {
+    <#  Construye la entrada de columna del model.json a partir de lo que devuelve la BD,
+        conservando de la columna anterior lo que la BD no conoce.
+
+        Devuelve SIEMPRE un objeto nuevo; no muta $Existente. Pasar $null en $Existente
+        (columna que no estaba en el modelo) es el caso normal, no un error.
+
+        -PkPosicion es la posicion DENTRO de la clave primaria (1, 2, 3...), 0 si la columna
+        no es PK. Se escribe el ordinal, no un booleano: ese orden es el del indice que
+        respalda la PK y no tiene por que coincidir con el orden de las columnas de la tabla.
+        ⛔ Y se escribe SIEMPRE, tambien cuando la PK es de una sola columna. El consumidor
+        (scripts/_dbmodel.py::pk_columns) solo ordena si detecta ordinales, y trata el `true`
+        como ordinal 0: una PK con la primera columna en `true` y la segunda en `2` se
+        ordenaria al reves. Mezclar las dos formas dentro de una tabla es peor que no tener
+        ninguna, asi que aqui es todo o nada.  #>
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Tipo,
+        [Parameter(Mandatory=$true)][bool]$Nullable,
+        [Parameter(Mandatory=$true)][int]$PkPosicion,
+        $Existente = $null
+    )
+
+    $nueva = [PSCustomObject]@{
+        type        = $Tipo
+        nullable    = $Nullable
+        pk          = $(if ($PkPosicion -gt 0) { $PkPosicion } else { $false })
+        description = ""
+        source      = "db"
+    }
+    if ($null -eq $Existente) { return $nueva }
+
+    if ($Existente.PSObject.Properties.Name -contains 'description') {
+        $nueva.description = "$($Existente.description)"
+    }
+    foreach ($marca in $script:RsMarcasManuales) {
+        if ($Existente.PSObject.Properties.Name -contains $marca) {
+            $nueva | Add-Member -NotePropertyName $marca -NotePropertyValue $Existente.$marca
+        }
+    }
+    return $nueva
+}
+
+# Marcador de linea de salida. Sirve para separar las filas utiles del banner de sqlplus/sqlcmd
+# y de cualquier aviso: se ignora todo lo que no empiece por el.
+$script:RsDefMark = '##DEF##'
+
+function ConvertTo-RsDefaultsMap {
+    <#  Parsea la salida marcada de cualquiera de los dos motores.
+        Formato por linea: ##DEF##<TABLA>|<COLUMNA>|<expresion>
+        La expresion puede contener '|' (p.ej. un literal 'A|B'), asi que el troceo es a 3
+        campos como maximo y el resto se queda entero en el ultimo.  #>
+    param([string[]]$Lineas)
+
+    $mapa = @{}
+    foreach ($ln in @($Lineas)) {
+        $s = "$ln".Trim()
+        if (-not $s.StartsWith($script:RsDefMark)) { continue }
+        $partes = $s.Substring($script:RsDefMark.Length) -split '\|', 3
+        if ($partes.Count -lt 3) { continue }
+        $tabla = $partes[0].Trim()
+        $col   = $partes[1].Trim()
+        $expr  = $partes[2].Trim()
+        if (-not $tabla -or -not $col -or -not $expr) { continue }
+        # NULL literal: Oracle guarda el texto 'NULL' cuando se declara DEFAULT NULL, que es
+        # exactamente lo mismo que no tener default. No merece la pena ensuciar el DDL con el.
+        if ($expr -eq 'NULL') { continue }
+        $mapa["$tabla.$col"] = $expr
+    }
+    return $mapa
+}
+
+function Get-RsColumnDefaults {
+    <#  Devuelve @{ ok = <bool>; error = <string>; defaults = @{ "TABLA.COL" = "expr" } }.
+
+        ⛔ Nunca lanza: que la BD no sepa dar los defaults no puede tumbar una sincronizacion
+        de modelo que, por lo demas, ha ido bien. El llamante avisa y sigue.  #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Motor,
+        [Parameter(Mandatory=$true)][string]$Esquema,
+        [Parameter(Mandatory=$true)][string]$DataSource,
+        [string]$Usuario = "",
+        [string]$Password = "",
+        [string[]]$Tablas = @()
+    )
+
+    $res = @{ ok = $false; error = ""; defaults = @{} }
+    $motorU = "$Motor".ToUpper()
+    $esq    = "$Esquema".ToUpper()
+
+    $tempSql = [System.IO.Path]::GetTempFileName() + ".sql"
+    $tempOut = [System.IO.Path]::GetTempFileName() + ".txt"
+
+    try {
+        if ($motorU -eq 'ORACLE') {
+            $filtroTablas = ""
+            if ($Tablas -and $Tablas.Count -gt 0) {
+                $lista = ($Tablas | ForEach-Object { "'" + ("$_".ToUpper().Replace("'","''")) + "'" }) -join ","
+                $filtroTablas = "       AND TABLE_NAME IN ($lista)`n"
+            }
+            $connect = if ($Password) { "CONNECT $Usuario/$Password@$DataSource`n" } else { "" }
+
+            # SUBSTR(...,1,3000) acota la linea de DBMS_OUTPUT (limite 32767) sin trocear nada
+            # real: un DEFAULT de mas de 3000 caracteres no existe en la practica, y si existiera
+            # es una expresion que hay que revisar a mano, no copiar a ciegas al instalador.
+            @"
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF VERIFY OFF TERMOUT ON
+SET LINESIZE 32767 TRIMSPOOL ON TRIMOUT ON
+SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
+$connect
+DECLARE
+  l_def LONG;
+BEGIN
+  FOR r IN (SELECT TABLE_NAME, COLUMN_NAME
+              FROM ALL_TAB_COLS
+             WHERE OWNER = '$esq'
+               AND DEFAULT_LENGTH IS NOT NULL
+               AND VIRTUAL_COLUMN = 'NO'
+               AND HIDDEN_COLUMN  = 'NO'
+$filtroTablas             ORDER BY TABLE_NAME, COLUMN_ID) LOOP
+    SELECT DATA_DEFAULT INTO l_def
+      FROM ALL_TAB_COLS
+     WHERE OWNER = '$esq' AND TABLE_NAME = r.TABLE_NAME AND COLUMN_NAME = r.COLUMN_NAME;
+    l_def := TRIM(REPLACE(REPLACE(l_def, CHR(13), ' '), CHR(10), ' '));
+    IF l_def IS NOT NULL AND INSTR(UPPER(l_def), 'ISEQ`$`$') = 0 THEN
+      DBMS_OUTPUT.PUT_LINE('$($script:RsDefMark)' || r.TABLE_NAME || '|' || r.COLUMN_NAME || '|' || SUBSTR(l_def, 1, 3000));
+    END IF;
+  END LOOP;
+END;
+/
+EXIT;
+"@ | Set-Content $tempSql -Encoding ASCII
+
+            sqlplus -S /nolog "@$tempSql" > $tempOut 2>&1
+            $salida = Get-Content $tempOut -ErrorAction SilentlyContinue
+        }
+        elseif ($motorU -eq 'SQLSERVER') {
+            $filtroTablas = ""
+            if ($Tablas -and $Tablas.Count -gt 0) {
+                $lista = ($Tablas | ForEach-Object { "'" + ("$_".ToUpper().Replace("'","''")) + "'" }) -join ","
+                $filtroTablas = "  AND UPPER(t.TABLE_NAME) IN ($lista)`n"
+            }
+            @"
+SET NOCOUNT ON;
+SELECT '$($script:RsDefMark)' + t.TABLE_NAME + '|' + c.COLUMN_NAME + '|'
+     + LTRIM(RTRIM(REPLACE(REPLACE(c.COLUMN_DEFAULT, CHAR(13), ' '), CHAR(10), ' ')))
+FROM INFORMATION_SCHEMA.TABLES t
+JOIN INFORMATION_SCHEMA.COLUMNS c
+  ON c.TABLE_NAME = t.TABLE_NAME AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+WHERE t.TABLE_TYPE = 'BASE TABLE'
+  AND c.COLUMN_DEFAULT IS NOT NULL
+$($filtroTablas)ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
+"@ | Set-Content $tempSql -Encoding ASCII
+
+            $previo = $env:SQLCMDPASSWORD
+            try {
+                $argumentos = @('-S', $DataSource, '-d', $Esquema, '-i', $tempSql, '-h', '-1', '-W', '-y', '0', '-Y', '0')
+                if ($Usuario) {
+                    $env:SQLCMDPASSWORD = $Password
+                    $argumentos += @('-U', $Usuario)
+                } else {
+                    $argumentos += '-E'
+                }
+                & sqlcmd @argumentos > $tempOut 2>&1
+            } finally {
+                if ($null -eq $previo) { Remove-Item Env:SQLCMDPASSWORD -ErrorAction SilentlyContinue }
+                else { $env:SQLCMDPASSWORD = $previo }
+            }
+            $salida = Get-Content $tempOut -ErrorAction SilentlyContinue
+        }
+        else {
+            $res.error = "Motor no soportado: $Motor"
+            return $res
+        }
+
+        $errLinea = @($salida | Where-Object { "$_".Trim() -match '^(ORA-|SP2-|PLS-|Msg\s+\d+)' } | Select-Object -First 1)
+        if ($errLinea.Count -gt 0) {
+            $res.error = "$($errLinea[0])".Trim()
+            return $res
+        }
+
+        $res.defaults = ConvertTo-RsDefaultsMap -Lineas $salida
+        $res.ok = $true
+        return $res
+    }
+    catch {
+        $res.error = $_.Exception.Message
+        return $res
+    }
+    finally {
+        Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
+    }
+}

@@ -176,9 +176,18 @@ Qué scripts se ejecutan y en qué orden lo decide **el manifiesto si existe, y 
 ## `scripts.json` (manifiesto, opcional)
 
 Si hay un `scripts.json` junto a los `.sql`, **manda sobre el descubrimiento por carpetas**: el
-orden es el declarado, no el alfabético. Lo genera `/rs-actualizador` —es quien tiene orden
-significativo y ya pregunta al usuario por las dependencias entre scripts—; `/rs-instalador` no lo
-genera porque su orden es estructural. Formato en `assets\instalacion\scripts.json.tpl`:
+orden es el declarado, no el alfabético. Lo generan **los dos** modos, por motivos distintos:
+
+- **`/rs-actualizador`** lo escribe el agente: es quien tiene orden significativo y ya pregunta al
+  usuario por las dependencias entre scripts.
+- **`/rs-instalador`** lo escribe `hooks\instalacion-paquete.ps1` a partir de lo que hay realmente
+  en `Scripts\`. Su orden es estructural, pero eso no quiere decir que se pueda deducir: el
+  descubrimiento por carpetas ordena **por nombre**, y con los ficheros de objetos en la carpeta eso
+  deja `02-Vistas` y `05-Triggers` ANTES que `CreacionTablas` (los triggers revientan sobre tablas
+  que aún no existen y, al ser fail-fast, la instalación aborta) y vuelve a ejecutar el maestro
+  `CreacionObjetos.sql`, que ya encadena a todos los demás.
+
+Formato en `assets\instalacion\scripts.json.tpl`:
 
 ```json
 { "scripts": [
@@ -193,6 +202,7 @@ genera porque su orden es estructural. Formato en `assets\instalacion\scripts.js
 |-------|--------|
 | `ruta` | obligatorio, relativa a la carpeta de scripts (admite `/` o `\`) |
 | `opcional` | si falta en disco, avisa y continúa. Por defecto `false` |
+| `ejecutar` | `false` = el fichero viaja en el paquete y **no** se ejecuta. Para los maestros que encadenan a otros (`<Proyecto>-CreacionObjetos.sql`, `Inserts\_run_all.sql`): sirven para lanzarlo todo a mano desde una sesión, pero ejecutarlos *además* crearía cada objeto y cada fila dos veces. Declararlos así evita también el aviso de "presente en disco y no declarado", que en su caso sería ruido; y su ausencia en disco no cuenta como entrega incompleta, porque nadie iba a lanzarlos |
 | `entorno` | solo se ejecuta si coincide con `-Entorno` |
 | `purga` | solo con `-Recargar`, y va antes que el resto |
 

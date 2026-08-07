@@ -281,6 +281,42 @@ Describe "Get-RsScriptsManifiesto: el manifiesto manda, y avisa de lo que no cua
         @($r.scripts)[0].Name | Should -BeExactly "10-PARAM.sql"
     }
 
+    It "ejecutar:false declara el fichero pero NO lo ejecuta, y no lo da por colado" {
+        # Los maestros (<Proyecto>-CreacionObjetos.sql, Inserts\_run_all.sql) encadenan a los
+        # demas: viajan en el paquete para poder lanzarlo todo a mano, pero ejecutarlos ADEMAS
+        # crearia cada objeto y cada fila dos veces.
+        New-SqlPrueba $script:dir "a.sql"       | Out-Null
+        New-SqlPrueba $script:dir "maestro.sql" | Out-Null
+        $m = New-ManifiestoPrueba $script:dir '{ "scripts": [ { "ruta": "a.sql" }, { "ruta": "maestro.sql", "ejecutar": false } ] }'
+        $r = Get-RsScriptsManifiesto -RutaManifiesto $m -DirScripts $script:dir -Entorno "PROD" -IncluirPurga $false
+        $r.errores.Count      | Should -Be 0
+        @($r.scripts).Count   | Should -Be 1
+        @($r.scripts)[0].Name | Should -BeExactly "a.sql"
+        # Declarado => no puede salir como "presente en disco y NO declarado"
+        ($r.avisos -join ' ') | Should -Not -Match 'maestro\.sql'
+    }
+
+    It "ejecutar:false ausente en disco no es una entrega incompleta" {
+        # Nadie lo iba a lanzar, asi que su ausencia no puede abortar la instalacion.
+        New-SqlPrueba $script:dir "a.sql" | Out-Null
+        $m = New-ManifiestoPrueba $script:dir '{ "scripts": [ { "ruta": "a.sql" }, { "ruta": "nohay.sql", "ejecutar": false } ] }'
+        $r = Get-RsScriptsManifiesto -RutaManifiesto $m -DirScripts $script:dir -Entorno "PROD" -IncluirPurga $false
+        $r.errores.Count    | Should -Be 0
+        @($r.scripts).Count | Should -Be 1
+    }
+
+    It "un declarado en subcarpeta no se avisa como no declarado" {
+        # Regresion: las rutas declaradas se normalizan a '\' y las de disco traen el separador
+        # del sistema. Sin normalizar los dos lados, TODA ruta con subcarpeta (Inserts\...,
+        # PorEntorno\...) salia como "presente en disco y NO declarado" fuera de Windows —
+        # justo las que genera el manifiesto de una instalacion limpia.
+        New-SqlPrueba $script:dir "Inserts\RIDIOMAS.sql" | Out-Null
+        $m = New-ManifiestoPrueba $script:dir '{ "scripts": [ { "ruta": "Inserts/RIDIOMAS.sql" } ] }'
+        $r = Get-RsScriptsManifiesto -RutaManifiesto $m -DirScripts $script:dir -Entorno "PROD" -IncluirPurga $false
+        @($r.scripts).Count   | Should -Be 1
+        ($r.avisos -join ' ') | Should -Not -Match 'RIDIOMAS'
+    }
+
     It "un scripts.json que no parsea es error, no una lista vacia silenciosa" {
         $m = New-ManifiestoPrueba $script:dir '{ esto no es json'
         $r = Get-RsScriptsManifiesto -RutaManifiesto $m -DirScripts $script:dir -Entorno "PROD" -IncluirPurga $false

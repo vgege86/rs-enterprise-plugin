@@ -198,6 +198,75 @@ if ($modo -eq 'Instalacion') {
             $copiados += "Scripts\PorEntorno\99-RVERSIONES-$e.sql ($mEnt, $($lista.Count) soluciones)"
         }
     }
+
+    # --- 3c. Manifiesto scripts.json: fija el ORDEN de ejecucion en el cliente ---
+    # Sin manifiesto, Ejecutar-Scripts.ps1 descubre los .sql por convencion y los ordena POR
+    # NOMBRE. Con los ficheros de objetos en la carpeta eso es un orden equivocado, no solo
+    # feo: "<P>-02-Vistas.sql" y "<P>-05-Triggers.sql" caen ANTES que "<P>-CreacionTablas.sql",
+    # asi que el CREATE TRIGGER se lanza sobre tablas que aun no existen (ORA-00942 / Msg 4902)
+    # y, como la ejecucion es fail-fast, la instalacion aborta ahi. Ademas el maestro
+    # "<P>-CreacionObjetos.sql" tambien casaba con el comodin y volvia a crearlo todo.
+    $manifiesto = @()
+    $faltanObj  = @()
+
+    foreach ($f in @(Get-ChildItem $scriptsDir -Filter '00-*.sql' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $manifiesto += [ordered]@{ ruta = $f.Name }
+    }
+
+    # Orden de dependencias: secuencias -> tablas+indices -> vistas -> funciones ->
+    # procedimientos -> triggers -> sinonimos. Es el mismo que declara el maestro.
+    $ordenObjetos = @(
+        "$proyecto-01-Secuencias.sql",
+        "$proyecto-CreacionTablas.sql",
+        "$proyecto-02-Vistas.sql",
+        "$proyecto-03-Funciones.sql",
+        "$proyecto-04-Procedimientos.sql",
+        "$proyecto-05-Triggers.sql",
+        "$proyecto-06-Sinonimos.sql"
+    )
+    foreach ($n in $ordenObjetos) {
+        if (Test-Path (Join-Path $scriptsDir $n)) { $manifiesto += [ordered]@{ ruta = $n } }
+        else { $faltanObj += $n }
+    }
+
+    # Maestros: viajan, no se ejecutan (los encadenan a ellos; ejecutarlos duplicaria todo).
+    foreach ($m in @("$proyecto-CreacionObjetos.sql", "Inserts\_run_all.sql")) {
+        if (Test-Path (Join-Path $scriptsDir $m)) {
+            $manifiesto += [ordered]@{
+                ruta      = $m.Replace('\','/')
+                ejecutar  = $false
+                _nota     = "Encadena a los demas ficheros; se entrega para poder lanzarlo a mano, no se ejecuta aqui."
+            }
+        }
+    }
+
+    $insDir = Join-Path $scriptsDir "Inserts"
+    foreach ($f in @(Get-ChildItem $insDir -Filter '*.sql' -File -ErrorAction SilentlyContinue |
+                     Where-Object { -not $_.Name.StartsWith('_') } | Sort-Object Name)) {
+        $manifiesto += [ordered]@{ ruta = "Inserts/$($f.Name)" }
+    }
+
+    $porEntDir2 = Join-Path $scriptsDir "PorEntorno"
+    foreach ($f in @(Get-ChildItem $porEntDir2 -Filter '99-RVERSIONES-*.sql' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $ent2 = [IO.Path]::GetFileNameWithoutExtension($f.Name) -replace '^99-RVERSIONES-', ''
+        $manifiesto += [ordered]@{ ruta = "PorEntorno/$($f.Name)"; entorno = $ent2 }
+    }
+
+    [ordered]@{
+        _comentario = "Orden de ejecucion de los .sql de este paquete. MANDA sobre el descubrimiento por carpetas de Ejecutar-Scripts.ps1. Generado por instalacion-paquete.ps1 a partir de lo que hay realmente en Scripts\."
+        _orden      = "RVERSIONES (DDL) -> secuencias -> tablas+indices -> vistas -> funciones -> procedimientos -> triggers -> sinonimos -> inserts parametricos -> fila base de RVERSIONES del entorno"
+        scripts     = @($manifiesto)
+    } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $scriptsDir "scripts.json") -Encoding UTF8
+    $copiados += "Scripts\scripts.json ($($manifiesto.Count) entradas, orden de dependencias)"
+
+    if ($faltanObj.Count -gt 0) {
+        Write-Host ""
+        Write-Host "AVISO: el paquete NO lleva $($faltanObj.Count) de los ficheros de objetos esperados:"
+        $faltanObj | ForEach-Object { Write-Host "         Scripts\$_" }
+        Write-Host "       Vistas, funciones, procedimientos, triggers o sinonimos faltarian en el"
+        Write-Host "       cliente. Repetir la etapa de scripts (installer-scripts.ps1 -Solo objetos)"
+        Write-Host "       antes de entregar."
+    }
 }
 
 # --- 4. readme.txt (esqueleto; el agente lo sobreescribe con el contenido real) ---

@@ -13,6 +13,9 @@ from datetime import datetime
 # Mapeo de tipos Oracle ⇄ SQL Server: fuente única en scripts/_dbtypes.py (antes duplicado aquí
 # y en installer-ddl.py). Los scripts corren con scripts/ en sys.path → import directo.
 from _dbtypes import adapt_type, ensure_oracle_char_semantics
+# pk_columns / column_default: fuente única en scripts/_dbmodel.py, compartida con
+# installer-ddl.py. Antes aquí se listaba la PK sin ordenar por su posición real.
+from _dbmodel import pk_columns, column_default
 
 
 def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str) -> str:
@@ -21,7 +24,9 @@ def generate_create_table(table_name: str, table_def: dict, engine: str, model_e
     lines.append(f"CREATE TABLE {table_name} (")
 
     cols = table_def.get('columns', {})
-    pk_cols = [c for c, d in cols.items() if d.get('pk')]
+    # ⛔ Por posición real dentro de la PK, no por orden de declaración de la columna: ese
+    # orden es el del índice que respalda la clave, y cambiarlo pierde los accesos por prefijo.
+    pk_cols = pk_columns(table_def)
     # (definicion, comentario) — el comentario NUNCA se concatena antes de la coma:
     # "COL TIPO NOT NULL -- texto," deja la coma dentro del comentario y el CREATE TABLE
     # se queda sin separador de columnas (ORA-00907 en Oracle; error de sintaxis en SQL Server).
@@ -32,8 +37,13 @@ def generate_create_table(table_name: str, table_def: dict, engine: str, model_e
         if engine == 'ORACLE':
             col_type = ensure_oracle_char_semantics(col_type)
         nullable = "" if col_def.get('nullable', True) else " NOT NULL"
+        # DEFAULT entre el tipo y el NOT NULL — el unico orden valido en los dos motores.
+        # Solo se inlinea si el destino es el motor del modelo: un default es una EXPRESION
+        # (SYSDATE / getdate() / ((0))), no un tipo, y adapt_type no lo traduce.
+        default = column_default(col_def) if engine == model_engine else ""
+        default_sql = f" DEFAULT {default}" if default else ""
         desc = f"  -- {col_def['description']}" if col_def.get('description') else ""
-        col_lines.append((f"    {col_name} {col_type}{nullable}", desc))
+        col_lines.append((f"    {col_name} {col_type}{default_sql}{nullable}", desc))
 
     if pk_cols:
         col_lines.append((f"    CONSTRAINT PK_{table_name} PRIMARY KEY ({', '.join(pk_cols)})", ""))

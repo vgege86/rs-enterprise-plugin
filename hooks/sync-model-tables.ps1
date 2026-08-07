@@ -23,6 +23,7 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
+. (Join-Path $hooksDir "lib-dbmodel.ps1")
 
 # Config BD
 $configJson = & "$hooksDir\get-config.ps1" $Workspace | ConvertFrom-Json
@@ -79,11 +80,13 @@ SELECT t.TABLE_NAME,
            ELSE ''
        END AS FULL_TYPE,
        c.NULLABLE,
-       CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'Y' ELSE 'N' END AS IS_PK
+       NVL(pk.POSITION, 0) AS PK_POS
 FROM ALL_TABLES t
 JOIN ALL_TAB_COLUMNS c ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
 LEFT JOIN (
-    SELECT cc.TABLE_NAME, cc.COLUMN_NAME
+    -- POSITION = orden de la columna DENTRO de la clave primaria. No es lo mismo que
+    -- COLUMN_ID (orden en la tabla) y es el que manda: es el del indice que respalda la PK.
+    SELECT cc.TABLE_NAME, cc.COLUMN_NAME, cc.POSITION
     FROM ALL_CONSTRAINTS con
     JOIN ALL_CONS_COLUMNS cc ON cc.CONSTRAINT_NAME = con.CONSTRAINT_NAME AND cc.OWNER = con.OWNER
     WHERE con.CONSTRAINT_TYPE = 'P' AND con.OWNER = '$schemaFilter'
@@ -103,7 +106,7 @@ EXIT;
         $colName   = $parts[1].Trim()
         $colType   = $parts[2].Trim()
         $nullable  = $parts[3].Trim() -eq 'Y'
-        $isPk      = $parts[4].Trim() -eq 'Y'
+        $pkPos     = ConvertTo-RsPkPosicion $parts[4]
         if (-not $tableName -or -not $colName) { continue }
         $found[$tableName] = $true
 
@@ -117,17 +120,14 @@ EXIT;
             })
         }
 
-        $existingDesc = ""
+        # Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1.
+        $existingCol = $null
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
+            $existingCol = $model.tables.$tableName.columns.$colName
         }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        })
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -PkPosicion $pkPos -Existente $existingCol
+        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 
 } elseif ($motor -eq "SQLSERVER") {
@@ -145,15 +145,20 @@ SELECT
         ELSE ''
     END AS FULL_TYPE,
     c.IS_NULLABLE,
-    CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES' ELSE 'NO' END AS IS_PK
+    ISNULL(pk.ORDINAL_POSITION, 0) AS PK_POS
 FROM INFORMATION_SCHEMA.TABLES t
 JOIN INFORMATION_SCHEMA.COLUMNS c ON c.TABLE_NAME = t.TABLE_NAME AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
 LEFT JOIN (
-    SELECT ku.TABLE_NAME, ku.COLUMN_NAME
+    -- ORDINAL_POSITION de KEY_COLUMN_USAGE = orden de la columna DENTRO de la constraint,
+    -- no dentro de la tabla. El schema entra en los dos JOIN: sin el, dos tablas homonimas
+    -- en schemas distintos se cruzaban entre si y duplicaban filas.
+    SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME, ku.ORDINAL_POSITION
     FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON ku.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+      ON ku.CONSTRAINT_NAME = tc.CONSTRAINT_NAME AND ku.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
     WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
 ) pk ON pk.TABLE_NAME = c.TABLE_NAME AND pk.COLUMN_NAME = c.COLUMN_NAME
+    AND pk.TABLE_SCHEMA = c.TABLE_SCHEMA
 WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_NAME IN ($tableInList)
 ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 "@ | Set-Content $tempSql -Encoding ASCII
@@ -175,7 +180,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
         $colName   = $parts[1].Trim()
         $colType   = $parts[2].Trim()
         $nullable  = $parts[3].Trim() -eq 'YES'
-        $isPk      = $parts[4].Trim() -eq 'YES'
+        $pkPos     = ConvertTo-RsPkPosicion $parts[4]
         if (-not $tableName -or -not $colName) { continue }
         $found[$tableName] = $true
 
@@ -189,17 +194,14 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
             })
         }
 
-        $existingDesc = ""
+        # Lo que la BD no conoce (description, marcas pii/safe) lo conserva
+        # New-RsColumnaModelo — ver hooks\lib-dbmodel.ps1.
+        $existingCol = $null
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
+            $existingCol = $model.tables.$tableName.columns.$colName
         }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
-            type        = $colType
-            nullable    = $nullable
-            pk          = $isPk
-            description = $existingDesc
-            source      = "db"
-        })
+        $newCol = New-RsColumnaModelo -Tipo $colType -Nullable $nullable -PkPosicion $pkPos -Existente $existingCol
+        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 } else {
     Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
@@ -207,6 +209,27 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 }
 
 Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
+
+# --- Valores DEFAULT de las tablas pedidas (pasada aparte: en Oracle DATA_DEFAULT es LONG) ---
+# Sin este campo, installer-ddl.py no puede emitir el DEFAULT en el CREATE TABLE del instalador.
+# Un fallo aqui no invalida la sincronizacion: se avisa en la salida y se sigue.
+$defaultsCount = 0
+$defaultsAviso = ""
+$defRes = Get-RsColumnDefaults -Motor $motor -Esquema $schema -DataSource $dataSource `
+                               -Usuario $user -Password $password -Tablas $requestedTables
+if ($defRes.ok) {
+    foreach ($clave in @($defRes.defaults.Keys)) {
+        $partes = $clave -split '\.', 2
+        if ($partes.Count -lt 2) { continue }
+        if (-not ($model.tables | Get-Member -Name $partes[0])) { continue }
+        if (-not ($model.tables.$($partes[0]).columns | Get-Member -Name $partes[1])) { continue }
+        $model.tables.$($partes[0]).columns.$($partes[1]) |
+            Add-Member -Force -NotePropertyName 'default' -NotePropertyValue $defRes.defaults[$clave]
+        $defaultsCount++
+    }
+} else {
+    $defaultsAviso = "no se pudieron leer los valores DEFAULT: $($defRes.error)"
+}
 
 $updated  = @($requestedTables | Where-Object { $found.ContainsKey($_) })
 $notInDb  = @($requestedTables | Where-Object { -not $found.ContainsKey($_) })
@@ -222,5 +245,7 @@ Move-Item $tmpPath $modelPath -Force
     model_path = $modelPath
     updated    = $updated
     not_in_db  = $notInDb
+    defaults   = $defaultsCount
+    warning    = $defaultsAviso
     message    = if ($updated.Count -gt 0) { "Modelo actualizado para: $($updated -join ', ')" } else { "Sin cambios -- tablas no encontradas en BD: $($notInDb -join ', ')" }
 } | ConvertTo-Json -Depth 3

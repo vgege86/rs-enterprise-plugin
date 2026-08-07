@@ -12,9 +12,13 @@
       - Inserts\<TABLA>.sql             (un fichero por tabla paramétrica)
 
     Delega en los scripts Python del plugin:
-      scripts\installer-ddl.py      (tablas + índices desde el model.json — no toca BD)
+      scripts\installer-ddl.py      (tablas + índices + valores DEFAULT desde el model.json
+                                     — no toca BD. Los DEFAULT salen del campo `default` de
+                                     cada columna, que rellena hooks\sync-from-db.ps1: un
+                                     modelo sincronizado antes de eso los deja a NULL)
       scripts\installer-objects.py  (secuencias/vistas/funciones/procs/triggers/sinónimos
-                                     desde la BD viva — no están en el model.json)
+                                     desde la BD viva — no están en el model.json.
+                                     ORACLE vía diccionario ALL_*, SQLSERVER vía sys.*)
       scripts\installer-inserts.py  (inserts por tabla paramétrica, vista "Parametricas")
 
     RENDIMIENTO
@@ -62,6 +66,13 @@ New-Item -ItemType Directory -Path $insertsDir -Force | Out-Null
 $avisos  = $false
 $cfgTmp  = ""
 $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
+
+# Los seis tipos de objeto, por nombre. El inventario final los recorre UNO A UNO y marca el
+# que falte: antes era un Get-ChildItem con comodín y, si no se había generado ninguno, el
+# listado salía vacío y el resumen decía "OK" igual — las vistas y los procedimientos podían
+# faltar del paquete entero sin que nada lo dijera.
+$tiposObjeto = @("01-Secuencias","02-Vistas","03-Funciones","04-Procedimientos","05-Triggers","06-Sinonimos")
+$faltanObj   = @()
 if ($Solo -ne "todo") { Write-Host "Regeneración selectiva: $Solo" }
 
 try {
@@ -122,8 +133,16 @@ try {
     Write-Host "`nOK — Scripts en $outScripts  ($([math]::Round($swTotal.Elapsed.TotalSeconds,1))s)"
     if (Test-Path $ddlOut)  { Write-Host "   Tablas/índices: $ddlOut" }
     if (Test-Path $maestro) { Write-Host "   Maestro objetos: $maestro" }
-    foreach ($f in (Get-ChildItem $outScripts -Filter "$proyecto-0*.sql" -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
-        Write-Host ("   {0} ({1:N0} bytes)" -f $f.Name, $f.Length)
+    foreach ($t in $tiposObjeto) {
+        $nombre = "$proyecto-$t.sql"
+        $f = Join-Path $outScripts $nombre
+        if (Test-Path $f) { Write-Host ("   {0} ({1:N0} bytes)" -f $nombre, (Get-Item $f).Length) }
+        else { Write-Host "   $nombre  AUSENTE"; $faltanObj += $nombre }
+    }
+    if ($faltanObj.Count -gt 0 -and ($Solo -eq "todo" -or $Solo -eq "objetos")) {
+        Write-Host "AVISO: faltan $($faltanObj.Count) fichero(s) de objetos — el paquete iría sin ellos."
+        Write-Host "       Repetir con -Solo objetos y revisar el error de arriba."
+        $avisos = $true
     }
     Write-Host "   Inserts: $nIns ficheros en $insertsDir"
     if ($avisos) { exit 2 }
