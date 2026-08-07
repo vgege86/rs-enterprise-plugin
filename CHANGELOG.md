@@ -1,5 +1,43 @@
 # RS Enterprise Agent — Changelog
 
+## 3.11.0 — 2026-08-07
+
+### El marketplace deja de publicar un solo plugin: entra `rs-validador`
+
+Hasta ahora `marketplace.json` declaraba un único plugin con `source: "./"` — el repo *era* el
+plugin. A partir de esta versión el marketplace publica **dos**, y el repo gana una carpeta
+`plugins/` para los que no son la raíz.
+
+El primero en entrar es **`rs-validador` 1.0.0**: desarrollo, mantenimiento y documentación de la
+herramienta de validación de ficheros (Python/FastAPI + HTML/JS) con la que se definen las
+estructuras de entrada, se valida lo que manda el cliente y se generan los scripts SQL de
+configuración de uCollect. Su changelog propio está en `plugins/rs-validador/CHANGELOG.md`.
+
+#### Por qué un plugin aparte y no unas skills más aquí
+
+`rs-enterprise-agent` gira entero alrededor de una `.sln`: resolución de solución, `get_scope`,
+`compile_check`, DALCs, modelo BD del workspace. Nada de eso aplica a una app Python sin solución ni
+compilador. Mezclarlos habría metido triggers de una herramienta en el descriptor de la otra y atado
+sus versiones. Compartiendo marketplace se instalan y se actualizan por separado:
+
+```
+/plugin install rs-validador@rs-enterprise-agent
+```
+
+#### Lo que esto cambia en el propio repo
+
+- `marketplace.json` pasa a tener dos entradas; la del plugin raíz mantiene `source: "./"` y la
+  nueva apunta a `./plugins/rs-validador`. La descripción del marketplace ya no describe solo al
+  agente C#.
+- `docs/plugin-architecture.md` documenta la carpeta `plugins/`, el marketplace multi-plugin y un
+  patrón de extensión nuevo (§9.5: cómo se añade un plugin adicional), con su fila en la checklist
+  de sincronización del §10.
+
+No cambia nada del pipeline, de los agentes ni de las tools MCP de `rs-enterprise-agent`.
+
+Ficheros: `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `README.md`,
+`docs/plugin-architecture.md`, y el árbol nuevo `plugins/rs-validador/`.
+
 ## 3.10.1 — 2026-08-07
 
 ### El README y el doc de arquitectura no contaban lo de la 3.10.0, y el catálogo llevaba mal la cuenta
