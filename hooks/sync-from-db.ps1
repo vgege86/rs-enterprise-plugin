@@ -26,6 +26,7 @@ trap {
 # --- Leer configuracion BD desde docs\.rs-databases.json ---
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
+. (Join-Path $hooksDir "lib-dbdefaults.ps1")
 
 $Workspace = Resolve-RsWorkspace $Workspace
 
@@ -186,6 +187,14 @@ EXIT;
             description = $existingDesc
             source      = "db"
         }
+        # `pii` / `safe` son marcas MANUALES que la BD no conoce. Al reconstruir la columna
+        # desde cero se borraban en cada sync, y la politica PII se relajaba en silencio: una
+        # columna marcada a mano volvia a salir en claro sin que nadie tocara nada.
+        foreach ($marca in @('pii','safe')) {
+            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
+                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
+            }
+        }
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol
     }
@@ -264,11 +273,45 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
             description = $existingDesc
             source      = "db"
         }
+        # `pii` / `safe` son marcas MANUALES que la BD no conoce. Al reconstruir la columna
+        # desde cero se borraban en cada sync, y la politica PII se relajaba en silencio: una
+        # columna marcada a mano volvia a salir en claro sin que nadie tocara nada.
+        foreach ($marca in @('pii','safe')) {
+            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
+                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
+            }
+        }
         $entry.obj.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
         $entry.cols[$colName] = $newCol
     }
 } else {
     throw "Motor no soportado: $motor (esperado: ORACLE o SQLSERVER)"
+}
+
+# --- Valores DEFAULT de columna (pasada aparte) ---
+# En Oracle DATA_DEFAULT es LONG y no se puede concatenar ni limpiar dentro del SELECT
+# principal (ver hooks/lib-dbdefaults.ps1). Sin este campo en el modelo,
+# scripts/installer-ddl.py no puede emitirlo y el <Proyecto>-CreacionTablas.sql del
+# instalador sale sin valores por defecto: en el cliente, toda columna con DEFAULT queda a
+# NULL en el primer INSERT que no la nombre.
+# ⛔ No es fatal: un fallo aqui deja el modelo sin defaults, no lo corrompe. Se avisa y se sigue.
+$defaultsCount = 0
+$defaultsAviso = ""
+$defRes = Get-RsColumnDefaults -Motor $motor -Esquema $(if ($motor -eq "ORACLE") { $schema } else { $database }) `
+                               -DataSource $dataSource -Usuario $user -Password $password
+if ($defRes.ok) {
+    foreach ($clave in @($defRes.defaults.Keys)) {
+        $partes = $clave -split '\.', 2
+        if ($partes.Count -lt 2) { continue }
+        $entry = $tblIdx[$partes[0]]
+        if (-not $entry) { continue }
+        $col = $entry.cols[$partes[1]]
+        if (-not $col) { continue }
+        $col | Add-Member -Force -NotePropertyName 'default' -NotePropertyValue $defRes.defaults[$clave]
+        $defaultsCount++
+    }
+} else {
+    $defaultsAviso = "no se pudieron leer los valores DEFAULT: $($defRes.error)"
 }
 
 # --- Guardar JSON actualizado (escritura atómica: tmp → rename) ---
@@ -286,6 +329,8 @@ $tableCount = ($model.tables | Get-Member -MemberType NoteProperty).Count
     motor       = $motor
     schema      = if ($motor -eq "ORACLE") { $schema } else { $database }
     table_count = $tableCount
+    defaults    = $defaultsCount
+    warning     = $defaultsAviso
     model_path  = $modelPath
     updated_at  = $model.updated_at
 } | ConvertTo-Json

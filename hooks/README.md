@@ -44,9 +44,9 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `batch-centralizar.ps1 <workspace> [-Aplicar]` | Informe (JSON, no escribe) de si la configuración de los batch está centralizada — `Batch\App.Batch.config` + `Batch\Directory.Build.targets` — y con `-Aplicar` la centraliza. Convención: `references/batch-config.md`. Tool MCP equivalente **solo del informe**: `check_batch_config` |
 | `installer-agendaweb.ps1 <workspace> <destino>` | Publish FileSystem de la Agenda Web → `<destino>\AgendaWeb` |
 | `installer-servicemanager.ps1 <workspace> <destino>` | `dotnet publish` host net8 + DLL de módulos → `<destino>\ServiceManager[\Modulos]` |
-| `installer-scripts.ps1 <workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <;-sep>]` | DDL + objetos + inserts paramétricas → `<destino>\Scripts`. Config de BD resuelta una vez (`RS_DB_CONFIG_JSON`, sin password); `-Solo`/`-Tablas` para regenerar solo una parte tras un fallo puntual |
+| `installer-scripts.ps1 <workspace> <destino> [-Solo todo\|ddl\|objetos\|inserts] [-Tablas <;-sep>]` | DDL (con valores DEFAULT) + objetos + inserts paramétricas → `<destino>\Scripts`. Inventario final con los seis ficheros de objetos, `AUSENTE` el que falte. Config de BD resuelta una vez (`RS_DB_CONFIG_JSON`, sin password); `-Solo`/`-Tablas` para regenerar solo una parte tras un fallo puntual |
 | `actualizador-build.ps1 <workspace> <destino> <manifiesto.json>` | Delta: batch afectados + AgendaWeb completa + DLL de módulos afectados; excluye la config funcional del cliente (`web.config`, `<proceso>.xml`, `appsettings*.json`) y conserva los `*.config` del binario. El `<proceso>.xml` sale por nombre coincidente con un `.exe` **o** por declaración en `batch_config` del JSON (procesos que reciben la ruta de su XML por línea de comandos) |
-| `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor] [-Soluciones <;-sep>]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`); en `Instalacion`, además el DDL de `RVERSIONES` y `Scripts\PorEntorno\99-RVERSIONES-<E>.sql` por entorno. ⛔ `scripts.json.tpl` **no** se copia: es la referencia del formato del manifiesto, lo escribe `/rs-actualizador` con nombres reales |
+| `instalacion-paquete.ps1 <workspace> <destino> <Instalacion\|Actualizacion> [entorno] [motor] [-Soluciones <;-sep>]` | `Instalar.ps1` + `Ejecutar-Scripts.ps1` + `rutas.json` + `readme.txt` (plantillas de `assets\instalacion\`); en `Instalacion`, además el DDL de `RVERSIONES`, `Scripts\PorEntorno\99-RVERSIONES-<E>.sql` por entorno y el manifiesto `Scripts\scripts.json` con el orden de dependencias. ⛔ `scripts.json.tpl` **no** se copia: es la referencia del formato del manifiesto, lo escribe `/rs-actualizador` con nombres reales |
 
 ### Análisis y scope
 | Script | Uso |
@@ -65,10 +65,11 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | Script | Uso |
 |--------|-----|
 | `get-config.ps1 <workspace>` | Lee .rs-databases.json → motor, datasource, schema, conexiones[], motores[] |
+| `lib-dbdefaults.ps1` | Librería, no se invoca directamente — `Get-RsColumnDefaults` (valor DEFAULT por columna, mapa `TABLA.COLUMNA`). Pasada aparte porque en Oracle `DATA_DEFAULT` es LONG y no se puede tratar en SQL. Mismo patrón que `lib-dbconfig.ps1` |
 | `lib-dbconfig.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Get-CsPart`, `Read-RsDatabases`, `Resolve-RsWorkspace`, `Get-RsProyecto`) |
 | `lib-deploy-gates.ps1` | Librería, no se invoca directamente — gates de carpeta de despliegue batch (`Test-RsCoherenciaBuild`, `Test-RsBindingRedirects`, `Test-RsOdpDependencies`, `Get-RsDllConfigHuerfanos`). Deciden y devuelven; los `Write-Host` y los `exit` se quedan en `installer-batch.ps1`. Mismo patrón que `lib-dbconfig.ps1` |
 | `convert-config.ps1 <workspace> [-Force]` | Convierte `XMLConfig.xml` → `.rs-databases.json`. No borra el XML |
-| `sync-from-db.ps1 <workspace>` | Sincroniza modelo completo desde BD |
+| `sync-from-db.ps1 <workspace>` | Sincroniza modelo completo desde BD, incluidos los valores `default` de columna; preserva las marcas `pii`/`safe` |
 | `compare-model.ps1 <workspace>` | Diff model.json vs esquema real BD |
 | `generate-migration.ps1 <workspace>` | CREATE TABLE / ALTER TABLE ADD desde drift modelo→BD |
 | `sync-model-tables.ps1 <workspace> <tablas>` | Actualiza tablas específicas model.json (post-migración) |

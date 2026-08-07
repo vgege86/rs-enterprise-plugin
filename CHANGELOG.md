@@ -1,5 +1,136 @@
 # RS Enterprise Agent — Changelog
 
+## 3.9.0 — 2026-08-07
+
+### El instalador entregaba tablas y nada más: sin vistas, sin procedimientos y sin valores por defecto
+
+Reportado desde un cliente. Las tres ausencias tienen causas distintas y una cosa en común: **ninguna
+daba error**. El paquete se generaba, la etapa se reportaba OK, y el agujero aparecía en el servidor
+del cliente, al usar la aplicación.
+
+#### 1. Valores DEFAULT — el modelo nunca los tuvo
+
+`installer-ddl.py` construye el `CREATE TABLE` desde `BD\<proyecto>-model.json`, y ese modelo **no
+tenía dónde guardar un default**: ni `sync-from-db.ps1` ni `sync-model-tables.ps1` leían
+`DATA_DEFAULT` (Oracle) / `COLUMN_DEFAULT` (SQL Server), y `references/json-schema.md` no declaraba el
+campo. No es que se perdiera por el camino: no se capturaba nunca. En el cliente, toda columna con
+valor por defecto quedaba a NULL en el primer `INSERT` que no la nombrara — sin error, se descubre
+consultando.
+
+Ahora la columna admite `default` y lo rellena la nueva librería **`hooks/lib-dbdefaults.ps1`**, en
+una pasada aparte del `SELECT` principal. Lo de la pasada aparte no es gratuito: en Oracle
+`ALL_TAB_COLS.DATA_DEFAULT` es de tipo **LONG**, que no se puede concatenar ni pasar por
+`REPLACE`/`TRIM` dentro de una sentencia SQL, y sacado tal cual por sqlplus con `SET COLSEP '|'`
+arrastra sus saltos de línea y parte la fila. Dentro de un bloque PL/SQL, en cambio, una variable
+LONG se comporta como `VARCHAR2(32760)` y admite `REPLACE`: los saltos se neutralizan **antes** de
+imprimir. Es el mismo patrón que ya usaba `installer-objects.py` para `ALL_VIEWS.TEXT`.
+
+Se descartan a propósito tres cosas que no son defaults reescribibles: las secuencias de columnas
+IDENTITY (`ISEQ$$`, las crea el propio `CREATE TABLE`), las columnas virtuales y ocultas (su
+"default" es la expresión de la columna generada) y `DEFAULT NULL` (equivale a no tener default).
+
+El `DEFAULT` se emite **entre el tipo y el `NOT NULL`** — `COL TIPO DEFAULT x NOT NULL` — que es el
+único orden válido en los dos motores. Y solo se inlinea si el destino es el motor del modelo: un
+default es una **expresión** (`SYSDATE`, `getdate()`, `((0))`), no un tipo, y `adapt_type` no la
+traduce. Colar un `DEFAULT SYSDATE` en un `CREATE TABLE` de SQL Server no perdería el default: se
+perdería **la tabla entera**. Al generar cruzado salen aparte, comentados, al final del fichero.
+
+#### 2. Vistas y procedimientos — SQL Server no estaba implementado
+
+`installer-objects.py` cubría solo Oracle. Con cualquier otro motor imprimía
+`AVISO: extracción de objetos solo implementada para ORACLE` y **salía con exit 0**. Peor: el hook
+comprobaba después la existencia del maestro `CreacionObjetos.sql`, no lo encontraba y abortaba la
+etapa con exit 1, así que en SQL Server tampoco llegaban a generarse los inserts paramétricos.
+
+Implementados los seis tipos sobre el catálogo `sys.*`. Ahí no hay que reconstruir nada:
+`sys.sql_modules.definition` ya trae el `CREATE` literal, así que solo se antepone un `DROP`
+condicional y se separan lotes con `GO` (un `CREATE VIEW`/`FUNCTION`/`PROCEDURE`/`TRIGGER` tiene que
+ser la primera sentencia de su lote). Se usa `DROP` + `CREATE` y no `CREATE OR ALTER` porque este
+último es de SQL Server 2016 SP1 en adelante y el parque de clientes no está garantizado ahí.
+
+Tres decisiones que replican lo que ya hacía el camino Oracle:
+
+- **Los marcadores viajan dentro del propio result set**, concatenados en el `SELECT`, nunca con
+  `PRINT`: dentro de un lote el flujo de mensajes y el de resultados no llegan necesariamente
+  intercalados en orden, y el marcador dejaría de identificar su objeto.
+- **El estado `DISABLED` de un trigger se preserva** (`DISABLE TRIGGER ... ON ...`): instalarlo
+  activo cambia el comportamiento de la aplicación en el cliente.
+- **No se quita el prefijo de schema**, al revés que en Oracle: en SQL Server el schema del objeto
+  (`dbo` casi siempre) es estable entre origen y destino, y lo que se selecciona en el cliente es la
+  base de datos (`sqlcmd -d`).
+
+La cabecera de los `.sql` ya no emite `SET DEFINE OFF` / `SET SQLBLANKLINES ON` cuando el motor es
+SQL Server: son directivas de sqlplus y en un fichero que va a correr sqlcmd son error de sintaxis.
+El maestro se genera con `:r` + `GO` en vez de `@@`.
+
+#### 3. Nadie miraba si estaban — el contrato del agente no los nombraba
+
+Es lo que convirtió lo anterior en un fallo silencioso. `agents/rs-instalador.md` no listaba los
+ficheros de objetos en el árbol del paquete, y su verificación de la etapa de scripts solo exigía
+`CreacionTablas.sql` y los inserts. El inventario del hook, además, los listaba con un comodín
+(`$proyecto-0*.sql`): si **no se generaba ninguno**, el listado salía vacío y el resumen decía `OK`
+igual. Y el output final del agente rezaba literalmente `Scripts: DDL + <N> inserts` — exactamente lo
+que el cliente recibió.
+
+Ahora el inventario recorre los seis tipos por nombre y marca `AUSENTE` el que falte, con exit 2; el
+agente tiene que reportar el conteo real por tipo y el número de defaults, y el contrato de salida
+lleva su propia línea `Objetos BD`.
+
+### El paquete ordenaba los scripts por nombre, y ese orden estaba mal
+
+Encontrado al revisar lo anterior. Sin manifiesto, `Ejecutar-Scripts.ps1` descubre los `.sql` por
+convención y los ordena **alfabéticamente**. Con los ficheros de objetos en la carpeta, el orden que
+salía era:
+
+```
+00-RVERSIONES · 01-Secuencias · 02-Vistas · 03-Funciones · 04-Procedimientos ·
+05-Triggers · 06-Sinonimos · CreacionObjetos · CreacionTablas · Inserts\ · PorEntorno```
+
+`02-Vistas` y `05-Triggers` **antes** que `CreacionTablas`: el `CREATE TRIGGER` se lanza sobre tablas
+que aún no existen (ORA-00942 / Msg 4902) y, como la ejecución es fail-fast, la instalación aborta
+ahí. Y `CreacionObjetos.sql`, que es un maestro que encadena a los demás, también casaba con el
+descubrimiento y volvía a crearlo todo.
+
+`instalacion-paquete.ps1` genera ahora **`Scripts\scripts.json`** a partir de lo que hay realmente en
+la carpeta, en orden de dependencias: RVERSIONES → secuencias → tablas+índices → vistas → funciones →
+procedimientos → triggers → sinónimos → inserts → fila base del entorno. Y avisa, con nombres, si
+falta alguno de los ficheros de objetos.
+
+Para los maestros hacía falta una tercera categoría: viajan en el paquete (sirven para lanzarlo todo
+a mano desde una sesión) pero no deben ejecutarse. `Ejecutar-Scripts.ps1` acepta por eso
+**`"ejecutar": false`** en una entrada del manifiesto: se da por declarada —así no sale como
+"presente en disco y NO declarado", que en su caso sería ruido— y no se ejecuta. Su ausencia en disco
+tampoco es una entrega incompleta: nadie iba a lanzarla.
+
+### Dos fallos encontrados de camino
+
+- **Las marcas `pii`/`safe` se borraban en cada sincronización del modelo.** `sync-from-db.ps1` y
+  `sync-model-tables.ps1` reconstruían cada columna desde cero con los cinco campos que devuelve la
+  BD, preservando solo `description`. Las marcas manuales de la política PII no las conoce la BD: se
+  perdían en silencio y una columna marcada a mano volvía a salir en claro sin que nadie tocara nada.
+- **Todo `.sql` en subcarpeta se daba por no declarado fuera de Windows.** En
+  `Get-RsScriptsManifiesto`, las rutas declaradas se normalizan a `\` y las de disco traen el
+  separador del sistema; solo se normalizaba un lado. Sin arreglarlo, el manifiesto nuevo —que
+  declara `Inserts/...` y `PorEntorno/...`— habría llenado de avisos falsos el CI, que corre en Ubuntu.
+
+### Tests
+
+`tests/test_installer_ddl_objetos.py` (20 casos) fija el orden `TIPO DEFAULT x NOT NULL`, que `0` y
+`'N'` son defaults reales y no ausencias, que al generar cruzado el `CREATE TABLE` no se contamina, y
+que los dos motores declaran los seis tipos de objeto con la misma numeración —que es de lo que
+dependen el maestro y el manifiesto—. En `tests/EjecutarScripts.Tests.ps1`, tres casos para
+`ejecutar: false` y la normalización de separadores.
+
+⛔ No se puede probar Oracle/sqlplus ni SQL Server/sqlcmd en el entorno de desarrollo Linux: lo que
+se prueba es la lógica pura y el SQL que se construye, no su ejecución contra un motor real.
+
+Ficheros: `hooks/lib-dbdefaults.ps1` (nuevo), `hooks/sync-from-db.ps1`,
+`hooks/sync-model-tables.ps1`, `hooks/installer-scripts.ps1`, `hooks/instalacion-paquete.ps1`,
+`scripts/installer-ddl.py`, `scripts/installer-objects.py`, `scripts/generate-sql.py`,
+`assets/instalacion/Ejecutar-Scripts.ps1`, `agents/rs-instalador.md`, `references/hooks.md`,
+`references/json-schema.md`, `hooks/README.md`, `tests/test_installer_ddl_objetos.py` (nuevo),
+`tests/EjecutarScripts.Tests.ps1`.
+
 ## 3.8.0 — 2026-08-06
 
 ### El XML de configuración de un proceso viajaba en el paquete si no se llamaba como su .exe

@@ -46,6 +46,7 @@ Ruta: `BD\<proyecto>-model.json`
         "COD_ESTADO": {
           "type": "VARCHAR2(2)",
           "nullable": true,
+          "default": "'A'",
           "pk": false,
           "description": "Código de estado del cliente",
           "source": "db",
@@ -119,6 +120,7 @@ Ruta: `BD\<proyecto>-model.json`
 |-------|------|-------------|
 | `type` | string | Tipo de dato con precisión (NUMBER(10), VARCHAR2(100)) |
 | `nullable` | boolean | Admite nulos |
+| `default` | string | Expresión del valor por defecto **tal cual la declara la BD** (`0`, `'N'`, `SYSDATE`, `((0))`, `getdate()`), sin la palabra `DEFAULT`. La rellena `hooks/sync-from-db.ps1` / `sync-model-tables.ps1`; ausente = la columna no tiene default. La emiten `installer-ddl.py` y `generate-sql.py` en el `CREATE TABLE`, entre el tipo y el `NOT NULL`. ⛔ Es una **expresión del motor de origen**, no un tipo: `adapt_type` no la traduce, así que al generar para otro motor sale comentada aparte en vez de inline. Sin este campo, en el cliente toda columna con default queda a NULL y **no salta ningún error** |
 | `pk` | boolean \| integer | Es parte de la PK. `true` = sí, sin posición definida (se asume el orden de declaración de las columnas). Un entero (`1`, `2`, `3`...) fija la **posición dentro de la PK**: úsalo cuando el orden de la PK real no coincide con el de las columnas, porque ese orden es el del índice que respalda la PK y con él cambiado se pierden los accesos por prefijo de clave |
 | `description` | string | Descripción semántica (manual o inferida) |
 | `source` | `db\|dalc\|manual` | Origen del dato |
@@ -205,7 +207,7 @@ una tabla ahí también la saca en claro** en las consultas.
 
 Al actualizar el JSON (sync desde BD o análisis DALC):
 
-1. **Tablas/columnas**: si existe en JSON → actualizar tipo/nullable, preservar description
+1. **Tablas/columnas**: si existe en JSON → actualizar tipo/nullable/default, preservar description y las marcas manuales `pii`/`safe`
 2. **Columnas nuevas**: añadir con `source: "db"` o `"dalc"`, description vacía
 3. **Tablas no encontradas en BD**: marcar con `"orphan": true` (no eliminar)
 4. **Relaciones manuales**: nunca sobreescribir (`source: "manual"`)

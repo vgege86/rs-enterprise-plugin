@@ -23,6 +23,7 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
+. (Join-Path $hooksDir "lib-dbdefaults.ps1")
 
 # Config BD
 $configJson = & "$hooksDir\get-config.ps1" $Workspace | ConvertFrom-Json
@@ -117,17 +118,27 @@ EXIT;
             })
         }
 
+        $existingCol  = $null
         $existingDesc = ""
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
+            $existingCol  = $model.tables.$tableName.columns.$colName
+            $existingDesc = $existingCol.description
         }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
+        $newCol = [PSCustomObject]@{
             type        = $colType
             nullable    = $nullable
             pk          = $isPk
             description = $existingDesc
             source      = "db"
-        })
+        }
+        # `pii` / `safe` son marcas MANUALES que la BD no conoce: reconstruir la columna desde
+        # cero las borraba y la politica PII se relajaba en silencio. Mismo criterio en sync-from-db.ps1.
+        foreach ($marca in @('pii','safe')) {
+            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
+                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
+            }
+        }
+        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 
 } elseif ($motor -eq "SQLSERVER") {
@@ -189,17 +200,27 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
             })
         }
 
+        $existingCol  = $null
         $existingDesc = ""
         if ($model.tables.$tableName.columns | Get-Member -Name $colName) {
-            $existingDesc = $model.tables.$tableName.columns.$colName.description
+            $existingCol  = $model.tables.$tableName.columns.$colName
+            $existingDesc = $existingCol.description
         }
-        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue ([PSCustomObject]@{
+        $newCol = [PSCustomObject]@{
             type        = $colType
             nullable    = $nullable
             pk          = $isPk
             description = $existingDesc
             source      = "db"
-        })
+        }
+        # `pii` / `safe` son marcas MANUALES que la BD no conoce: reconstruir la columna desde
+        # cero las borraba y la politica PII se relajaba en silencio. Mismo criterio en sync-from-db.ps1.
+        foreach ($marca in @('pii','safe')) {
+            if ($existingCol -and ($existingCol.PSObject.Properties.Name -contains $marca)) {
+                $newCol | Add-Member -NotePropertyName $marca -NotePropertyValue $existingCol.$marca
+            }
+        }
+        $model.tables.$tableName.columns | Add-Member -Force -NotePropertyName $colName -NotePropertyValue $newCol
     }
 } else {
     Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
@@ -207,6 +228,27 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 }
 
 Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
+
+# --- Valores DEFAULT de las tablas pedidas (pasada aparte: en Oracle DATA_DEFAULT es LONG) ---
+# Sin este campo, installer-ddl.py no puede emitir el DEFAULT en el CREATE TABLE del instalador.
+# Un fallo aqui no invalida la sincronizacion: se avisa en la salida y se sigue.
+$defaultsCount = 0
+$defaultsAviso = ""
+$defRes = Get-RsColumnDefaults -Motor $motor -Esquema $schema -DataSource $dataSource `
+                               -Usuario $user -Password $password -Tablas $requestedTables
+if ($defRes.ok) {
+    foreach ($clave in @($defRes.defaults.Keys)) {
+        $partes = $clave -split '\.', 2
+        if ($partes.Count -lt 2) { continue }
+        if (-not ($model.tables | Get-Member -Name $partes[0])) { continue }
+        if (-not ($model.tables.$($partes[0]).columns | Get-Member -Name $partes[1])) { continue }
+        $model.tables.$($partes[0]).columns.$($partes[1]) |
+            Add-Member -Force -NotePropertyName 'default' -NotePropertyValue $defRes.defaults[$clave]
+        $defaultsCount++
+    }
+} else {
+    $defaultsAviso = "no se pudieron leer los valores DEFAULT: $($defRes.error)"
+}
 
 $updated  = @($requestedTables | Where-Object { $found.ContainsKey($_) })
 $notInDb  = @($requestedTables | Where-Object { -not $found.ContainsKey($_) })
@@ -222,5 +264,7 @@ Move-Item $tmpPath $modelPath -Force
     model_path = $modelPath
     updated    = $updated
     not_in_db  = $notInDb
+    defaults   = $defaultsCount
+    warning    = $defaultsAviso
     message    = if ($updated.Count -gt 0) { "Modelo actualizado para: $($updated -join ', ')" } else { "Sin cambios -- tablas no encontradas en BD: $($notInDb -join ', ')" }
 } | ConvertTo-Json -Depth 3

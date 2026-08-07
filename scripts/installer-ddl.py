@@ -47,7 +47,20 @@ def pk_columns(table_def: dict) -> list:
     return [c for c, _ in cols]
 
 
-def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str) -> str:
+def column_default(col_def: dict) -> str:
+    """Expresión DEFAULT de la columna, tal cual la leyó del diccionario `hooks/lib-dbdefaults.ps1`.
+
+    Cadena vacía = la columna no tiene default. `0` y `'N'` sí son defaults reales, así que la
+    comprobación va contra la cadena vacía y nunca contra la falsedad del valor.
+    """
+    d = col_def.get('default')
+    if d is None:
+        return ""
+    return str(d).strip()
+
+
+def generate_create_table(table_name: str, table_def: dict, engine: str, model_engine: str,
+                          inline_defaults: bool = True) -> str:
     lines = []
     desc = (table_def.get('description') or '').strip()
     if desc:
@@ -66,8 +79,12 @@ def generate_create_table(table_name: str, table_def: dict, engine: str, model_e
         if engine == 'ORACLE':
             col_type = ensure_oracle_char_semantics(col_type)
         nullable = "" if col_def.get('nullable', True) else " NOT NULL"
+        # DEFAULT va ENTRE el tipo y el NOT NULL: es el único orden válido en los dos motores
+        # ("COL TIPO NOT NULL DEFAULT x" es error de sintaxis en Oracle y en SQL Server).
+        default = column_default(col_def) if inline_defaults else ""
+        default_sql = f" DEFAULT {default}" if default else ""
         cdesc = f"  -- {col_def['description']}" if col_def.get('description') else ""
-        col_lines.append((f"    {col_name} {col_type}{nullable}", cdesc))
+        col_lines.append((f"    {col_name} {col_type}{default_sql}{nullable}", cdesc))
 
     # PK inline, SIN schema (PK_<tabla>)
     if pk_cols:
@@ -127,6 +144,12 @@ def main():
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Un DEFAULT es una EXPRESIÓN del motor de origen (SYSDATE, getdate(), ((0))...), no un
+    # tipo: `adapt_type` no lo traduce y no hay traducción automática fiable. Si se genera para
+    # un motor distinto al del modelo, inlinearlo produciría un CREATE TABLE que revienta entero
+    # en el cliente. En ese caso salen aparte, comentados, para que alguien los porte a mano.
+    inline_defaults = (target_engine == model_engine)
+
     lines = [
         f"-- Creación de tablas — instalación limpia de {proyecto}",
         f"-- Motor: {target_engine}",
@@ -136,15 +159,25 @@ def main():
     ]
 
     idx_block = []
+    def_block = []
     tables = model.get('tables', {})
     n_ddl = 0
+    n_def = 0
     for table_name, table_def in tables.items():
         # Saltar tablas huérfanas (existen en modelo pero no en BD real)
         if table_def.get('orphan'):
             continue
-        lines.append(generate_create_table(table_name, table_def, target_engine, model_engine))
+        lines.append(generate_create_table(table_name, table_def, target_engine, model_engine,
+                                           inline_defaults))
         lines.append("")
         idx_block.extend(generate_index_statements(table_name, table_def))
+        for col_name, col_def in table_def.get('columns', {}).items():
+            d = column_default(col_def)
+            if not d:
+                continue
+            n_def += 1
+            if not inline_defaults:
+                def_block.append(f"-- ALTER TABLE {table_name} MODIFY {col_name} DEFAULT {d};")
         n_ddl += 1
 
     if idx_block:
@@ -154,11 +187,30 @@ def main():
         lines.extend(idx_block)
         lines.append("")
 
+    if def_block:
+        lines.append("-- ============================================================")
+        lines.append(f"-- VALORES POR DEFECTO — SIN APLICAR ({len(def_block)})")
+        lines.append(f"-- El modelo se capturó en {model_engine} y esto se generó para")
+        lines.append(f"-- {target_engine}: las expresiones de abajo son sintaxis de {model_engine}")
+        lines.append("-- y hay que portarlas a mano antes de descomentarlas.")
+        lines.append("-- ============================================================")
+        lines.extend(def_block)
+        lines.append("")
+
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
 
     print(f"OK — DDL generado: {out_path}")
-    print(f"     {n_ddl} tablas | {len(idx_block)} índices | Motor: {target_engine}")
+    print(f"     {n_ddl} tablas | {len(idx_block)} índices | {n_def} defaults | Motor: {target_engine}")
+    if n_def == 0:
+        # Un modelo sin defaults casi nunca es una BD sin defaults: lo normal es que el
+        # model.json se sincronizara antes de que sync-from-db.ps1 los extrajera.
+        print("     AVISO: ninguna columna del modelo declara 'default'. Si la BD sí tiene")
+        print("            valores por defecto, resincroniza el modelo (/rs-erd o sync-from-db.ps1)")
+        print("            antes de entregar: el cliente los perdería.")
+    elif not inline_defaults:
+        print(f"     AVISO: {n_def} defaults NO inlineados (modelo {model_engine} → destino "
+              f"{target_engine}); van comentados al final del fichero.")
 
 
 if __name__ == '__main__':
