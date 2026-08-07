@@ -69,6 +69,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `lib-dbconfig.ps1` | Librería, no se invoca directamente — dot-sourcear desde el hook que la necesite (`Get-CsPart`, `Read-RsDatabases`, `Resolve-RsWorkspace`, `Get-RsProyecto`) |
 | `lib-deploy-gates.ps1` | Librería, no se invoca directamente — gates de carpeta de despliegue batch (`Test-RsCoherenciaBuild`, `Test-RsBindingRedirects`, `Test-RsOdpDependencies`, `Get-RsDllConfigHuerfanos`). Deciden y devuelven; los `Write-Host` y los `exit` se quedan en `installer-batch.ps1`. Mismo patrón que `lib-dbconfig.ps1` |
 | `convert-config.ps1 <workspace> [-Force]` | Convierte `XMLConfig.xml` → `.rs-databases.json`. No borra el XML |
+| `sync-model-objects.ps1 <workspace> [<proyecto>] [-DryRun]` | Inventario de objetos de BD → `model.json` (ficha + firma del cuerpo, no el cuerpo). `-DryRun` solo lista y diffea |
 | `sync-from-db.ps1 <workspace>` | Sincroniza modelo completo desde BD, incluidos los valores `default` y la posición dentro de la PK; preserva `description` y las marcas `pii`/`safe` |
 | `compare-model.ps1 <workspace>` | Diff model.json vs esquema real BD |
 | `generate-migration.ps1 <workspace>` | CREATE TABLE / ALTER TABLE ADD desde drift modelo→BD |

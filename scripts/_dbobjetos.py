@@ -1,0 +1,179 @@
+"""
+Inventario de objetos de BD en `model.json`: las vistas, procedimientos, paquetes, funciones,
+triggers, sinónimos y secuencias que hasta ahora solo existían en la BD y en el paquete del
+instalador, nunca en el modelo.
+
+QUÉ SE GUARDA, Y POR QUÉ NO EL CUERPO
+    Del objeto se guarda su ficha —tipo, estado, nº de líneas, tablas que usa— y una **firma**
+    del cuerpo, no el cuerpo. Tres razones, en orden de importancia:
+
+    1. **El instalador sigue extrayendo de la BD viva.** Esa es la garantía que hoy hace que un
+       paquete no pueda entregar código viejo: lo que viaja es literalmente lo que hay en la BD.
+       Si el modelo pasara a ser la fuente, un `model.json` desactualizado entregaría un
+       procedimiento de hace tres meses a un cliente y nada lo avisaría.
+    2. **La firma sí permite detectar el cambio**, que es lo que le faltaba a `/rs-actualizador`:
+       su delta es por VCS (`FECHA_CORTE` + `vcs_delta` sobre ficheros del repo) y un
+       procedimiento modificado en BD no está en el VCS, así que hoy solo viaja si alguien se
+       acuerda de escribir el script a mano. Comparando firmas se sabe qué cambió desde la
+       última entrega.
+    3. Un package puede tener miles de líneas, y el `model.json` se inyecta entero como JSON
+       dentro del HTML del ERD.
+
+    ⛔ La firma se calcula sobre el MISMO texto que emitiría el instalador (los `bloques` que
+    devuelven los extractores de `installer-objects.py`), no sobre otra lectura de la BD. Es lo
+    que hace que "la firma cambió" signifique exactamente "lo que se entregaría ha cambiado", y
+    no "alguien reformateó algo".
+
+Este módulo no toca BD: recibe los bloques ya extraídos y decide qué va al modelo.
+"""
+
+import hashlib
+import re
+
+# Las siete secciones del inventario, en orden de dependencias — el mismo que usa el maestro
+# del instalador. `paquetes` va aparte de `procedimientos` aunque el instalador los emita en el
+# mismo fichero (ambos ocupan la misma posición de dependencia): en el modelo y en el ERD son
+# cosas distintas para quien desarrolla.
+SECCIONES = ("secuencias", "vistas", "funciones", "procedimientos",
+             "paquetes", "triggers", "sinonimos")
+
+# Etapa de installer-objects.py -> sección del modelo. `Procedimientos` se reparte entre dos
+# secciones según el tipo que el propio Oracle antepone al nombre (ver clasificar_plsql).
+ETAPA_A_SECCION = {
+    "Secuencias": "secuencias",
+    "Vistas": "vistas",
+    "Funciones": "funciones",
+    "Procedimientos": "procedimientos",
+    "Triggers": "triggers",
+    "Sinonimos": "sinonimos",
+}
+
+# Tipos que Oracle antepone al nombre en ALL_SOURCE. El orden importa: "PACKAGE BODY" tiene que
+# probarse antes que "PACKAGE" o el cuerpo se clasificaría como especificación.
+_TIPOS_PLSQL = ("PACKAGE BODY", "PACKAGE", "PROCEDURE", "FUNCTION", "TYPE BODY", "TYPE")
+
+FIRMA_ALGORITMO = "sha256-16"
+_FIRMA_HEX = 16
+
+
+def normalizar(texto: str) -> str:
+    """Texto comparable entre extracciones.
+
+    Sin esto la firma cambiaría por motivos que no son cambios: la BD devuelve CRLF, sqlplus
+    vuelve a convertir el LF en CRLF, y el relleno a la derecha depende de la sesión. Se
+    normalizan saltos, se recorta cada línea por la derecha y se quitan las líneas en blanco
+    del final. ⛔ La indentación NO se toca: en PL/SQL es del autor, y aplanarla haría
+    indistinguibles dos versiones que sí difieren para quien lee el código.
+    """
+    if not texto:
+        return ""
+    t = texto.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(l.rstrip() for l in t.split("\n")).strip()
+
+
+def firma(texto: str) -> str:
+    """Firma del cuerpo, para detectar cambios entre entregas.
+
+    16 hex (64 bits) bastan de sobra: no es un control de integridad frente a un adversario,
+    es distinguir dos versiones del mismo procedimiento. Y mantiene el `model.json` legible.
+    """
+    return hashlib.sha256(normalizar(texto).encode("utf-8")).hexdigest()[:_FIRMA_HEX]
+
+
+def clasificar_plsql(nombre: str) -> tuple:
+    """`PACKAGE BODY MIPKG` -> ('paquetes', 'MIPKG'). Devuelve (sección, nombre limpio).
+
+    Oracle antepone el tipo al nombre en la etapa de procedimientos porque ALL_SOURCE mezcla
+    PROCEDURE, PACKAGE y PACKAGE BODY en la misma consulta. En SQL Server no existen los
+    paquetes y el nombre llega ya limpio, así que ahí esta función no cambia nada.
+    """
+    n = (nombre or "").strip()
+    for tipo in _TIPOS_PLSQL:
+        if n.upper().startswith(tipo + " "):
+            resto = n[len(tipo):].strip()
+            seccion = "paquetes" if tipo.startswith("PACKAGE") else (
+                "funciones" if tipo == "FUNCTION" else "procedimientos")
+            return seccion, resto
+    return "procedimientos", n
+
+
+def tablas_usadas(cuerpo: str, tablas_conocidas) -> list:
+    """Tablas del modelo que aparecen en el cuerpo del objeto.
+
+    ⛔ Es una DERIVACIÓN POR TEXTO, no el diccionario de dependencias de la BD: un nombre de
+    tabla dentro de un comentario o de un literal cuenta igual. Se llama `tablas_usadas` y no
+    `depende_de` justamente para no prometer una autoridad que no tiene. Vale para lo que se
+    quiere —"qué procedimientos tocan RCLIENTES" antes de cambiar una columna—, que es una
+    pregunta donde un falso positivo se descarta de un vistazo y un falso negativo duele.
+
+    Se compara con límite de palabra y sin distinguir mayúsculas, y se devuelve ordenado para
+    que dos extracciones del mismo objeto den el mismo `model.json` (si no, cada sync
+    produciría un diff falso).
+    """
+    if not cuerpo or not tablas_conocidas:
+        return []
+    texto = cuerpo.upper()
+    encontradas = [t for t in tablas_conocidas
+                   if re.search(r"\b" + re.escape(t.upper()) + r"\b", texto)]
+    return sorted(set(encontradas))
+
+
+def ficha(cuerpo: str, tablas_conocidas=(), estado: str = "VALID", extra: dict = None) -> dict:
+    """La entrada que va al modelo para un objeto."""
+    cuerpo_n = normalizar(cuerpo)
+    d = {
+        "estado": estado,
+        "firma": firma(cuerpo),
+        "lineas": len(cuerpo_n.split("\n")) if cuerpo_n else 0,
+        "tablas_usadas": tablas_usadas(cuerpo_n, tablas_conocidas),
+        "source": "db",
+    }
+    if extra:
+        d.update(extra)
+    return d
+
+
+def inventario_vacio() -> dict:
+    return {"_firma": FIRMA_ALGORITMO,
+            "_nota": ("Inventario de objetos de BD. Se guarda la ficha y una FIRMA del cuerpo, "
+                      "no el cuerpo: el instalador sigue extrayendo de la BD viva, y la firma "
+                      "sirve para detectar qué cambió desde la última entrega."),
+            **{s: {} for s in SECCIONES}}
+
+
+def comparar(viejo: dict, nuevo: dict) -> dict:
+    """Qué ha cambiado entre dos inventarios.
+
+    Es lo que consume `/rs-actualizador` para saber qué objetos entran en el delta, y lo que
+    usa el instalador para avisar de deriva entre el modelo y la BD.
+
+    Devuelve, por sección: `nuevos`, `eliminados`, `modificados` (misma clave, firma distinta)
+    y `estado_cambiado` (p.ej. un trigger que pasó a DISABLED, o una vista que quedó INVALID —
+    la firma no lo detecta porque el cuerpo es el mismo).
+    """
+    res = {}
+    for sec in SECCIONES:
+        v = (viejo or {}).get(sec) or {}
+        n = (nuevo or {}).get(sec) or {}
+        nuevos      = sorted(k for k in n if k not in v)
+        eliminados  = sorted(k for k in v if k not in n)
+        comunes     = [k for k in n if k in v]
+        modificados = sorted(k for k in comunes
+                             if (v[k] or {}).get("firma") != (n[k] or {}).get("firma"))
+        estado      = sorted(k for k in comunes
+                             if k not in modificados
+                             and (v[k] or {}).get("estado") != (n[k] or {}).get("estado"))
+        if nuevos or eliminados or modificados or estado:
+            res[sec] = {"nuevos": nuevos, "eliminados": eliminados,
+                        "modificados": modificados, "estado_cambiado": estado}
+    return res
+
+
+def total(inventario: dict) -> int:
+    return sum(len((inventario or {}).get(s) or {}) for s in SECCIONES)
+
+
+def resumen(inventario: dict) -> str:
+    """Línea de conteo por sección, para el log y para el SUMMARY del agente."""
+    partes = [f"{s[:6]} {len((inventario or {}).get(s) or {})}" for s in SECCIONES]
+    return " · ".join(partes)

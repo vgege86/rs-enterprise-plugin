@@ -1,4 +1,4 @@
----
+﻿---
 name: rs-instalador
 description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1 con backup, Ejecutar-Scripts.ps1, rutas.json, readme.txt). Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
 model: opus
@@ -22,8 +22,8 @@ C:\AIS\<Proyecto>\Instalador\
 │   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas + índices + DEFAULT, SIN schema
 │   ├── <Proyecto>-01-Secuencias.sql    ┐
 │   ├── <Proyecto>-02-Vistas.sql        │
-│   ├── <Proyecto>-03-Funciones.sql     │ objetos extraídos de la BD viva: NO están en el
-│   ├── <Proyecto>-04-Procedimientos.sql│ model.json, solo existen si la etapa 5 los sacó
+│   ├── <Proyecto>-03-Funciones.sql     │ objetos extraídos de la BD VIVA (el model.json
+│   ├── <Proyecto>-04-Procedimientos.sql│ guarda su ficha y firma, no el cuerpo)
 │   ├── <Proyecto>-05-Triggers.sql      │
 │   ├── <Proyecto>-06-Sinonimos.sql     ┘
 │   ├── <Proyecto>-CreacionObjetos.sql  maestro para lanzarlo a mano; NO lo ejecuta el paquete
@@ -207,6 +207,13 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
     ausencia **no da ningún error en la instalación** — la aplicación simplemente falla al primer
     uso. Un fichero con `0 objeto(s)` sí es válido si el schema no tiene ninguno de ese tipo (el
     log lo dice explícitamente), pero contrastarlo con lo que se espera del proyecto.
+  - **Deriva modelo↔BD**: si el `model.json` trae inventario de objetos, la etapa imprime
+    `---- Deriva entre el modelo y la BD ----` con lo que está en BD y no en el modelo, lo que
+    está en el modelo y no en BD, y lo que tiene firma distinta. **No bloquea** —el paquete se
+    genera de la BD viva, así que es correcto— pero hay que **reportarlo**: un objeto en BD que
+    el modelo no conoce suele significar que alguien lo creó a mano y nadie lo sabe. Si en vez
+    de eso aparece `Modelo y BD coinciden`, decirlo también. Si el modelo no trae inventario no
+    se imprime nada: sugerir `hooks\sync-model-objects.ps1`.
   - **Reportar en el SUMMARY el conteo real por tipo** que imprime la etapa
     (`---- Resumen objetos (conteo real en BD) ----`). Es lo único que distingue "el schema no
     tiene vistas" de "la extracción de vistas falló".
