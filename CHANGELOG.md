@@ -1,5 +1,61 @@
 # RS Enterprise Agent — Changelog
 
+## 3.11.1 — 2026-08-07
+
+### La política PII es de `db_query`, y en ningún sitio estaba escrito
+
+Pregunta razonable que no tenía respuesta en la documentación: con `mode=enforce`, ¿se están
+enmascarando los nombres de tablas, columnas y vistas al actualizar el modelo o al mirar la
+estructura de la BD?
+
+**No.** `db_query` es la única tool que pasa por `mask_resultset`. Las que mantienen el modelo y
+leen estructura —`sync_from_db`, `sync_indexes`, `compare_model`, `analyze_dalc`,
+`generate_sql`, `generate_migration`, `export_dmd`, `render_erd`— van a su hook con conexión
+directa y no importan `pii_*`; `get_table_schema`, `search_model` y `get_model_index` leen el
+`model.json` y ni tocan la BD. Los metadatos salen siempre en claro. (`sync-from-db.ps1`
+menciona `pii`, pero solo para **conservar** las marcas `pii`/`safe` del modelo al
+re-sincronizar.)
+
+#### La parte contraintuitiva sí es real
+
+Si el catálogo del sistema se interroga **con `db_query`** en vez de con las tools de modelo,
+los nombres **sí** vuelven enmascarados: `ALL_TAB_COLUMNS`, `INFORMATION_SCHEMA.COLUMNS` o
+`USER_OBJECTS` no están en el modelo, así que `clasificar()` da `NO_RESUELTA/sin_definicion` y
+`resolver_no_resuelta()` ve texto en vez de números → `MASCARA/valores_no_numericos`. Los
+patrones ni llegan a intervenir: la lista base es española (`NOMBRE*`, `TELEFON*`…) y
+`TABLE_NAME`/`COLUMN_NAME` no casan — el fallback por forma de valor los tapa igual.
+
+Es la regla general aplicada a un caso donde sobra. Se documenta y **no** se abre una excepción
+de catálogo: cada excepción es un camino más por el que un `SELECT` puede salir sin filtrar, y
+el rodeo es barato —para leer estructura ya están las tools de modelo—. Si aun así hace falta
+cruzar estructura por SQL, la salida es preguntar por números: nombres dentro del `SELECT`,
+recuentos o códigos de vuelta, que salen en claro por `valores_numericos`. Con dos bordes que
+muerden: un entero de **9+ dígitos sin decimales** se enmascara (tiene forma de identificador,
+`pii_policy.py:187`) y una columna que salga **entera vacía**, también.
+
+#### Dónde queda escrito
+
+- `docs/proteccion-pii-consultas-bd.md` — **§4.5 nueva**, "Qué camino pasa por el filtro": qué
+  lo atraviesa, qué no y por qué (los metadatos no son datos de personas), la consecuencia
+  contraintuitiva y el rodeo numérico. Más una precisión en §5.1, que decía "consultas
+  realizadas a través de la herramienta" sin acotar que es *solo* ese camino.
+- `references/bd.md` — la versión operativa para los agentes, con los nombres de tool concretos
+  y la cadena de clasificación que produce el enmascarado.
+
+#### Y una viñeta del README que llevaba desde la 3.4.0 diciendo lo contrario
+
+El resumen de «Qué NO protege» seguía afirmando que las guardas *«viven en la configuración
+personal de cada desarrollador y no viajan con el repositorio»*. Eso dejó de ser cierto en la
+3.4.0 —desde entonces las declara el propio plugin— y el §5.2e del documento ya lo recogía como
+resuelto; la viñeta del README se quedó atrás. Corregida: conserva la historia (por qué era
+grave: rutas absolutas que cada actualización dejaba colgando, guardas que fallaban abiertas y
+sin señal) y describe la dependencia que sí queda —sin plugin no hay guardas, y tras instalar o
+actualizar hay que reiniciar—.
+
+Sin cambios de código: la política se comporta como está diseñada.
+
+Ficheros: `docs/proteccion-pii-consultas-bd.md`, `references/bd.md`, `README.md`.
+
 ## 3.11.0 — 2026-08-07
 
 ### El marketplace deja de publicar un solo plugin: entra `rs-validador`
