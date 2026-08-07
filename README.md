@@ -3,7 +3,7 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **45 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
+2. **46 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
@@ -181,9 +181,9 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-45 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+46 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 48 comandos: los 45 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+> El catálogo de abajo lista 49 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
 
 > ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
 > es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
@@ -358,6 +358,22 @@ Instalación en el servidor del cliente (ambos paquetes):
 > **Nota de rate**: la instancia devuelve HTTP 500 ante `PATCH` rápidos seguidos al mismo issue; `mantis-cli.ps1` intercala ~800ms + retry con backoff en `advance`/`create`/`assign` (ver `references/mantis.md`).
 
 ---
+
+## El modelo de BD no son solo tablas
+
+Desde la 3.10.0, `BD\<proyecto>-model.json` incluye además el **inventario de objetos**:
+vistas, procedimientos, paquetes, funciones, triggers, sinónimos y secuencias. Se rellena con
+`hooks\sync-model-objects.ps1` (con `-DryRun` para ver qué haría sin escribir) y se ve en el
+ERD, que gana una sección por tipo y, en el panel de cada tabla, **qué objetos la usan** — la
+pregunta que se hace antes de cambiarle una columna.
+
+⛔ **Se guarda la ficha y una firma del cuerpo, nunca el cuerpo.** El instalador sigue
+extrayendo el DDL de la BD viva: esa es la garantía de que un paquete no puede entregar código
+viejo. La firma añade lo que faltaba —saber **qué cambió** desde la última entrega, que el
+delta por VCS de `/rs-actualizador` no ve porque un procedimiento modificado en BD no está en
+el repositorio— sin renunciar a ella. Con eso, el actualizador ya pregunta por los objetos que
+cambiaron en vez de depender de que alguien se acuerde, y el instalador avisa si el modelo y
+la BD han derivado.
 
 ## Protección de datos personales en consultas a BD
 

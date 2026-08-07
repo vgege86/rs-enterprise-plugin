@@ -233,7 +233,15 @@ aislamiento de error por tabla), los 6 tipos de objeto se extraen en paralelo, e
 `TO_CLOB` cuando la fila cabe en `VARCHAR2` (con reintento automático si sale `ORA-01489`) y la
 config de BD se resuelve una vez en el hook y viaja por `RS_DB_CONFIG_JSON` (sin password). Cap
 común de sesiones simultáneas: `parametricas.max_paralelo` (default 8), que gobierna inserts y
-objetos. `installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte, y su inventario
+objetos. Desde la 3.10.0 esos mismos extractores alimentan también el **inventario de objetos del
+`model.json`** (`scripts/model-objects.py` + `scripts/_dbobjetos.py`, vía
+`hooks/sync-model-objects.ps1`): del objeto se guarda su ficha y una **firma** del cuerpo, no el
+cuerpo. El instalador sigue extrayendo de la BD viva —la garantía de que un paquete no puede
+entregar código viejo— y contrasta lo extraído contra el inventario para reportar deriva. La
+firma se calcula sobre el mismo texto que emitiría el instalador, que es lo que hace que "la
+firma cambió" signifique "lo que se entregaría ha cambiado".
+
+`installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte, y su inventario
 final nombra los seis ficheros de objetos uno a uno (`AUSENTE` + exit 2 al que falte): con un
 comodín, cero ficheros generados salían como un resumen en verde. El paquete se cierra con
 `Scripts\scripts.json`, que fija el orden de ejecución en el cliente — sin él se ordena por nombre y
@@ -405,7 +413,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/bd.md` | Convenciones de base de datos |
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
-| `references/json-schema.md` | Esquema del `model.json` de BD |
+| `references/json-schema.md` | Esquema del `model.json` de BD, incluida la sección `objetos` (inventario: ficha + firma, no el cuerpo) |
 | `references/mcp.md` | Catálogo completo de las 48 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |

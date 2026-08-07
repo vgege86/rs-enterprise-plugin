@@ -1,5 +1,27 @@
 # RS Enterprise Agent — Changelog
 
+## 3.10.1 — 2026-08-07
+
+### El README y el doc de arquitectura no contaban lo de la 3.10.0, y el catálogo llevaba mal la cuenta
+
+Repaso antes de publicar la 3.10.0 en el marketplace.
+
+- **El README no mencionaba el inventario de objetos.** Sección nueva: qué se guarda (ficha y
+  firma, nunca el cuerpo), por qué —el instalador sigue extrayendo de la BD viva, que es la
+  garantía de que un paquete no entregue código viejo— y qué gana con ello el actualizador.
+- **`docs/plugin-architecture.md`** enumeraba los scripts Python del instalador sin los dos
+  nuevos, y su índice de referencias describía `json-schema.md` sin la sección `objetos`.
+- **El catálogo de comandos llevaba mal la cuenta**, y esto venía de antes de la 3.9.0: decía
+  «48 comandos: los 45 modos directos…» con 49 ficheros en `commands/`. Los números correctos
+  son **49 comandos / 46 modos directos**. Nadie añadió un comando en estas versiones; el
+  desajuste ya estaba en la 3.8.0.
+
+La checklist del §10 para «nuevo hook» —`references/hooks.md`, `hooks/README.md`, CHANGELOG—
+ya estaba cumplida en la 3.10.0; lo que faltaba era lo que esa checklist no pide y aun así hace
+falta cuando el cambio altera lo que el modelo significa.
+
+Ficheros: `README.md`, `docs/plugin-architecture.md`.
+
 ## 3.10.0 — 2026-08-07
 
 ### Los objetos de BD entran en el modelo: vistas, procedimientos, paquetes, funciones, triggers, sinónimos y secuencias
