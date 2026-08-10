@@ -47,6 +47,7 @@ Lista ordenada; incluir solo las necesarias, **siempre en este orden**:
 | Token | Cuándo incluirlo | Ejecutor |
 |-------|------------------|----------|
 | `core` | **siempre** — implementa el cambio | rs-editor-core (opus) |
+| `plan-check` | el cambio es **complejo** (criterios abajo) — va **inmediatamente después de `core`** | rs-editor-plan-check (sonnet) |
 | `validator` | **siempre** — compila + análisis estático + revisión lógica | rs-editor-validator (sonnet) |
 | `tester` | hay lógica C# testeable **o** es Online y toca controles AIS/idiomas | rs-editor-tester (sonnet) |
 | `build` | **siempre** tras modificar código (Batch y Online) | rs-editor-build (haiku) |
@@ -57,6 +58,29 @@ Lista ordenada; incluir solo las necesarias, **siempre en este orden**:
 - `validator` absorbe el antiguo `analyzer` (análisis estático advisory) — no declares `analyzer`, no existe.
 - La validación BD la haces **tú** aquí; no declares `bd`, no existe.
 - `crear-tests` no se declara: lo dispara el orquestador si `tester` devuelve `NEEDS_TESTS`.
+- `fixer` tampoco se declara: lo dispara el orquestador si `validator` devuelve FAIL.
+
+## Criterios para incluir `plan-check`
+
+`plan-check` comprueba que el código de `core` cubre **todos** los ítems del PLAN aprobado. En un
+cambio de un solo ítem eso no aporta —`validator` y el gate final ya lo cubren— y sí cuesta tokens.
+Se incluye solo cuando el plan tiene superficie suficiente para que a `core` se le escape algo.
+
+✅ Incluir si el plan cumple **≥1**:
+- **≥3 ítems accionables** (cuéntalos en tu propio plan antes de decidir — no lo estimes a ojo)
+- toca **≥2 proyectos/capas** (DALC + lógica, code-behind + DALC, Bus + Dalc...)
+- lleva cambio de esquema BD o SQL nuevo (→ `db-modeler` en `STAGES`)
+- es **una fase** de un desarrollo por fases: el plan promete una parte de un objetivo mayor
+- introduce funcionalidad nueva (→ `documentar` en `STAGES`)
+
+⛔ No incluir si el plan es **un único ítem localizado**: literal/constante/config, texto `.aspx`
+sin lógica, bug fix dentro de un método, ajuste de firma trivial.
+
+⛔ Si lo incluyes, va **justo después de `core`** en la lista, nunca en otra posición.
+
+⚠️ El orquestador tiene una red de seguridad: si `core` acaba tocando ≥3 ficheros o ≥2 proyectos y
+no declaraste `plan-check`, lo ejecuta igualmente y lo anota. Que salte significa que subestimaste
+el tamaño del cambio, no que la etapa sea opcional a posteriori.
 
 ## Criterios para incluir `tester`
 
@@ -81,9 +105,10 @@ No incluir si es solo: cambio de UI/texto `.aspx` sin lógica en code-behind (y 
 ## Tipo de cambio → STAGES típico (guía, no dogma)
 
 - Literal/constante/config trivial → `core, validator, build`
-- Modificación lógica local → `core, validator, tester, build`
-- Cambio con nueva funcionalidad → `core, validator, tester, build, documentar`
-- Cambio que toca tablas/DALC → añadir `db-modeler` + (`documentar` si aplica)
+- Modificación lógica local (un solo ítem) → `core, validator, tester, build`
+- Modificación lógica en ≥2 capas o ≥3 ítems → `core, plan-check, validator, tester, build`
+- Cambio con nueva funcionalidad → `core, plan-check, validator, tester, build, documentar`
+- Cambio que toca tablas/DALC → añadir `plan-check` + `db-modeler` + (`documentar` si aplica)
 
 ## Reglas
 
@@ -111,7 +136,7 @@ PLAN:
 ```
 
 ```
-STAGES: core, validator, tester, build        (lista ordenada, autoritativa — el orquestador la obedece literalmente)
+STAGES: core, plan-check, validator, tester, build   (lista ordenada, autoritativa — el orquestador la obedece literalmente)
 READ_DOCS: 02, 03, CHECKLIST                   (docs técnicos que core debe leer, de la tabla tarea→docs; vacío si no hay índice maestro)
 CONTEXT:
   Solución: <nombre.sln> | Tipo: <Batch|Online> | Workspace: <path>

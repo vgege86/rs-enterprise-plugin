@@ -123,9 +123,10 @@ el resto de agentes solo aplican el plan.
 
 **Excepciones a "sin re-decidir": exactamente tres redes de seguridad** (§ Redes de seguridad de
 `SKILL.md`), todas de la misma forma —una señal que el planner no podía conocer al planificar
-obliga a añadir una etapa que omitió— y todas anotadas en el reporte: `core` corrió → `plan-check`;
-`TABLES_TOUCHED` no vacío → `db-modeler`; `NEW_PATTERN` no vacío → `documentar`. Cada una se
-describía a sí misma como "la única", lo que dejaba las otras dos sin respaldo escrito.
+obliga a añadir una etapa que omitió— y todas anotadas en el reporte: `FILES_CHANGED` de ≥3 ficheros
+o ≥2 proyectos → `plan-check`; `TABLES_TOUCHED` no vacío → `db-modeler`; `NEW_PATTERN` no vacío →
+`documentar`. Cada una se describía a sí misma como "la única", lo que dejaba las otras dos sin
+respaldo escrito.
 
 **Etapas que pueden solaparse:** `db-modeler` ∥ `documentar` (no se encadenan) y
 `plan-check` ∥ `validator` (uno mira cobertura del PLAN, el otro compila). El resto es estrictamente
@@ -171,7 +172,7 @@ Cuerpo en español, arranca con `# Rol`.
 |--------|--------|----------------------|
 | `rs-editor-planner` | **opus** | 2 — cerebro: analiza (modelo BD + `db_query` + símbolos) y decide `STAGES` |
 | `rs-editor-core` | opus | `core` |
-| `rs-editor-plan-check` | sonnet | `plan-check` — verifica cobertura del PLAN tras core (INCOMPLETE ⇄ core, máx 1 ciclo) |
+| `rs-editor-plan-check` | sonnet | `plan-check` — verifica cobertura del PLAN tras core, solo en cambios complejos (INCOMPLETE ⇄ core, máx 1 ciclo) |
 | `rs-editor-validator` | sonnet | `validator` (absorbe el antiguo analyzer) |
 | `rs-editor-fixer` | opus | ciclo de `validator`/`tester` |
 | `rs-editor-tester` | sonnet | `tester` |

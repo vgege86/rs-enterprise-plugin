@@ -179,7 +179,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 | **planner** 🟣 | Siempre — analiza, valida contra BD y decide STAGES |
 | **Aprobación humana** | Siempre — gate bloqueante, no toca código sin tu OK |
 | `core` 🟣 | Siempre — implementa el cambio |
-| `plan-check` 🔷 | Siempre tras core — verifica que el código cubre **todos** los ítems del PLAN |
+| `plan-check` 🔷 | Tras core, **solo en cambios complejos** (≥3 ítems, ≥2 proyectos, esquema BD o funcionalidad nueva) — verifica que el código cubre **todos** los ítems del PLAN |
 | `validator` 🔷 | Siempre — compila + análisis estático + revisión lógica |
 | `fixer` 🟣 | Si el validator falla (máx 2 ciclos) |
 | `tester` 🔷 | Si hay lógica testeable, o es Online y toca controles/idiomas |

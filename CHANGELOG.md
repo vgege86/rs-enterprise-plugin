@@ -1,5 +1,69 @@
 # RS Enterprise Agent — Changelog
 
+## 3.15.0 — 2026-08-10
+
+### Una red de seguridad que salta siempre no es una red de seguridad, es una etapa mal declarada
+
+Síntoma reportado: la nota `⚠️ Nota: plan-check no venía en STAGES → lo ejecuto igualmente (red de
+seguridad). Va en paralelo con validator.` aparecía en **todas** las ejecuciones del pipeline.
+
+#### Por qué salía siempre
+
+`plan-check` entró como etapa en 2.18.0 y se cableó en el orquestador (`SKILL.md`), pero **nunca se
+añadió al vocabulario de `STAGES` del planner**. La tabla "Etapas disponibles" de
+`agents/rs-editor-planner.md` listaba `core`, `validator`, `tester`, `build`, `db-modeler` y
+`documentar` — y nada más. Con dos reglas del propio agente encima ("incluir solo las necesarias",
+"no asumir etapas sin justificación"), un token que no está en la tabla no se emite jamás.
+
+Resultado: durante diecisiete versiones menores el planner fue **incapaz** de declarar `plan-check`,
+la red de seguridad del orquestador se disparó en el 100% de las ejecuciones, y `SKILL.md` afirmaba
+—falsamente— que "el planner coloca `plan-check` justo después" de `core`. El contrato documentado
+y el implementado describían cosas distintas.
+
+El daño no era solo el ruido. Un aviso que aparece siempre deja de leerse: si un día el planner
+hubiera omitido la etapa por un motivo real, nadie lo habría notado entre el resto de notas.
+
+#### La corrección no es "que lo emita siempre"
+
+`plan-check` cuesta tokens (lee `FILES_CHANGED` y busca evidencia de cada ítem del PLAN) y en un
+cambio de un literal no aporta: verificar la cobertura de un plan de un solo ítem es trabajo que
+`validator` y el gate final ya cubren. Así que la etapa pasa a ser **condicional**, con criterios
+contables en `agents/rs-editor-planner.md` § "Criterios para incluir `plan-check`":
+
+- **≥3 ítems accionables** en el plan
+- toca **≥2 proyectos/capas**
+- lleva cambio de esquema BD o SQL nuevo (`db-modeler` en `STAGES`)
+- es una **fase** de un desarrollo por fases
+- introduce funcionalidad nueva (`documentar` en `STAGES`)
+
+Umbrales contables a propósito: un criterio cualitativo ("si el cambio es grande") lo resuelve el
+planner incluyendo la etapa siempre por prudencia, y entonces no se ahorra nada.
+
+#### La red de seguridad cambia de señal
+
+Con la etapa condicional, la red anterior (`core` corrió → `plan-check`) habría seguido disparando
+en todos los cambios simples, que es justo el ruido que se quería quitar. Nueva señal:
+
+> `plan-check` no estaba en `STAGES` **y** `core` devuelve `FILES_CHANGED` de ≥3 ficheros o ≥2
+> proyectos → ejecutarlo igualmente y anotarlo.
+
+Ahora sí encaja con la forma canónica de las tres redes de seguridad —un dato empírico que el
+planner no podía conocer al planificar—, porque el tamaño real del cambio solo se sabe al
+escribirlo. Y la nota pasa a decir algo útil: `⚠️ El cambio salió mayor de lo planificado (N
+ficheros, M proyecto(s)) → ejecuto plan-check aunque no venía en STAGES`, es decir, el planner
+subestimó. Por debajo del umbral no se ejecuta.
+
+#### Riesgo asumido
+
+En un cambio clasificado como simple, un `core` que implemente medio plan ya no se detecta por
+cobertura; queda en manos de `validator` (compila + revisión lógica) y del Gate B. Aceptable para
+un plan de un único ítem localizado — por eso el umbral está en 3 ítems y no más arriba.
+
+Ficheros: `agents/rs-editor-planner.md` (fila `plan-check` en la tabla de vocabulario + sección de
+criterios + ejemplos de `STAGES típico` + ejemplo de output) ·
+`skills/rs-enterprise-agent/SKILL.md` (paso 2, control de flujo y tabla § Redes de seguridad) ·
+`README.md` · `docs/plugin-architecture.md`.
+
 ## 3.14.0 — 2026-08-07
 
 ### Buscar en el árbol tenía tres implementaciones, y dos bugs que solo estaban en una
