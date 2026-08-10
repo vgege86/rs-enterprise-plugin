@@ -1,5 +1,94 @@
 # RS Enterprise Agent — Changelog
 
+## 3.16.0 — 2026-08-10
+
+### El verificador de tests hablaba inglés y la máquina hablaba español, así que nadie contó nada
+
+Síntoma reportado: `run_tests` devolvía `passed=0, failed=0, success=true` y `raw_summary` vacío en
+**cualquier** solución del entorno. No en una: en todas.
+
+#### Por qué salía verde
+
+`hooks/test-runner-check.ps1` ejecutaba `dotnet test` y leía el resultado del **texto de consola**,
+con tres expresiones en inglés:
+
+```powershell
+if ($line -match 'Passed:\s*(\d+)')  { $passed = [int]$Matches[1] }
+if ($line -match 'Failed:\s*(\d+)')  { $failed = [int]$Matches[1] }
+if ($line -match 'Skipped:\s*(\d+)') { $skipped = [int]$Matches[1] }
+```
+
+Con el CLI localizado, la salida real es `Pruebas totales: 84` / `Correcto: 84`. Ninguna expresión
+encontraba número, los contadores se quedaban en su valor inicial —cero— y el veredicto se calculaba
+aparte, `success = ($exitCode -eq 0)`. El filtro de `raw_summary` buscaba esas mismas palabras
+inglesas, así que también salía vacío: ni cifras, ni evidencia con la que sospechar.
+
+El fallo no es el número mal. Es que **un fallo de lectura se presentaba como un éxito de
+ejecución**. Toda etapa que se fiara de la tool —el `tester` del pipeline, `/rs-test`,
+`/rs-validar-req`— concluía "los tests pasan" sin que se hubiera contado una sola prueba. Y como el
+JSON salía bien formado y coherente consigo mismo, ninguna revisión posterior tenía de qué tirar.
+
+Lo cazó el tester porque se negó a leer 0/0/0 como verde.
+
+#### Dos arreglos, no uno
+
+**Que el conteo no dependa del idioma.** El resultado pasa a leerse del **`.trx`** (`--logger trx`
+sobre una carpeta temporal por ejecución): es XML y los conteos son atributos, no frases, así que no
+hay traducción que los rompa. El texto de consola queda como último recurso —el `.trx` no llega a
+escribirse si el build revienta antes— y para ese camino se fuerza además
+`DOTNET_CLI_UI_LANGUAGE=en` + `VSLANG=1033` y se reconocen los rótulos en ambos idiomas. La lógica
+vive en el hook nuevo `hooks/lib-trx.ps1` (`Get-TrxSummary`, `Get-DotnetConsoleSummary`,
+`Get-RsLineasResumen`).
+
+**Que un cero no pueda volver a leerse como verde.** Es la mitad importante: forzar el idioma
+arregla *este* fallo, pero cualquier formato futuro que el parser no entienda reproduciría el mismo
+falso verde. Ahora los parsers devuelven `$null` cuando no pueden contar —nunca cero— y el hook lo
+traduce a estado explícito:
+
+| Situación | Salida |
+|---|---|
+| Ni `.trx` ni resumen en consola | `success=false`, `parse_failed=true`, `error`, `raw_summary` con la cola de la salida |
+| Proyecto de test presente y 0 pruebas ejecutadas | `success=false`, `no_tests_ran=true`, `error` |
+| Cifras de consola que no cuadran con el total | `counts_inconsistent=true` + `warning` |
+
+Además `success` ya exige `failed = 0`, no solo `exitCode = 0`. Se añaden `total` y `source`
+(`trx`/`console`/`none`) para que el agente sepa de dónde salen las cifras que está leyendo.
+
+#### Dos fallos más que aparecieron al probarlo de verdad
+
+Con una solución de prueba real (2 pasan, 1 falla, 1 saltado) salieron a la luz:
+
+- ⛔ **El hook moría sin emitir JSON en cuanto un test fallaba.** Con `$ErrorActionPreference =
+  "Stop"`, el stderr de un comando **nativo** es un error terminante: el runner escribía `[FAIL]` y
+  el script reventaba ahí. Es decir, el único caso que de verdad importa —hay tests rojos— era
+  justamente el que no se podía reportar. El veredicto se juzga por `$LASTEXITCODE` y el `.trx`, así
+  que la preferencia baja a `Continue` solo durante esa llamada (también en `compile-check.ps1`,
+  donde el mismo patrón estaba latente).
+- **Los saltados se perdían.** VSTest escribe el resultado con `outcome="NotExecuted"` y aun así
+  deja `notExecuted="0"` en los contadores. Se toman como `max(notExecuted+inconclusive,
+  total-executed)`.
+
+#### El mismo bug, latente, en el compilador
+
+`hooks/compile-check.ps1` parseaba `(error|warning)\s+(CS\w+)`. En español el compilador emite
+`advertencia CS0168`: **todos los warnings desaparecían del JSON** sin que nada fallara. Los errores
+colaban por casualidad, porque "error" se escribe igual en los dos idiomas. Ahora fija las mismas
+variables de entorno y acepta `advertencia`/`aviso` normalizando a `warning`, por si un SDK antiguo
+ignora el env var. Verificado: sobre un `CS0168` real pasa de 0 warnings a 2.
+
+#### Gate ejecutable
+
+`tests/TrxParser.Tests.ps1` (18 tests, sin dependencia de `dotnet`) fija el contrato: un resumen en
+español devuelve 84 y no 0, una salida sin resumen devuelve `$null` y no cero, el `.trx` manda sobre
+el texto, y el hook conserva el idioma forzado, el logger `trx` y los dos caminos de no-falso-verde.
+Una convención que solo vive en un comentario no la comprueba nadie.
+
+**Ficheros**: `hooks/lib-trx.ps1` (nuevo), `hooks/test-runner-check.ps1`, `hooks/compile-check.ps1`,
+`tests/TrxParser.Tests.ps1` (nuevo), `mcp/rs-workspace-server.py` (contrato de `run_tests`),
+`agents/rs-editor-tester.md` (condición 0: sin evidencia → FAIL), `agents/rs-test.md`,
+`references/hooks.md`, `references/mcp.md`, `docs/plugin-architecture.md`, `README.md`,
+`docs/crowdstrike-fp-justification.md` (la fila de `Invoke-Expression` ya no describía el código).
+
 ## 3.15.0 — 2026-08-10
 
 ### Una red de seguridad que salta siempre no es una red de seguridad, es una etapa mal declarada

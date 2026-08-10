@@ -267,7 +267,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-test <Solution>.sln` ⚡ | Ejecuta `dotnet test` y reporta passed/failed/skipped. Sin lanzar el pipeline. Si no hay proyecto de test, deriva a `/rs-crear-tests`. |
+| `/rs-test <Solution>.sln` ⚡ | Ejecuta `dotnet test` y reporta passed/failed/skipped (leídos del `.trx`, no del texto de consola: así el conteo no depende del idioma del CLI). Sin lanzar el pipeline. Si no hay proyecto de test, deriva a `/rs-crear-tests`. Si el resultado no se puede leer o no corre ninguna prueba, lo dice — no lo presenta como verde. |
 | `/rs-crear-tests <Solution>.sln` 🔷 | Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios para las clases públicas. |
 | `/rs-cobertura <Solution>.sln` 🔷 | Mapa de cobertura: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Advisory. |
 

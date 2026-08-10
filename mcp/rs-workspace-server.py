@@ -424,7 +424,7 @@ def compile_check(sln_path: str, no_restore: bool = True, max_errors: int = 20) 
     return json.dumps(result, ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="dotnet test → has_test_project (bool: existe proyecto de test), passed/failed/failures[], skipped (conteo de tests skippeados, no ausencia de proyecto). Si no hay proyecto de test → solo has_test_project=false (sin success/passed). max_failures limita detalles de fallo en contexto (default 10).")
+@mcp.tool(description="dotnet test → has_test_project (bool: existe proyecto de test), total/passed/failed/skipped, failures[], source (trx|console|none: de dónde salen las cifras). Si no hay proyecto de test → solo has_test_project=false (sin success/passed). ⛔ success=false con parse_failed=true (no se pudo leer el resultado) o no_tests_ran=true (0 pruebas ejecutadas) NO es 'tests en verde': es ausencia de evidencia, tratar como fallo. max_failures limita detalles de fallo en contexto (default 10).")
 def run_tests(sln_path: str, no_build: bool = True, max_failures: int = 10) -> str:
     args = [sln_path]
     if no_build:

@@ -16,7 +16,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `get_db_config(workspace)` | Paso BD — lee .rs-databases.json → motor, datasource, schema (principal) + conexiones[], motores[] |
 | `find_symbol(symbol, scope_dirs, symbol_type?)` | Localiza clases/métodos/propiedades en scope |
 | `compile_check(sln_path, no_restore=True, max_errors=20)` | Validator — build real → errors[], warnings[], success |
-| `run_tests(sln_path, no_build?)` | Tester — dotnet test → has_test_project (bool), passed/failed/failures[], skipped (conteo). Sin proyecto → solo has_test_project=false |
+| `run_tests(sln_path, no_build?)` | Tester — dotnet test → has_test_project (bool), total/passed/failed/skipped, failures[], source (`trx`/`console`/`none`). Sin proyecto → solo has_test_project=false. ⛔ `parse_failed=true` (no se pudo leer el resultado) o `no_tests_ran=true` (0 pruebas ejecutadas) salen con success=false: es ausencia de evidencia, no verde |
 | `get_model_index(workspace)` | Índice ligero: {TABLA:[COL1,COL2,...]} ~15K tokens. Para impact analysis |
 | `get_table_schema(workspace, tables)` | Esquema completo (cols/tipos/relaciones/índices) de tablas específicas. ~3K tokens |
 | `search_model(workspace, keyword)` | Busca keyword en tablas/columnas/descripciones. Para localizar tablas sin saber el nombre |

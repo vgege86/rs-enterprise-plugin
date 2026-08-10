@@ -229,6 +229,13 @@ y `powershell` 5.1, que es el que ejecuta los hooks de verdad (`plugin.json` los
 `ChildPath` (`-AdditionalChildPath`), que no existe en 5.1—, y una suite que solo pasa en el
 intérprete que no ejecuta nada en producción no prueba lo que hace falta probar.
 
+Desde la 3.16.0 el Pester cubre además la lectura del resultado de `dotnet test`
+(`tests/TrxParser.Tests.ps1`, sobre `hooks/lib-trx.ps1`), con una regla que vale para **cualquier
+hook que informe de una verificación**: *un conteo que no se ha podido leer no es un cero, y un cero
+no es un verde*. El parser devuelve `$null` cuando no entiende la salida y el hook lo convierte en
+`success=false` + `parse_failed`. La versión anterior hacía lo contrario —caía a 0/0 y marcaba
+éxito— y el pipeline entero daba por verificados tests que nunca se contaron.
+
 Segunda tanda de modos directos (v2.20.0), todos **agente-solo** (sin hooks/tools nuevos): `rs-cobertura`
 (sonnet) mapa de cobertura de tests; `rs-dead-code` (sonnet) inverso de `rs-impacto`, símbolos sin
 referencias; `rs-rename` (opus) renombrado de símbolo + referencias con **gate de confirmación** (único

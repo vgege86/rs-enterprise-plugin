@@ -22,7 +22,10 @@ Invocación directa. Ejecuta tests (solo lectura sobre el código). ⛔ No modif
 2. Si `has_test_project=false` → informar de que no hay proyecto de test y sugerir `/rs-crear-tests`
    (o `/rs-cobertura` para ver qué falta). ⛔ No crear el proyecto automáticamente aquí (eso es
    `/rs-crear-tests`); `create_test_project` está disponible solo por si el usuario lo pide explícito.
-3. Reportar el resumen y los fallos.
+3. ⛔ Si `parse_failed=true`, `no_tests_ran=true` o `total=0` con `has_test_project=true` → **no** reportar
+   verde: decir que no se pudo verificar (o que no corrió ninguna prueba) y mostrar `error`/`raw_summary`.
+   Un conteo vacío es ausencia de evidencia, no éxito.
+4. Reportar el resumen y los fallos.
 
 # Output
 

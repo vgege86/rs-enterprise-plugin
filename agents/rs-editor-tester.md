@@ -27,10 +27,12 @@ El Planner ya decidió que esta etapa corre (te incluyó en `STAGES`) porque el 
 
 ## Paso 1 — Tests reales (si existen proyectos de test)
 
-Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__run_tests(sln_path)` → JSON con `has_test_project`, `passed`, `failed`, `failures[]`, `skipped` (conteo de tests skippeados, **no** ausencia de proyecto).
+Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__run_tests(sln_path)` → JSON con `has_test_project`, `total`, `passed`, `failed`, `failures[]`, `skipped` (conteo de tests skippeados, **no** ausencia de proyecto) y `source` (`trx`/`console`/`none`).
 Fallback: `hooks/test-runner-check.ps1 <ruta.sln> -NoBuild`.
 
 ⛔ Evaluar las condiciones EN ESTE ORDEN — la primera que aplique decide (no seguir a paso 2 si aplica una de las dos primeras):
+
+0. **`parse_failed = true` o `no_tests_ran = true`** (o `total = 0` con `has_test_project = true`) → el resultado no se ha podido leer, o no se ejecutó ni una prueba. **No hay evidencia**: reportar `STATUS: FAIL` con el `error`/`raw_summary` del payload. ⛔ Un 0/0 **nunca** se reporta como tests en verde (hasta la 3.16.0 el hook devolvía exactamente eso en máquinas con el CLI en español y el pipeline lo daba por bueno).
 
 1. **`has_test_project = false`** (no existe proyecto de test) → no generar tests tú mismo. Devolver `STATUS: NEEDS_TESTS` — el orquestador invoca al subagente `rs-crear-tests` y vuelve a invocarte. ⛔ NO interpretar la ausencia de proyecto como "tests OK" (antes el payload traía `success=true` engañoso; ya no).
 2. **`has_test_project = true` Y `FILES_CHANGED` contiene código testeable de producción** (clase/método `.cs` con lógica real — cálculo, transformación, validación, decisión —, no solo `.aspx`/config/SQL) que aún no tiene cobertura → devolver `STATUS: NEEDS_TESTS`: el orquestador invoca `rs-crear-tests` con `FILES_CHANGED` para generar tests del código nuevo, y vuelve a invocarte. Al reinvocarte con los tests ya creados, saltar esta condición (no recrear en bucle) y continuar. Si `FILES_CHANGED` no tiene lógica testeable (solo idiomas/UI/config) → no pedir tests, seguir al paso 2.
