@@ -491,7 +491,7 @@ Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **49 tools** que envue
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
-- `parse_web_log` devuelve el **agregado** de un log de errores (firmas + recuento), nunca sus líneas: un log de cientos de MB se resume sin cargarlo.
+- `parse_web_log` devuelve el **agregado** de un log de errores (firmas + recuento + pantalla), nunca sus líneas: un log de cientos de MB se resume sin cargarlo. Reconoce NLog/log4net, ELMAH XML, el formato propio de la AgendaWeb y volcados de stack .NET.
 - `render_erd`, `render_dashboard`, `generate_sql`, `export_dmd` generan **ficheros**, nunca cargan el contenido en contexto.
 - El modelo BD (~180K tokens) nunca se carga entero: `search_model` → `get_model_index` → `get_table_schema`.
 

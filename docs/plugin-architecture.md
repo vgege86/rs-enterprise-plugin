@@ -44,6 +44,8 @@ runner/
 references/              conocimiento de dominio, cargado bajo demanda
 docs/                    esta doc + design specs
 scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd, install, etc.)
+tests/                   suite Pester (*.Tests.ps1) + pytest (test_*.py) de hooks y scripts
+  fixtures/              entradas de ejemplo para los tests (recortadas y anonimizadas)
 assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
 executions/
   history.json           historial de ejecuciones del pipeline (lo escribe log_execution)

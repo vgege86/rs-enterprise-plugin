@@ -72,12 +72,23 @@ Igual que el resto de skills: partir de la ruta que inyecta Claude Code, si term
    propio que el parser no reconoce) y parar.
 3. Presentar la tabla, ordenada por frecuencia:
 
-   | # | firma | excepción | origen | ocurrencias | primera → última |
-   |---|-------|-----------|--------|-------------|------------------|
+   | # | firma | excepción | origen | pantalla | ocurrencias | primera → última |
+   |---|-------|-----------|--------|----------|-------------|------------------|
 
-4. Reportar también `total_events`, `distinct_signatures` y, si `truncated` o `scan_truncated` son
-   `true`, **decirlo explícitamente**: hay más firmas o más líneas de las analizadas. Un recuento
-   truncado presentado como completo es un error de informe, no un detalle.
+   `excepción` no siempre es un tipo .NET: en el formato `rs-cerrores` (el propio de la AgendaWeb)
+   es el **código** — `ORA-12899`, `COD200`—, que es lo que identifica el fallo ahí. `pantalla` es
+   la `.aspx.cs` del stack y puede venir vacía (procesos sin capa web); no inventarla.
+
+4. Reportar también `total_events`, `distinct_signatures`, `format_detected` y, si `truncated` o
+   `scan_truncated` son `true`, **decirlo explícitamente**: hay más firmas o más líneas de las
+   analizadas. Un recuento truncado presentado como completo es un error de informe, no un detalle.
+5. ⛔ **Contrastar el recuento con el tamaño del log antes de triar.** `success: true` no garantiza
+   que se haya reconocido el formato: hasta la 3.20.0 un log de 55.494 líneas con 2.544 eventos
+   devolvía `total_events: 1` y se reportó como "un error de infraestructura, no abrir tareas".
+   Si `total_events` es de un orden que no cuadra con `lines_scanned` (decenas de miles de líneas y
+   un puñado de eventos), o `format_detected` es `desconocido`/`stacktrace-plano` sobre un log con
+   pinta de tener cabeceras propias → **decirlo y parar**: es un formato que el parser no entiende,
+   y la respuesta correcta es añadirlo (`/rs-plugin-dev`), no triar un recuento falso.
 
 ### Fase 2 — Triaje y propuesta de tareas (gate ⛔)
 1. Clasificar cada firma en una de estas categorías, con lo que se ve en la firma (excepción,
@@ -92,10 +103,12 @@ Igual que el resto de skills: partir de la ruta que inyecta Claude Code, si term
      tarea de desarrollo; proponerla aparte y dejar que el usuario decida.
    - **ruido** — trazas de terceros, cancelaciones de petición del navegador, bots. → descartar.
 2. Proponer **una tarea por firma accionable**, con:
-   - **Resumen**: `[log:<hash>] <Excepción> en <Origen>` — el marcador `[log:<hash>]` es lo que
-     permite reconocer la tarea en ejecuciones posteriores (paso 2 de F3).
-   - **Descripción**: excepción · origen · nº de ocurrencias · ventana `primera → última` ·
-     ficheros de log · muestra (ya redactada por el hook) · categoría del triaje.
+   - **Resumen**: `[log:<hash>] <Excepción> en <Origen>` (+ ` (<pantalla>)` si el hook la trae) —
+     el marcador `[log:<hash>]` es lo que permite reconocer la tarea en ejecuciones posteriores
+     (paso 2 de F3).
+   - **Descripción**: excepción/código · origen · pantalla · nº de ocurrencias · ventana
+     `primera → última` · ficheros de log · muestra (ya redactada por el hook) · categoría del
+     triaje.
    - **Prioridad sugerida**: frecuencia × severidad de la categoría. Justificarla en una línea.
 3. Si dos firmas son claramente el mismo fallo visto desde dos sitios (misma excepción, mismo
    origen, mensajes equivalentes que la normalización no llegó a colapsar) → proponer **fundirlas**

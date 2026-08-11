@@ -775,7 +775,7 @@ def find_doc_section(workspace: Workspace, keyword: str) -> str:
     return json.dumps(_run_ps("find-doc-section.ps1", workspace, keyword), ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="Parsea un log de errores web (NLog/log4net, ELMAH XML, volcado de stack .NET) y agrupa las ocurrencias por FIRMA (excepción + frame de código propio + mensaje normalizado) → [{hash,exception,origin,message,count,first_seen,last_seen,files,samples}] ordenado por count. Devuelve solo el agregado, nunca el log completo. path = fichero o carpeta. PII redactada en mensajes y muestras.")
+@mcp.tool(description="Parsea un log de errores web (NLog/log4net, ELMAH XML, rs-cerrores —el formato propio de la AgendaWeb: 'Error: (dd/MM/yyyy H:mm) - Codigo error: ... Descripción error: ...'— y volcado de stack .NET) y agrupa las ocurrencias por FIRMA (excepción, o el código ORA-xxxxx / 'Codigo error' cuando el formato lo trae, + frame de código propio + mensaje normalizado) → [{hash,exception,origin,pantalla,message,count,first_seen,last_seen,files,samples}] ordenado por count; pantalla = la .aspx.cs más cercana del stack ('' si no hay). Devuelve solo el agregado, nunca el log completo, y format_detected dice qué formato se reconoció. path = fichero o carpeta. PII redactada en mensajes y muestras, incluidos los literales SQL.")
 def parse_web_log(path: str, glob: str = "*.log", desde: str = "", niveles: str = "ERROR,FATAL",
                   max_signatures: int = 30, samples: int = 2) -> str:
     args = [

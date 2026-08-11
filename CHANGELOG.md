@@ -1,5 +1,98 @@
 # RS Enterprise Agent — Changelog
 
+## 3.20.0 — 2026-08-11
+
+### Un log con 2.544 errores se reportaba como "1 error, de infraestructura"
+
+`parse_web_log` (hook `hooks/parse-weblog.ps1`, base de `/rs-log-errores`) no reconocía el formato
+propio de la AgendaWeb uCollect/RS. Sobre un log real de 55.494 líneas devolvía `total_events: 1`,
+`distinct_signatures: 1` y `format_detected: "stacktrace-plano"` — **con `success: true`**. Nada en
+la respuesta delataba el fallo, así que el triaje leía ese "1 error" como incidencia aislada de
+infraestructura y no se abría ninguna tarea. Es el mismo patrón silencioso que la 3.15.0 con el
+parser de `dotnet test`: salida sintácticamente correcta, JSON sano, recuento inventado.
+
+El formato abre cada evento con una cabecera propia y sigue con el stack:
+
+```
+Error: (11/08/2026 13:45) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-12899: ...
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+```
+
+Fallaba por dos motivos encadenados. `$rxStamp` exigía `[` y `HH:mm:ss`, y aquí la fecha va entre
+**paréntesis** y **sin segundos**: ninguna línea abría evento por timestamp, así que la rama
+NLog/log4net nunca entraba y ningún evento tenía ventana temporal. Al caer al volcado plano, el gate
+era `$rxExcepcion`, que pide al menos un carácter antes de `Error`
+(`[A-Za-z_][\w.]*(?:Exception|Error)`) y **no casa el literal `Error:` a secas**: el único evento
+que se abrió en todo el log fue el de la única línea que contenía un token tipo
+`InternalServerError`.
+
+#### Formato `rs-cerrores` reconocido
+
+Cabecera propia detectada antes que `$rxStamp`, con la etiqueta variable (`Error`, `cErrores`,
+`Fail`…) de la que se **deriva el nivel**, para que `-Niveles` siga filtrando. La hora se acepta con
+**una o dos cifras** y con los segundos opcionales: en el log de referencia el 20% de los eventos
+llevan hora de un dígito (`(20/02/2026 8:41)`), y exigir `HH` no solo los pierde — los pega como
+continuación del evento anterior, falseando también la firma de ese otro evento. Mientras un evento
+de este formato está abierto solo lo cierra otra cabecera suya: dentro del SQL del mensaje hay
+fechas que sí casarían `$rxStamp`.
+
+El stamp se normaliza a `yyyy-MM-dd HH:mm:ss`. `first_seen`/`last_seen` se calculan comparando
+cadenas, y `dd/MM/yyyy` como texto ordena por el día.
+
+#### La firma va por CÓDIGO, no por token `*Exception`
+
+En este formato la excepción útil es el código. Se toma, por este orden: el `ORA-xxxxx` del texto →
+el `Codigo error: <n>` de la cabecera (descartando el `0`, que no discrimina) → la excepción .NET.
+Sin esto todas las firmas colapsan en `SinExcepcion` y el dedup queda inservible. Un mismo
+`ORA-12899` sobre dos columnas distintas sigue siendo dos firmas.
+
+#### El frame propio ya no se ancla a inicio de línea
+
+`$rxFrame` buscaba `^\s*(?:at|en)\s+…`. En este formato el frame **más profundo** viene pegado al
+final del texto del mensaje (`… ) )     en Comun.cConexionOracle.EjecutarQuery(…)`), y el que abre
+línea es el de la capa de arriba: anclando a `^` se atribuía el fallo a la capa equivocada. Ahora se
+busca también embebido, en todos los formatos.
+
+#### Campo nuevo `pantalla`
+
+Cada firma trae la página `.aspx.cs` (o el control `.ascx.cs`) más cercana a la cima del stack —
+`FrmDetalleClie`, `FrmLogin`…—, que es lo que permite triar sin abrir el código: dos errores
+idénticos en dos pantallas distintas son dos tareas distintas. Es el **único** cambio del contrato
+de salida; el resto de campos no se toca.
+
+#### PII: el dato viaja dentro del SQL
+
+El mensaje trae la query entera y los datos personales van **dentro de los literales entre comillas
+simples**, donde ninguna detección por forma llega (un nombre o un número de lote no tienen forma
+reconocible). `Remove-RsPii` seguía cubriendo correo, IBAN y DNI/NIE fuera de comillas; ahora
+`message` y `samples` pasan además por una redacción de literales (`'…'` → `'<val>'`).
+⛔ Solo en la **salida**, nunca en la clave de firma: el hash es el marcador `[log:<hash>]` con el
+que `/rs-log-errores` deduplica contra los tickets ya abiertos, y cambiarlo los recrearía todos.
+
+#### Dos correcciones que salieron por el camino
+
+- **Codificación**: `[IO.File]::ReadLines` sin argumento asume UTF-8 y los logs de una web .NET en
+  Windows salen en la codepage ANSI. Cada acento se convertía en `U+FFFD`, lo que no solo afea el
+  texto que acaba en el ticket: `Descripción error:` dejaba de casar y el mensaje salía con la
+  cabecera pegada delante. Ahora se detecta la codificación (BOM, y si no, UTF-8 estricto sobre los
+  primeros 64 KB).
+- **Eventos descartados**: al filtrar una cabecera por nivel o por `-Desde`, sus líneas de stack
+  quedaban sueltas y una que contuviera `…Exception` abría un evento nuevo por el camino del volcado
+  plano — el recuento devolvía justo lo que se acababa de filtrar. Ahora se descarta el evento
+  entero.
+
+#### Cobertura
+
+`tests/WebLogParser.Tests.ps1` (24 aserciones) sobre `tests/fixtures/weblog-rs.log`, un fixture de
+12 eventos recortados y anonimizados: recuento, firmas distintas, hora de una cifra, segundos,
+código como excepción, frame embebido, `pantalla`, ventana ordenable, redacción de PII, filtros
+`-Niveles`/`-Desde`, lectura de un log ANSI y no regresión de NLog/log4net, volcado plano y log sin
+errores. `hooks/parse-weblog.ps1` estaba además **sin BOM** desde su alta, incumpliendo la
+convención de §7 del doc de arquitectura; se ha corregido.
+
+Contra el log de referencia (55.494 líneas): de `1` evento y `1` firma a **2.544 eventos y 271
+firmas**, con la ventana poblada (`2026-02-20` → `2026-08-11`).
+
 ## 3.19.0 — 2026-08-11
 
 ### Los scripts de idiomas inventaban los idiomas y tiraban los IDTEXTO al final del montón
