@@ -15,8 +15,8 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `detect_vcs(workspace)` | Detecta SVN/Git subiendo por las carpetas → `{vcs, root}`. Llamar antes de cualquier tool `svn_*`/`git_*` |
 | `get_db_config(workspace)` | Paso BD — lee .rs-databases.json → motor, datasource, schema (principal) + conexiones[], motores[] |
 | `find_symbol(symbol, scope_dirs, symbol_type?)` | Localiza clases/métodos/propiedades en scope |
-| `compile_check(sln_path, no_restore=True, max_errors=20)` | Validator — build real → errors[], warnings[], success |
-| `run_tests(sln_path, no_build?)` | Tester — dotnet test → has_test_project (bool), total/passed/failed/skipped, failures[], source (`trx`/`console`/`none`). Sin proyecto → solo has_test_project=false. ⛔ `parse_failed=true` (no se pudo leer el resultado) o `no_tests_ran=true` (0 pruebas ejecutadas) salen con success=false: es ausencia de evidencia, no verde |
+| `compile_check(sln_path, no_restore=True, max_errors=20, builder="auto")` | Validator — build real → errors[], warnings[], success, `builder`/`builder_reason`. **El compilador se autodetecta leyendo los `.csproj`** (MSBuild de VS con .NET Framework/web/COM, CLI `dotnet` con SDK-style modernos). ⛔ `builder_error` = falta el compilador en la máquina → compilación **no verificada**, NO fallo del código: no mandarlo al fixer |
+| `run_tests(sln_path, no_build?)` | Tester — ejecuta los tests → has_test_project (bool), total/passed/failed/skipped, failures[], source (`trx`/`console`/`none`), `runner`. **El runner se autodetecta** igual que en `compile_check`: `dotnet test` o MSBuild + `vstest.console.exe` en soluciones .NET Framework. Sin proyecto → solo has_test_project=false. ⛔ `parse_failed=true` (no se pudo leer el resultado), `no_tests_ran=true` (0 pruebas ejecutadas) o `runner_error` (falta el runner en la máquina) salen con success=false: es ausencia de evidencia, no verde ni rojo |
 | `get_model_index(workspace)` | Índice ligero: {TABLA:[COL1,COL2,...]} ~15K tokens. Para impact analysis |
 | `get_table_schema(workspace, tables)` | Esquema completo (cols/tipos/relaciones/índices) de tablas específicas. ~3K tokens |
 | `search_model(workspace, keyword)` | Busca keyword en tablas/columnas/descripciones. Para localizar tablas sin saber el nombre |
@@ -100,3 +100,10 @@ promete (`docs/proteccion-pii-consultas-bd.md` §4.3 y §5.2c).
 ⛔ Nunca reproducir el valor de una celda enmascarada ni intentar sortear el filtro (por ejemplo
 consultando la misma columna con otra expresión). Si un dato hace falta en claro, la salida es
 declarar la columna como segura en el modelo BD (`/rs-pii`), no rodear el filtro.
+
+✅ **Pero el pseudónimo sí se puede usar para correlacionar.** `pii:xxxxxxxx` es determinista
+(`HMAC(clave, NOMBRE_COLUMNA + valor)`): el mismo valor da siempre el mismo pseudónimo, en
+cualquier consulta y en cualquier tabla. Se pueden unir filas de la misma persona entre tablas,
+contar distintos y detectar duplicados sin desenmascarar nada. La condición es que la columna
+**vuelva con el mismo nombre** en ambas consultas (si no, alinearlas con un alias). Detalle,
+límites y avisos: `references/bd.md` → "Los pseudónimos SÍ se pueden cruzar entre tablas".

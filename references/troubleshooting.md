@@ -214,18 +214,21 @@ Solución:
 
 ## MSB4019 en build/test Online (WebForms) vía CLI dotnet
 
+✅ **Resuelto en 3.21.0 para las tools del plugin.** `compile_check` y `run_tests` autodetectan el toolchain (`hooks/lib-msbuild.ps1`) y ya usan `msbuild.exe`/`vstest.console.exe` cuando toca. Esta sección sigue aplicando a `dotnet build`/`dotnet test` invocados a mano por Bash.
+
 Causas:
 
-- `dotnet build`/`dotnet test`/`mcp__plugin_rs-enterprise-agent_rs-workspace__compile_check`/`run_tests` (CLI `dotnet`) fallan con `MSB4019` (falta `Microsoft.WebApplication.targets`, que el SDK de `dotnet` no trae) en cuanto el build toque el proyecto WebForms — pasa incluso solo restaurando/compilando un proyecto de test con `ProjectReference` al `.csproj` web
-- `compile-check.ps1` solo parsea diagnósticos `CS####`: un `MSB####` real puede quedar invisible (`error_count=0` con `exit_code=1`) — no fiarse de ese resultado
+- `dotnet build`/`dotnet test` fallan con `MSB4019` (falta `Microsoft.WebApplication.targets`, que el SDK de `dotnet` no trae) en cuanto el build toque el proyecto WebForms — pasa incluso solo restaurando/compilando un proyecto de test con `ProjectReference` al `.csproj` web
+- Hasta 3.21.0, `compile-check.ps1` llamaba siempre a `dotnet` y solo parseaba diagnósticos `CS####`: el `MSB####` real quedaba invisible (`error_count=0` con `exit_code=1`) y el validator reportaba "compilación no verificada" de forma crónica
 - No es fallo del código: es una limitación del SDK `dotnet` con proyectos .NET Framework WebForms
 
 ---
 
 Solución:
 
-- Para compilar de verdad: `msbuild.exe` real de Visual Studio (localizar con `vswhere.exe`, no asumir en PATH)
-- Para ejecutar tests de verdad: `vstest.console.exe` directo sobre el `.dll` de test ya compilado, no `dotnet test`
+- Con las tools del plugin: nada que hacer, `compile_check`/`run_tests` eligen el compilador solos. Si devuelven `builder_error`/`runner_error`, falta Visual Studio o Build Tools en la máquina — instalarlos; **no** es un error del código y no hay que mandarlo al fixer
+- A mano: `msbuild.exe` real de Visual Studio (localizar con `vswhere.exe`, no asumir en PATH)
+- Para ejecutar tests a mano: `vstest.console.exe` directo sobre el `.dll` de test ya compilado, no `dotnet test`
 
 ---
 

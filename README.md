@@ -560,9 +560,9 @@ Oracle no permite distinguir un objeto inexistente de uno sin permiso. Por eso:
 | Componente | Para qué |
 |------------|----------|
 | Python 3.11+ + `pip install "mcp>=1.2.0,<2"` | MCP server. El paquete **no se instala solo** y sin él `rs-workspace` no arranca; el tope `<2` es obligatorio (`mcp` 2.0.0 eliminó `mcp.server.fastmcp`). Debe quedar en el Python que resuelve `python` en el PATH |
-| .NET SDK | `dotnet build` / `dotnet test` |
+| .NET SDK | Compilar y testear las soluciones SDK-style (.NET moderno) |
 | PowerShell 7+ | Hooks |
-| Visual Studio + MSBuild | Builds Online (vía vswhere) |
+| Visual Studio o Build Tools | Compilar y testear las soluciones .NET Framework (web, batch, COM) y los builds Online. Se localiza con vswhere: `msbuild.exe` y `vstest.console.exe`. El plugin elige compilador y runner **solo**, leyendo los `.csproj` de cada solución; si falta el que hace falta, avisa de que la compilación no se ha verificado en vez de dar un falso "no compila" |
 | Subversion CLI **o** Git CLI 2.x | Diff/commit/historial (según el proyecto) |
 
 > Subversion: instala el CLI con la **misma versión que TortoiseSVN** para evitar conflictos de working copy.

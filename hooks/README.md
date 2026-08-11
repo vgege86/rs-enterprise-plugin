@@ -54,8 +54,9 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `validate-solution.ps1 <path>` | Verifica que existe la .sln |
 | `parse-sln.ps1 <sln>` | Parsea .sln → scope_dirs, tipo, workspace |
 | `find-symbol.ps1 <nombre> <scope_dirs>` · `find-symbol.ps1 -Symbols "A,B,C" -ScopeDirs <dirs>` | Localiza clase/método/propiedad → archivo:línea. Con `-Symbols`, los N en una sola pasada sobre el árbol |
-| `compile-check.ps1 <sln> [-NoRestore]` | dotnet build → errors[], warnings[], success |
-| `test-runner-check.ps1 <sln> [-NoBuild]` | dotnet test → has_test_project (bool), passed/failed/failures[], skipped (conteo). Sin proyecto → solo has_test_project=false |
+| `compile-check.ps1 <sln> [-NoRestore] [-Builder auto\|dotnet\|msbuild]` | Build real → errors[], warnings[], success, builder. Compilador autodetectado (`lib-msbuild.ps1`) |
+| `lib-msbuild.ps1` | Librería: decide MSBuild de VS vs CLI dotnet leyendo los .csproj de la .sln; localiza msbuild/vstest.console vía vswhere |
+| `test-runner-check.ps1 <sln> [-NoBuild]` | Tests → has_test_project (bool), passed/failed/failures[], skipped (conteo), runner. Runner autodetectado (dotnet test / vstest.console). Sin proyecto → solo has_test_project=false |
 | `create-test-project.ps1 <sln> [-Framework xunit\|mstest\|nunit]` | Crea proyecto de test |
 | `scan-aspx.ps1 -SlnPath <sln>` | Extrae controles AIS de .aspx |
 | `security-scan.ps1 <sln_path>` | SQL injection, XSS, credenciales hardcodeadas, input sin validar |
@@ -247,6 +248,7 @@ Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
 ## Requisitos
 
 - PowerShell 5.1+
-- dotnet CLI en PATH (para compile-check y test-runner-check)
+- dotnet CLI en PATH (para compile-check y test-runner-check en soluciones SDK-style)
+- Visual Studio o Build Tools (msbuild.exe + vstest.console.exe, localizados por vswhere) para las soluciones .NET Framework — sin ellos, esos dos hooks fallan **cerrado** con `builder_error`/`runner_error` en vez de dar un falso "no compila"
 - TortoiseProc en `C:\Program Files\TortoiseSVN\bin\` (para svn-add nivel 2)
 - sqlcmd (SQL Server) o sqlplus (Oracle) para db_query

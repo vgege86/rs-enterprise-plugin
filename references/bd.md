@@ -59,6 +59,37 @@ nunca ignorarlo en silencio.** Tabla completa de campos y de qué decir en cada 
 rodear el filtro** (misma columna con otra expresión, `sqlplus`/`sqlcmd` directos). Si un dato
 se necesita en claro, declarar la columna como segura en el modelo BD (`/rs-pii`).
 
+## ✅ Los pseudónimos SÍ se pueden cruzar entre tablas
+
+Enmascarado **no** significa inservible. El pseudónimo es determinista:
+`HMAC(clave, NOMBRE_COLUMNA + valor)`. **El mismo valor devuelve siempre el mismo
+`pii:xxxxxxxx`, en cualquier consulta y en cualquier tabla.** Es una propiedad de diseño, no un
+accidente: sirve justamente para poder trabajar sin ver el dato.
+
+Con eso se puede, sin desenmascarar nada:
+
+- **Unir filas de la misma persona entre tablas** — si `pii:7e04dd51a6c2` sale en `TABLA_A.DNI`
+  y en `TABLA_B.DNI`, es la misma persona. Un cruce válido para investigar una incidencia.
+- **Contar distintos** (`COUNT(DISTINCT ...)` sobre el pseudónimo), detectar duplicados,
+  verificar integridad referencial, comprobar si un alta llegó a las N tablas que debía.
+- **Comparar entre entornos o entre consultas** dentro de la misma máquina.
+
+⚠️ **La condición es el nombre de la columna de salida, no el de la tabla.** El dominio del HMAC
+es el nombre con el que la columna **vuelve en el resultset**. `TABLA_A.DNI` ↔ `TABLA_B.DNI`
+cruzan. `TABLA_A.DNI` ↔ `TABLA_B.NIF` **no** cruzan, aunque contengan el mismo dato — se alinean
+con un alias: `SELECT NIF AS DNI ...`. Cuidado con el reverso: dos columnas con el mismo nombre y
+significados distintos comparten dominio, así que un pseudónimo repetido entre ellas solo dice
+"mismo texto", no "misma entidad".
+
+⚠️ El cruce es por **coincidencia exacta** del valor normalizado (solo se colapsan los espacios).
+Distinto casing, un acento de más o un formato distinto → pseudónimos distintos. Que dos no
+cuadren **no** prueba que sean personas distintas.
+
+⛔ Con `transform: "suppress"` (literal `[PII]`) no hay correlación posible: ahí sí se pierde.
+⛔ La clave vive en el perfil local (`%LOCALAPPDATA%`). Un `pii:xxxxxxxx` **no es comparable entre
+máquinas ni entre usuarios**: no vale como identificador estable en un ticket, un commit, un
+informe ni una tabla de resultados que vaya a leer otra persona.
+
 ## La política es de `db_query`, no del plugin entero
 
 `db_query` es la **única** tool que enmascara. Las que mantienen el modelo y leen estructura

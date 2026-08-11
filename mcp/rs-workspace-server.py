@@ -411,11 +411,13 @@ def find_symbol(symbol: str, scope_dirs: str, symbol_type: str = "any", max_resu
     return json.dumps(result, ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="Build real con dotnet → errors[], warnings[], success. no_restore=True omite NuGet restore. max_errors limita lista de errores en contexto (default 20).")
-def compile_check(sln_path: str, no_restore: bool = True, max_errors: int = 20) -> str:
+@mcp.tool(description="Build real → errors[], warnings[], success. El compilador se AUTODETECTA leyendo los .csproj de la solución: MSBuild de Visual Studio si hay proyectos .NET Framework/web/COM, CLI dotnet si todos son SDK-style modernos — devuelve `builder` y `builder_reason`. ⛔ `builder_error` = el compilador que hacía falta no está instalado: la compilación NO se ha verificado, NO es un fallo del código (no reportarlo como error de compilación). no_restore=True omite NuGet restore. builder: auto|dotnet|msbuild fuerza el compilador. max_errors limita lista de errores en contexto (default 20).")
+def compile_check(sln_path: str, no_restore: bool = True, max_errors: int = 20, builder: str = "auto") -> str:
     args = [sln_path]
     if no_restore:
         args.append("-NoRestore")
+    if builder and builder != "auto":
+        args.extend(["-Builder", builder])
     result = _run_ps("compile-check.ps1", *args)
     if isinstance(result.get("errors"), list) and len(result["errors"]) > max_errors:
         result["errors_total"] = len(result["errors"])
@@ -424,7 +426,7 @@ def compile_check(sln_path: str, no_restore: bool = True, max_errors: int = 20) 
     return json.dumps(result, ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="dotnet test → has_test_project (bool: existe proyecto de test), total/passed/failed/skipped, failures[], source (trx|console|none: de dónde salen las cifras). Si no hay proyecto de test → solo has_test_project=false (sin success/passed). ⛔ success=false con parse_failed=true (no se pudo leer el resultado) o no_tests_ran=true (0 pruebas ejecutadas) NO es 'tests en verde': es ausencia de evidencia, tratar como fallo. max_failures limita detalles de fallo en contexto (default 10).")
+@mcp.tool(description="Ejecuta los tests → has_test_project (bool: existe proyecto de test), total/passed/failed/skipped, failures[], source (trx|console|none: de dónde salen las cifras). El runner se AUTODETECTA igual que compile_check: `dotnet test` en soluciones SDK-style modernas, MSBuild + vstest.console.exe si hay proyectos .NET Framework (campo `runner`). Si no hay proyecto de test → solo has_test_project=false (sin success/passed). ⛔ success=false con parse_failed=true (no se pudo leer el resultado) o no_tests_ran=true (0 pruebas ejecutadas) NO es 'tests en verde': es ausencia de evidencia, tratar como fallo. ⛔ `runner_error` = el runner no está instalado: los tests NO se han ejecutado, no son tests en rojo. max_failures limita detalles de fallo en contexto (default 10).")
 def run_tests(sln_path: str, no_build: bool = True, max_failures: int = 10) -> str:
     args = [sln_path]
     if no_build:

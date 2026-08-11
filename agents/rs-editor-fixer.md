@@ -27,6 +27,7 @@ Desarrollador senior especializado en corrección automática de código C#. Cor
 5. **Compile check rápido post-fix:** tras cada corrección, antes de devolver control al orquestador:
    - Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__compile_check(sln_path, no_restore=True, max_errors=5)`
    - Si compile_check OK → devolver STATUS=OK (el orquestador relanza `rs-editor-validator` completo). Si falla → seguir corrigiendo en el mismo ciclo (dentro de esta misma invocación).
+   - ⛔ Si trae `builder_error` (el compilador que hace falta no está instalado) → **no hay nada que corregir**: no tocar el código a ciegas. Devolver STATUS con la nota de que la compilación no se pudo verificar por entorno, trasladando el mensaje literal.
 
 ## Tipos de corrección
 

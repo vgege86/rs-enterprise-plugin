@@ -1,5 +1,106 @@
 # RS Enterprise Agent — Changelog
 
+## 3.21.0 — 2026-08-11
+
+### El validador compilaba con .NET Core la mitad de las soluciones, que son .NET Framework
+
+`compile_check` llamaba **siempre** a `dotnet build`, y `run_tests` **siempre** a `dotnet test`. En un
+workspace mixto —web y procesos batch en .NET Framework, servicio y sus módulos en .NET moderno— eso
+falla en cuanto el build toca un proyecto WebForms o con COM: el SDK de `dotnet` no trae
+`Microsoft.WebApplication.targets` y devuelve `MSB4019` sobre código que compila sin una queja en
+Visual Studio.
+
+Encima el resultado salía **mudo**. El parser de diagnósticos solo reconocía `CS####`, así que el
+`MSB4019` real no aparecía en ningún sitio: el JSON decía `error_count: 0` con `exit_code: 1`. El
+efecto operativo era una advertencia crónica —"plan-check OK · validator OK, pero su compile_check
+falló por entorno, la compilación no está verificada"— y un humano compilando a mano con el MSBuild
+de Visual Studio antes de poder seguir. La solución ya vivía en el repo (`service-build.ps1`,
+`actualizador-build.ps1` localizan msbuild con vswhere desde hace versiones); lo que faltaba era que
+llegara al camino que usa el pipeline en cada iteración.
+
+#### El compilador se decide leyendo los `.csproj`, no una lista de nombres
+
+Librería nueva `hooks/lib-msbuild.ps1`. `Get-RsBuildToolchain` recorre los proyectos de la `.sln` y
+exige MSBuild de Visual Studio si alguno es legacy (no SDK-style), declara un TFM `net4x`/`v4.x`, es
+web (import de `Microsoft.WebApplication.targets` o su ProjectTypeGuid) o lleva `COMReference`; si
+todos son SDK-style con TFM moderno, CLI `dotnet`.
+
+⛔ Deliberadamente **no hay nombres de solución, de proyecto ni de ruta** en la regla. El plugin es
+genérico: no sabe cómo se llaman los procesos de cada cliente y una lista blanca queda obsoleta con
+el primer proyecto nuevo. La distinción de TFM se apoya en la nomenclatura oficial —`net5+` siempre
+lleva versión menor (`net8.0`), .NET Framework nunca (`net48`)—, así que "sin punto = Framework".
+
+Ante la duda, MSBuild: compila también los proyectos SDK-style, mientras que el CLI `dotnet` no
+compila .NET Framework. Sobre-detectar cuesta unos segundos de arranque; infra-detectar devuelve un
+falso "no compila" sobre código correcto. Por eso una solución mixta se resuelve entera con MSBuild.
+
+#### "No verificado" y "no compila" dejan de confundirse
+
+Si el compilador que hace falta no está instalado, el hook **falla cerrado**: `builder_error` (o
+`runner_error` en los tests) con el mensaje de qué instalar, en vez de caer al otro compilador en
+silencio. `rs-editor-validator` y `rs-editor-fixer` llevan la instrucción explícita de no tratarlo
+como error de compilación ni intentar corregir nada — no hay nada que corregir.
+
+#### `MSB####`, `NU####` y demás dejan de ser invisibles
+
+El parser de `compile-check.ps1` acepta ahora cualquier código `[A-Za-z]+\d+`, con o sin posición
+`(línea,columna)` —los fallos de infraestructura del build salen sin ella—. El caso que originó todo
+esto (`error_count: 0` con `exit_code: 1`) ya no se puede dar callando.
+
+#### `vswhere -latest` elegía SSMS en vez de Visual Studio
+
+Cazado al probar contra la máquina real. `-products *` —necesario para que valga una instalación de
+solo Build Tools— mete en el saco a todo lo que se instala sobre el shell de Visual Studio, y `-latest`
+se queda con **una** instancia: la de versión más alta. En una máquina con SQL Server Management
+Studio 22 y Visual Studio 2022, `-latest` devolvía SSMS, que no trae `vstest.console.exe`, y el hook
+concluía "no está instalado" con Visual Studio delante. Los dos buscadores usan `-sort` (todas las
+instancias, de más nueva a más antigua) y se quedan con la primera que **tiene** el fichero. El
+buscador de MSBuild se libraba de casualidad, por el `-requires Microsoft.Component.MSBuild`.
+
+#### Tests también
+
+`test-runner-check.ps1` usa el mismo veredicto: `dotnet test` donde procede, y MSBuild +
+`vstest.console.exe` sobre el `.dll` compilado en las soluciones .NET Framework, donde `dotnet test`
+no llegaba a ejecutar ni una prueba. Se mantienen intactas las reglas de la 3.15.0/3.16.0: sin
+resumen legible o con 0 pruebas, `success: false` — ausencia de evidencia nunca es verde.
+
+**Gate**: `tests/MsBuild.Tests.ps1` (26 casos) ejercita el detector con `.csproj` de prueba en un
+temp, sin Visual Studio y sin workspace de cliente, para que corra en CI. Incluye la invariante del
+fallo cerrado: si hace falta MSBuild y no está, el resultado trae `error`, no un fallback silencioso.
+
+**Ficheros**: `hooks/lib-msbuild.ps1` (nuevo), `hooks/compile-check.ps1`, `hooks/test-runner-check.ps1`,
+`tests/MsBuild.Tests.ps1` (nuevo), `mcp/rs-workspace-server.py`, `agents/rs-editor-validator.md`,
+`agents/rs-editor-fixer.md`, `agents/rs-editor-build.md`, `references/hooks.md`, `references/mcp.md`,
+`references/troubleshooting.md`, `hooks/README.md`, `docs/plugin-architecture.md` §7.1.
+
+### Los agentes no sabían que los datos enmascarados sí se pueden cruzar
+
+El pseudónimo de la política PII es `HMAC(clave, NOMBRE_COLUMNA + valor)`: determinista, así que el
+mismo valor devuelve el mismo `pii:xxxxxxxx` en cualquier consulta y en cualquier tabla donde la
+columna se llame igual. Es una propiedad de diseño —está en el docstring de `scripts/pii_mask.py`
+desde que existe— pero las references que leen los agentes solo decían "no reproduzcas el
+pseudónimo". Resultado: se trataba el resultset enmascarado como inservible y se dejaban de hacer
+cruces perfectamente legítimos (unir las filas de una misma persona entre tablas, contar distintos,
+detectar duplicados, verificar integridad referencial) que no requieren ver ningún dato personal.
+
+Documentado en `references/bd.md` (sección nueva "Los pseudónimos SÍ se pueden cruzar entre
+tablas"), en la tabla del bloque `pii` de `references/mcp.md` y en `docs/proteccion-pii-consultas-bd.md`
+§4.1, con los cuatro límites que hacen falta para no sacar conclusiones falsas:
+
+- **El dominio es el nombre de la columna de salida, no la tabla.** `A.DNI` ↔ `B.DNI` cruzan;
+  `A.DNI` ↔ `B.NIF` no, salvo que se alineen con un alias. Y dos columnas homónimas con
+  significados distintos comparten dominio: un pseudónimo repetido dice "mismo texto", no "misma
+  entidad".
+- El cruce es por coincidencia **exacta** del valor normalizado (solo se colapsan espacios): que
+  dos no cuadren no prueba que sean personas distintas.
+- Con `transform: "suppress"` no hay correlación posible.
+- La clave es local al perfil del usuario: un `pii:xxxxxxxx` **no** es comparable entre máquinas y
+  no vale como identificador en un ticket, un commit ni un informe.
+
+**Ficheros**: `references/bd.md`, `references/mcp.md`, `docs/proteccion-pii-consultas-bd.md`.
+
+---
+
 ## 3.20.0 — 2026-08-11
 
 ### Un log con 2.544 errores se reportaba como "1 error, de infraestructura"

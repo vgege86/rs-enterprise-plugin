@@ -487,6 +487,15 @@ IDDEUDOR | NOMBRE            | DNI               | SALDO
 
 La clave reside en el perfil local del desarrollador, fuera del repositorio.
 
+El dominio del pseudónimo es el **nombre de la columna**, no la tabla, de modo que la
+correlación que ilustra el ejemplo no se limita a un resultado: el mismo valor devuelve el
+mismo pseudónimo en cualquier consulta y en cualquier tabla donde la columna se llame igual.
+Esa propiedad es deliberada —es la que permite unir las filas de una misma persona, contar
+distintos y detectar duplicados sin ver ningún dato personal—, y es también la que distingue
+esta medida de un enmascarado dinámico de servidor (§3.2, Opción B), que al no ser determinista
+inutiliza cualquier cruce. Su contrapartida: dos columnas homónimas con significados distintos
+comparten dominio, y un pseudónimo no es comparable entre máquinas, porque la clave es local.
+
 ### 4.2 Qué se considera dato personal
 
 Reglas evaluadas en cada consulta, sin necesidad de anotar el modelo por adelantado:

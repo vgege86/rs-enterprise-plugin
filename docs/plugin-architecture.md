@@ -523,6 +523,16 @@ tocarlas, se toca ahí, no en el hook que las consume:
 | Formato del `model.json` | `scripts/_modeljson.py` (desde PS: `Save-RsModelJson`) | Dos escritores produjeron dos formatos incompatibles y el diff del repositorio quedó inservible — sin que el JSON dejara de ser válido |
 | "No lo veo" vs "no existe" | `hooks/lib-dbvisibilidad.ps1` (+ `db-visibilidad.ps1` para Python) | Decide si un cero significa "no hay" o "sin permiso". Divergir aquí es borrar tablas reales del modelo |
 | Elección de conexión | `Select-RsConexion` en `hooks/lib-dbconfig.ps1` | Sus tres guardarraíles (defecto fijo, id inexistente corta, id elegido publicado) solo valen si los cumplen todos los hooks igual |
+| Qué compilador construye una `.sln` | `Get-RsBuildToolchain` en `hooks/lib-msbuild.ps1` | Lo consumen `compile-check.ps1` y `test-runner-check.ps1`, y el pipeline se apoya en que compilar y testear vean la MISMA solución. Divergir da el caso peor: compila con MSBuild y luego intenta ejecutar tests con `dotnet test`, que sobre .NET Framework no ejecuta ninguno |
+
+⛔ **La decisión de toolchain se lee de los `.csproj`, nunca de nombres.** Un plugin genérico no
+sabe cómo se llaman las soluciones ni los procesos de cada cliente, y una lista de nombres queda
+obsoleta con el primer proyecto nuevo. `Get-RsBuildToolchain` clasifica por lo que declara cada
+proyecto (formato SDK-style o legacy, TFM, `COMReference`, import de `Microsoft.WebApplication.targets`)
+y, ante la duda, elige MSBuild de Visual Studio: compila también los SDK-style, mientras que el CLI
+`dotnet` no compila .NET Framework. Si el compilador necesario no está instalado, el hook falla
+**cerrado** (`builder_error`/`runner_error`): "no verificado" y "no compila" son cosas distintas, y
+confundirlas fue el bug que motivó la librería (CHANGELOG 3.21.0).
 
 ---
 

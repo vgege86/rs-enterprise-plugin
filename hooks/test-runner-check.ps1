@@ -1,7 +1,12 @@
 ﻿<#
 .SYNOPSIS
-    Ejecuta dotnet test sobre la solución y devuelve resultados como JSON estructurado.
+    Ejecuta los tests de la solución y devuelve resultados como JSON estructurado.
     Sustituye la simulación mental del LLM por ejecución real de tests.
+
+    El runner se AUTODETECTA con el mismo criterio que compile-check.ps1 (hooks\lib-msbuild.ps1):
+    `dotnet test` si todos los proyectos son SDK-style modernos, y MSBuild + `vstest.console.exe`
+    si la solución tiene proyectos .NET Framework / web / COM, donde `dotnet test` no llega a
+    ejecutar ni una prueba.
 
 .PARAMETER SlnPath
     Ruta completa al archivo .sln
@@ -31,14 +36,10 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib-trx.ps1")
+. (Join-Path $PSScriptRoot "lib-msbuild.ps1")
 
 if (-not (Test-Path $SlnPath)) {
     @{ success = $false; error = "Archivo no encontrado: $SlnPath" } | ConvertTo-Json
-    exit 1
-}
-
-if (-not (Get-Command "dotnet" -ErrorAction SilentlyContinue)) {
-    @{ success = $false; error = "dotnet CLI no encontrado en PATH" } | ConvertTo-Json
     exit 1
 }
 
@@ -64,6 +65,37 @@ if ($testProjects.Count -eq 0) {
     exit 0
 }
 
+# Qué toolchain toca. Con proyectos .NET Framework, `dotnet test` no ejecuta nada (el mismo MSB4019
+# de compile-check) y el resultado era "0 tests" — que este hook ya sabe NO tratar como verde, pero
+# tampoco aportaba evidencia. Ver lib-msbuild.ps1.
+#
+# Se resuelve DESPUÉS de saber que hay algo que ejecutar: una solución sin proyecto de test no
+# necesita runner, y exigirlo antes convertía "aquí no hay tests" en "falta Visual Studio".
+$toolchain = Get-RsBuildToolchain -SlnPath $SlnPath
+$vstest    = $null
+
+if ($toolchain.error) {
+    @{ success = $false; has_test_project = $true; runner_error = $toolchain.error; builder = $toolchain.builder } |
+        ConvertTo-Json -Depth 4
+    exit 1
+}
+
+if ($toolchain.builder -eq 'msbuild') {
+    $vstest = Find-RsVsTestConsole
+    if (-not $vstest) {
+        @{
+            success          = $false
+            has_test_project = $true
+            builder          = 'msbuild'
+            runner_error     = "Esta solución tiene proyectos .NET Framework, cuyos tests ejecuta " +
+                               "vstest.console.exe, y no se ha encontrado en esta máquina (ni por vswhere ni en el " +
+                               "PATH). Instala Visual Studio o Build Tools con la carga de trabajo de pruebas. " +
+                               "⛔ Los tests NO se han ejecutado: es un problema de entorno, NO tests en rojo."
+        } | ConvertTo-Json -Depth 4
+        exit 1
+    }
+}
+
 # Carpeta temporal para los .trx del logger. Una por ejecución (GUID) para no mezclar el
 # resultado de esta corrida con el de otra que siga en curso en la misma máquina.
 $trxDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rs-trx-" + [guid]::NewGuid().ToString("N"))
@@ -80,14 +112,6 @@ try {
     $env:DOTNET_CLI_UI_LANGUAGE = "en"
     $env:VSLANG = "1033"
 
-    # Operador de llamada con array de argumentos (no Invoke-Expression sobre una cadena): $SlnPath va
-    # como UN argumento literal, evitando inyección de comandos vía una ruta con comillas/`;`.
-    # Ver PSScriptAnalyzer PSAvoidUsingInvokeExpression (gate en CI).
-    # Sin LogFileName a propósito: con varios proyectos de test todos escribirían el mismo fichero
-    # y solo sobreviviría el último; el nombre por defecto es único por proyecto y corrida.
-    $dotnetArgs = @("test", $SlnPath, "--nologo", "-v", "normal", "--results-directory", $trxDir, "--logger", "trx")
-    if ($NoBuild) { $dotnetArgs += "--no-build" }
-
     # ⛔ `$ErrorActionPreference = "Stop"` (arriba) convierte el stderr de un comando NATIVO en error
     # terminante: en cuanto un test fallaba, el runner escribía "[FAIL]" por stderr y el hook moría
     # ahí mismo, sin emitir JSON. Es decir, el único caso que de verdad importa —hay tests rojos—
@@ -95,8 +119,62 @@ try {
     # se juzga por $LASTEXITCODE y el .trx, no por si el proceso escribió en stderr.
     $eapPrevio = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $raw = & dotnet @dotnetArgs 2>&1
-    $exitCode = $LASTEXITCODE
+
+    if ($toolchain.builder -eq 'msbuild') {
+        # Camino .NET Framework: MSBuild compila, vstest.console ejecuta. `dotnet test` no sirve
+        # aquí ni para una cosa ni para la otra.
+        if (-not $NoBuild) {
+            $buildArgs = @("-restore", $SlnPath, "-t:Build", "-v:minimal", "-nologo", "-nodeReuse:false")
+            $buildRaw  = & $toolchain.builder_path @buildArgs 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $ErrorActionPreference = $eapPrevio
+                @{
+                    success          = $false
+                    has_test_project = $true
+                    builder          = 'msbuild'
+                    build_failed     = $true
+                    error            = "La solución no compiló con MSBuild, así que no se ejecutó ningún test. No interpretar como tests en verde."
+                    raw_summary      = Get-RsLineasResumen -Lines @($buildRaw)
+                } | ConvertTo-Json -Depth 4
+                exit 0
+            }
+        }
+
+        # vstest.console recibe .dll, no .csproj: hay que localizar el ensamblado ya compilado.
+        $dlls = @()
+        foreach ($proj in $testProjects) {
+            $dll = Get-RsTestAssembly -ProjectPath $proj
+            if ($dll) { $dlls += $dll }
+        }
+
+        if ($dlls.Count -eq 0) {
+            $ErrorActionPreference = $eapPrevio
+            @{
+                success          = $false
+                has_test_project = $true
+                builder          = 'msbuild'
+                parse_failed     = $true
+                total = 0; passed = 0; failed = 0; skipped = 0; failures = @(); source = "none"
+                error            = "Hay proyecto(s) de test pero no se encontró ningún ensamblado compilado en bin\. Con -NoBuild, compilar antes. No interpretar como tests en verde."
+            } | ConvertTo-Json -Depth 4
+            exit 0
+        }
+
+        $raw      = & $vstest @($dlls + @("/Logger:trx", "/ResultsDirectory:$trxDir")) 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    else {
+        # Operador de llamada con array de argumentos (no Invoke-Expression sobre una cadena): $SlnPath
+        # va como UN argumento literal, evitando inyección de comandos vía una ruta con comillas/`;`.
+        # Ver PSScriptAnalyzer PSAvoidUsingInvokeExpression (gate en CI).
+        # Sin LogFileName a propósito: con varios proyectos de test todos escribirían el mismo fichero
+        # y solo sobreviviría el último; el nombre por defecto es único por proyecto y corrida.
+        $dotnetArgs = @("test", $SlnPath, "--nologo", "-v", "normal", "--results-directory", $trxDir, "--logger", "trx")
+        if ($NoBuild) { $dotnetArgs += "--no-build" }
+        $raw      = & $toolchain.builder_path @dotnetArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+
     $ErrorActionPreference = $eapPrevio
 
     # Fuente autoritativa: el .trx. La consola solo si no hay .trx legible.
@@ -108,6 +186,8 @@ try {
         has_test_project = $true
         exit_code        = $exitCode
         test_projects    = $testProjects.Count
+        runner           = if ($toolchain.builder -eq 'msbuild') { "vstest.console" } else { "dotnet test" }
+        runner_reason    = $toolchain.reason
     }
 
     if (-not $resumen) {
