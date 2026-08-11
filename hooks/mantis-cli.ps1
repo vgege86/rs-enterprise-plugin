@@ -8,6 +8,9 @@ param(
     [string]$Category,
     [string]$Summary,
     [string]$Description,
+    [string]$Priority,
+    [string]$Severity,
+    [string]$Tags,
     [int]$Handler,
     [string]$Status,
     [string]$To,
@@ -148,6 +151,15 @@ switch ($Command.ToLower()) {
             description = $Description
             project     = @{ id = $Project }
             category    = @{ name = $Category }
+        }
+        # Valores por defecto del proyecto (defaults de .mantis-dev-config.json). Aditivos: sin
+        # estos flags el body es exactamente el de antes, y Mantis aplica los suyos.
+        if ($Priority) { $bodyObj.priority = @{ name = $Priority } }
+        if ($Severity) { $bodyObj.severity = @{ name = $Severity } }
+        if ($Tags) {
+            $lista = @($Tags -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } |
+                       ForEach-Object { @{ name = $_ } })
+            if ($lista.Count -gt 0) { $bodyObj.tags = $lista }
         }
         # Alta SIN handler: Mantis puede rechazar un handler en estado 'new'. El handler se fija
         # después con un PATCH (verificado 200 sobre issue existente), reutilizando pausa+retry.

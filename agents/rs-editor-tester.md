@@ -68,7 +68,7 @@ Reportar solo fallos claros. ⛔ No especular, no inventar problemas.
 ⛔ La regla NO es "¿es un control nuevo?" — es **¿cambió algún texto que el usuario puede ver?** Un texto editado en un control ya existente dispara el gate exactamente igual que un alta. Ejecutar este gate si `tipo = Online` y (`IDIOMAS_HINT` no vacío, o el diff en `FILES_CHANGED` toca) CUALQUIERA de:
 - Control AIS nuevo con `LabelText`/`Text`/`GroupingText`/`Titulo` (caso obvio).
 - **`LabelText`/`Text`/`GroupingText`/`Titulo` editado en un control YA EXISTENTE** — el `ICCONTROL` no cambia, solo el contenido visible (ej. cambiar el literal de un label de "Contrato" a "Contrato externo"). Comparar el valor del atributo contra el diff real (`svn_diff_revision`/`git_diff_revision` o el `.aspx` previo), no asumir que "control existente" implica "sin cambios de idiomas".
-- `Idm.Texto(coerr.eXXXX, ...)` nuevo, o el string literal de un `Idm.Texto(coerr.eXXXX, ...)` YA EXISTENTE editado en el `.cs`. **Mensajes de error vía `Idm.Texto` necesitan SOLO INSERT/UPDATE `RIDIOMA`** (se resuelven directo por IDTEXTO) — NO generar `RCONTROLES` para ellos.
+- `Idm.Texto(coerr.eXXXX, ...)` **o `Idm.Texto(coMens.mXXXX, ...)`** nuevo, o el string literal de uno YA EXISTENTE editado en el `.cs`. Las dos familias son texto visible: `coerr` son errores, `coMens` mensajes en pantalla, y ambas disparan el gate igual. **Vía `Idm.Texto` se necesita SOLO INSERT/UPDATE `RIDIOMA`** (se resuelven directo por IDTEXTO) — NO generar `RCONTROLES` para ellos.
 - Texto de validadores ASP.NET (`RequiredFieldValidator`/`CustomValidator`/etc. `ErrorMessage`/`Text`) nuevo o editado — es texto visible al usuario igual que un label.
 - **Rebind de una columna de grid existente** (`Grid.Columns.Add(new AISGridViewTextColumn("KEY", ...))` con `KEY` nueva o distinta a la que tenía antes) — el header se resuelve en runtime por `RCONTROLES.ICCONTROL = "{GridID}#{DataField}"` (`FrmBase.FindTextCtrl`), NO por el patrón `"gridId.HeaderText.CAMPO"` de la documentación funcional (desactualizado). Renombrar el `DataField` sin actualizar `RCONTROLES` deja el header en blanco de forma silenciosa (sin error de build ni runtime).
 - Cualquier otro cambio que altere la clave `ICCONTROL` de un control ya existente (rename de ID, mover un control a otra página) — no solo altas.
@@ -85,25 +85,42 @@ Si el gate aplica:
    - **Alta** (control/mensaje nuevo, sin entrada en RCONTROLES/RIDIOMA): INSERT RIDIOMA + INSERT RCONTROLES (ver reglas abajo).
    - **Texto editado, clave igual** (label/validación/mensaje existente cuyo contenido visible cambió): UPDATE RIDIOMA si el IDTEXTO es exclusivo de ese control, o alta de IDTEXTO nuevo + reasignar RCONTROLES si el IDTEXTO es compartido (ver bullet arriba).
    - **Clave cambiada, texto igual** (rebind/rename): solo INSERT RCONTROLES reusando el IDTEXTO existente.
-   - Asignar IDTEXTO libre (altas): `SELECT MIN(r1.IDTEXTO + 1) FROM RIDIOMA r1 WHERE r1.IDTEXTO >= 3000 AND NOT EXISTS (SELECT 1 FROM RIDIOMA r2 WHERE r2.IDTEXTO = r1.IDTEXTO + 1)` vía `mcp__plugin_rs-enterprise-agent_rs-workspace__db_query`. Si no hay filas con IDTEXTO >= 3000 → usar 3000 como primer ID. Incrementar secuencialmente desde ahí para los sucesivos.
-     ⛔ Nunca elegir IDTEXTO libre buscando huecos en `coerr.cs` — no refleja el estado real de RIDIOMA (hay IDTEXTO sin constante). Usar siempre esta query contra RIDIOMA.
-   - Un IDTEXTO por texto lógico (no por idioma). Una fila RIDIOMA por idioma activo (por defecto `ESP`, `POR` — confirmar si el proyecto tiene otros) por cada IDTEXTO. Una fila RCONTROLES por control que usa ese texto.
-   - **Mensajes de error** (`Idm.Texto(coerr.eXXXX, ...)`): generar SOLO INSERT/UPDATE `RIDIOMA` — se resuelven directo por IDTEXTO. ⛔ NO generar `RCONTROLES` para ellos. Controles con `LabelText`/`Text`/`GroupingText`/`Titulo`: RIDIOMA + RCONTROLES.
+   - **Idiomas activos: del catálogo 32, nunca hardcodeados.**
+     `SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32 ORDER BY TBCODE` vía `mcp__plugin_rs-enterprise-agent_rs-workspace__db_query` → `TBCODE` = id de idioma, `TBTEXT` = descripción. Una fila `RIDIOMA` por cada `TBCODE` devuelto.
+     ⛔ No dar por hecho `ESP`/`POR` ni ningún otro juego: los idiomas de alta varían por instalación y solo la BD lo sabe. `TBCODE` se usa **tal cual** como `RIDIOMA.IDIDIOMA`, sin traducirlo ni normalizarlo — contrastar tipo y casing contra filas existentes de `RIDIOMA` antes de emitir (misma cautela que con `ICFORM`). Si la query no devuelve filas → ⛔ parar y reportarlo, no inventar idiomas.
+   - **Rango de IDTEXTO según el tipo de texto** (el rango lo decide el TIPO, nunca el IDTEXTO que tenga otro texto cercano):
+
+     | Tipo | Cómo se reconoce | Rango |
+     |---|---|---|
+     | Errores | `Idm.Texto(coerr.eXXXX, ...)` | **1000–1999** |
+     | Mensajes en pantalla | `Idm.Texto(coMens.mXXXX, ...)` | **2000–2999** |
+     | Textos de pantalla | `LabelText`/`Text`/`GroupingText`/`Titulo`, headers de grid, `ErrorMessage` de validadores | **≥ 3000**, sin techo |
+
+   - **Asignar IDTEXTO libre (altas): rellenando huecos, empezando por el suelo del rango.** Con `<MIN>`/`<MAX>` los del rango que toque, vía `db_query`:
+     1. `SELECT COUNT(*) FROM RIDIOMA WHERE IDTEXTO = <MIN>` → si devuelve 0, el id es `<MIN>`.
+     2. Si no: `SELECT MIN(r1.IDTEXTO + 1) FROM RIDIOMA r1 WHERE r1.IDTEXTO >= <MIN> AND r1.IDTEXTO < <MAX> AND NOT EXISTS (SELECT 1 FROM RIDIOMA r2 WHERE r2.IDTEXTO = r1.IDTEXTO + 1)` → primer hueco **dentro** del rango.
+     3. `NULL` o `> <MAX>` → **rango agotado** → primer hueco libre a partir de 3000 (misma query con `<MIN> = 3000` y sin techo), y ⛔ **declararlo**: aviso en la cabecera del `.sql` y en el `SUMMARY`. Fuera de su rango el id ya no identifica el tipo por su número, y eso el humano tiene que verlo.
+
+     Para los ids sucesivos de la misma tanda: repetir el proceso (seguir rellenando huecos), ⛔ **no** incrementar a ciegas desde el primero — el siguiente número puede estar ocupado.
+     ⛔ Nunca elegir IDTEXTO libre buscando huecos en `coerr.cs` ni en `coMens.cs` — no reflejan el estado real de RIDIOMA (hay IDTEXTO sin constante). Usar siempre estas queries contra RIDIOMA.
+   - Un IDTEXTO por texto lógico (no por idioma). Una fila RIDIOMA por idioma del catálogo 32 por cada IDTEXTO. Una fila RCONTROLES por control que usa ese texto.
+   - **Errores y mensajes** (`Idm.Texto(coerr.eXXXX, ...)` / `Idm.Texto(coMens.mXXXX, ...)`): generar SOLO INSERT/UPDATE `RIDIOMA` — se resuelven directo por IDTEXTO. ⛔ NO generar `RCONTROLES` para ellos. Controles con `LabelText`/`Text`/`GroupingText`/`Titulo`: RIDIOMA + RCONTROLES.
    - Casing de `ICFORM`: inconsistente en filas existentes (el match en runtime usa `UPPER()`). Consultar el casing ya usado por esa página antes de insertar, por consistencia.
-   - Si no hay texto traducido disponible → placeholder `[TEXTO_ESP]`, `[TEXTO_POR]` etc.
+   - Si no hay texto traducido disponible → placeholder `[TEXTO_<TBCODE>]` por cada idioma del catálogo (p.ej. `[TEXTO_ESP]`).
    - No duplicar INSERTs para controles que ya tienen entrada documentada y sin cambio de texto.
 3. Escribir con `Write` a `C:\AIS\<proyecto>\scripts\<proyecto>-idiomas-<fecha>-<solucion>.sql` (misma ruta que usa `rs-editor-core` para scripts SQL; crear la carpeta `scripts` si no existe). El fichero contiene **solo** los INSERT/UPDATE clasificados en el paso 2 para esta tarea. ⛔ Nunca copiar ni tomar como plantilla un `.sql` de la carpeta `BD\` (p.ej. `600804 - Inserts RCONTROLES.SQL`) ni reusar su nombre — usar siempre la convención `<proyecto>-idiomas-<fecha>-<solucion>.sql`. Los datos salen siempre de la BD (`db_query`), nunca leídos de `BD\`. Formato:
    ```sql
    -- ============================================================
    -- Scripts de idiomas: <Solución>
    -- Generado: <fecha>
-   -- Idiomas: ESP, POR
+   -- Idiomas (RTABL catálogo 32): <TBCODE — TBTEXT de cada fila devuelta>
+   -- Rangos IDTEXTO: errores 1000-1999 | mensajes 2000-2999 | pantalla >=3000
    -- Controles procesados: N (altas) + M (textos editados) + K (rebinds)
-   -- IMPORTANTE: Verificar rango de IDTEXTO antes de ejecutar
    -- IMPORTANTE: Ejecutar en BD antes de desplegar la solución
+   -- ⚠️ (solo si aplica) Rango <X>-<Y> agotado: <n> IDTEXTO asignados fuera de su rango
    -- ============================================================
 
-   -- Altas — RIDIOMA (textos por idioma)
+   -- Altas — RIDIOMA (una fila por idioma del catálogo 32)
    INSERT INTO RIDIOMA (IDTEXTO, IDIDIOMA, TEXTO) VALUES (3000, 'ESP', 'Nombre del cliente');
    INSERT INTO RIDIOMA (IDTEXTO, IDIDIOMA, TEXTO) VALUES (3000, 'POR', 'Nome do cliente');
 
@@ -111,8 +128,14 @@ Si el gate aplica:
    INSERT INTO RCONTROLES (IDCONTROL, IDTEXTO) VALUES ('lblNombreCliente', 3000);
 
    -- Textos editados en control existente (IDTEXTO exclusivo de ese control)
-   UPDATE RIDIOMA SET TEXTO = 'Contrato externo' WHERE IDTEXTO = 2841 AND IDIDIOMA = 'ESP';
-   UPDATE RIDIOMA SET TEXTO = 'Contrato externo' WHERE IDTEXTO = 2841 AND IDIDIOMA = 'POR';
+   UPDATE RIDIOMA SET TEXTO = 'Contrato externo' WHERE IDTEXTO = 3128 AND IDIDIOMA = 'ESP';
+   UPDATE RIDIOMA SET TEXTO = 'Contrato externo' WHERE IDTEXTO = 3128 AND IDIDIOMA = 'POR';
+
+   -- Errores (coerr.eXXXX) → rango 1000-1999, solo RIDIOMA
+   INSERT INTO RIDIOMA (IDTEXTO, IDIDIOMA, TEXTO) VALUES (1042, 'ESP', 'El contrato ya está cerrado');
+
+   -- Mensajes en pantalla (coMens.mXXXX) → rango 2000-2999, solo RIDIOMA
+   INSERT INTO RIDIOMA (IDTEXTO, IDIDIOMA, TEXTO) VALUES (2017, 'ESP', 'Cambios guardados correctamente');
 
    -- Total: N INSERTs RIDIOMA | M INSERTs RCONTROLES | K UPDATEs RIDIOMA
    ```
@@ -135,6 +158,6 @@ FAIL:
 Cerrar SIEMPRE con:
 ```
 FILES_CHANGED: <script idiomas .sql si se generó, vacío si no>
-SUMMARY: <1 línea — incluir "tests pendientes: <motivo>" si la creación advisory falló>
+SUMMARY: <1 línea — incluir "tests pendientes: <motivo>" si la creación advisory falló, y "IDTEXTO fuera de rango: <n> (<rango> agotado)" si el gate de idiomas tuvo que salirse de un rango>
 STATUS: OK|FAIL|NEEDS_TESTS
 ```

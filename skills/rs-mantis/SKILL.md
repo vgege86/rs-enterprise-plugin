@@ -95,8 +95,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin_root>/hooks/mantis-
   ni siquiera al depurar un fallo. El hook ya se encarga de redactarlo en sus errores.
 - Subcomandos reales del hook (detalle completo en `<plugin_root>/references/mantis.md`):
   `projects`, `list -Project <id> [-PageSize <n>]`, `get -Id <n>`,
-  `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` (con `-Handler`
-  deja la issue **asignada** vía PATCH tras el alta, con pausa+retry), `transition -Id <n> -Status
+  `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Priority <s>] [-Severity <s>]
+  [-Tags <a,b>] [-Handler <id>]` (con `-Handler` deja la issue **asignada** vía PATCH tras el alta,
+  con pausa+retry; `-Priority`/`-Severity`/`-Tags` son aditivos — sin ellos el alta es idéntica a
+  antes y Mantis aplica sus propios defaults), `transition -Id <n> -Status
   <nombre>` (salto directo de un paso — no usar para avanzar varios estados, ver `advance`),
   `advance -Id <n> -To <nombre> -Chain <csv> [-Handler <id>] [-HandlerStatus <nombre>]` (recorre
   `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltarse ninguno; cada PATCH con
@@ -112,7 +114,11 @@ Leer `docs\.mantis-dev-config.json` del workspace (carpeta `docs\`, junto a `.rs
 workspace es el cwd de la sesión). Campos:
 - `projects` — lista curada `[{ id, name }, ...]` de proyectos Mantis del cliente (gestionada con
   `/rs-mantis proyectos`).
-- `defaultCategory` — categoría por defecto al crear una issue (p. ej. `"General"`).
+- `defaultCategory` — categoría por defecto al crear una issue (p. ej. `"General"`). **Legacy**: se
+  mantiene por retrocompatibilidad y solo se usa si no hay `defaults.category`.
+- `defaults` *(opcional)* — valores por defecto del proyecto aplicados a **toda** issue creada por el
+  plugin: `category`, `priority`, `severity` y `tags` (**etiquetas**). Espejo del `defaults` de
+  `rs-jira`. Ver "Precedencia de campos al crear" y `references/mantis.md`.
 - `statusChain` — array **ordenado** de nombres de estado del workflow de la instancia, tal como los
   recorre `advance` sin saltarse ninguno (p. ej. `["new", "acknowledged", "assigned", "confirmed"]`
   — verificado en vivo en la instancia objetivo, ver `references/mantis.md`).
@@ -143,10 +149,17 @@ Dos ramas:
     filtro de estado — Mantis no lo ofrece en este endpoint); filtrar en la respuesta las que NO
     estén cerradas/resueltas y listar `id — resumen (estado)` numeradas para elegir, o
   - el usuario da directamente el **id global** de la issue → `mantis-cli.ps1 get -Id <n>`.
-- **b) Crear** (`create`) → pedir categoría (por defecto `defaultCategory` de la config), resumen y
-  descripción → **resolver el usuario del token** (`mantis-cli.ps1 me` → `id`, lectura, sin
-  confirmación) → ⛔ confirmar → `mantis-cli.ps1 create -Project <id> -Category <s> -Summary <s>
-  -Description <s> -Handler <me.id>`. ⛔ **Toda issue creada queda asignada al usuario del token**
+- **b) Crear** (`create`) → pedir categoría (por defecto `defaults.category`, o `defaultCategory` si
+  no hay `defaults`), resumen y descripción → **resolver el usuario del token** (`mantis-cli.ps1 me`
+  → `id`, lectura, sin confirmación) → ⛔ confirmar → `mantis-cli.ps1 create -Project <id> -Category
+  <s> -Summary <s> -Description <s> [-Priority <s>] [-Severity <s>] [-Tags <a,b>] -Handler <me.id>`.
+
+  **Precedencia de campos al crear** (⛔ el primero que informa un campo gana): lo que el **usuario**
+  indique en la conversación → **`defaults`** del config → `defaultCategory` (solo para la categoría)
+  → lo que aplique Mantis por defecto en el proyecto. Los `tags` son la excepción: se **acumulan**
+  (`defaults.tags` + los que pida el usuario + los que aporte quien llame a esta fase, sin
+  duplicados). Mostrar en la confirmación de dónde sale cada valor. Si la instancia rechaza una
+  etiqueta nueva, informar y crear la issue sin ella en vez de abortar el alta. ⛔ **Toda issue creada queda asignada al usuario del token**
   (`-Handler <me.id>`): `create` la deja asignada vía PATCH tras el alta (ver `references/mantis.md`),
   también en *crear-suelto* — que antes no avanzaba estado y dejaba la issue sin handler. Con el `id`
   devuelto, dos submodos (aclarar con el usuario cuál si no se desprende ya de su petición inicial):
@@ -240,7 +253,8 @@ Gestiona la lista curada `projects[]` de `docs\.mantis-dev-config.json`:
 # Subrutina `/rs-mantis init`
 
 Scaffolding de `docs\.mantis-dev-config.json`:
-1. Proponer el JSON con `projects: []`, `defaultCategory: "General"`, un `statusChain` de partida
+1. Proponer el JSON con `projects: []`, `defaults` (categoría, prioridad, severidad y etiquetas por
+   defecto del proyecto — preguntar los valores o dejarlo con `{ "category": "General" }`), un `statusChain` de partida
    (p. ej. `["new", "acknowledged", "assigned", "confirmed"]`) y un `statusMap` de partida (p. ej.
    `{ "inProgress": "assigned", "inValidation": "confirmed" }` — confirmar los nombres reales y el
    orden de la cadena con el usuario, o con `mantis-cli.ps1 get`/`projects` si los conoce).

@@ -89,6 +89,24 @@ Request → Validación → Lógica → Respuesta
 
 - Páginas: `FrmXxx.aspx` → `PAGINA = "FormXxx"` → `RCONTROLES.ICFORM = <App>.FORMXXX`
 - `coerr.eXXXX` (`Comun/coerr.cs`) y `coMens.mXXXX` (`Comun/coMens.cs`) mapean 1:1 a `RIDIOMA.IDTEXTO` — añadir la constante antes de usarla
+- **Idiomas de alta: catálogo 32 de `RTABL`**, nunca una lista fija.
+  `SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32 ORDER BY TBCODE` → `TBCODE` es el id de idioma
+  (el valor que va en `RIDIOMA.IDIDIOMA`, usado tal cual) y `TBTEXT` su descripción. Varían por
+  instalación: ⛔ no dar por hecho `ESP`/`POR`.
+- **Rangos de `RIDIOMA.IDTEXTO`** — el rango lo decide el **tipo de texto**, no el id de un texto vecino:
+
+  | Tipo | Origen en código | Rango |
+  |---|---|---|
+  | Errores | `Idm.Texto(coerr.eXXXX, ...)` | 1000–1999 |
+  | Mensajes en pantalla | `Idm.Texto(coMens.mXXXX, ...)` | 2000–2999 |
+  | Textos de pantalla | `LabelText`/`Text`/`GroupingText`/`Titulo`, headers de grid, `ErrorMessage` de validadores | ≥ 3000, sin techo |
+
+  Al asignar un IDTEXTO nuevo se **rellenan huecos** empezando por el suelo del rango, no se
+  continúa desde el máximo. Rango agotado → primer hueco a partir de 3000, y **declarado** en la
+  cabecera del script: fuera de su rango el id ya no identifica el tipo por su número.
+  ⛔ Los huecos se buscan siempre contra `RIDIOMA`, nunca en `coerr.cs`/`coMens.cs` (hay IDTEXTO sin
+  constante). Reglas operativas completas en `agents/rs-editor-tester.md` (gate del pipeline) y
+  `agents/rs-idiomas-standalone.md` (`/rs-idiomas`).
 - `AISCatalogo.CatalogData`: primera columna = value, segunda = texto mostrado
 - Grid: `DataKeyNames` guarda todos los FK/valores necesarios por fila (sin round-trips extra a BD); filas de detalle en `ViewState` — persistir a BD solo en el Guardar exterior, no por fila
 

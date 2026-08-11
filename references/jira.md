@@ -25,7 +25,15 @@ proyecto). **No contiene secretos** (aun así, recomendado añadirlo al ignore d
     "inProgress": "En Proceso",
     "inValidation": "En Validación"
   },
-  "openStatuses": []
+  "openStatuses": [],
+  "defaults": {
+    "issueTypeName": "Error",
+    "priority": { "name": "Medium" },
+    "components": [{ "name": "AgendaWeb" }],
+    "labels": ["mantenimiento"],
+    "customfield_10050": "valor",
+    "replicarUltimaTarea": true
+  }
 }
 ```
 
@@ -35,8 +43,32 @@ proyecto). **No contiene secretos** (aun así, recomendado añadirlo al ignore d
 - `statusMap` — nombres **reales** de los estados del workflow del proyecto (varían por proyecto/idioma).
 - `openStatuses` — opcional; estados considerados "abiertos" en Fase 1. Vacío → se usa
   `statusCategory = "To Do"` (robusto a idioma).
+- `defaults` — opcional; valores por defecto del proyecto (ver abajo).
 
 Scaffolding rápido: `/rs-tarea init`.
+
+## Valores por defecto y etiquetas — `defaults` (desde 3.18.0)
+
+Todo lo que va dentro de `defaults` se vuelca en `additional_fields` de `createJiraIssue` para
+**cualquier** issue que cree el plugin (`/rs-tarea` Fase 1b, `/rs-log-errores` Fase 3). Admite
+cualquier campo que acepte tu proyecto: `issueTypeName`, `priority`, `components`, `labels`,
+`versions`, `fixVersions`, `duedate`, `environment` y cualquier `customfield_*`.
+
+**`labels` son las etiquetas** que se asignan a las tareas. Es el único campo que **se acumula** en
+vez de sobrescribirse: las de `defaults`, más las que pida el usuario, más las que aporte quien
+llame al alta (p. ej. `/rs-log-errores` añade `log-<firma>`), sin duplicados.
+
+### Precedencia (⛔ el primero que informa un campo gana)
+
+| Orden | Origen | Por qué va ahí |
+|---|---|---|
+| 1 | Lo que el usuario indique en la conversación | Decisión explícita del momento |
+| 2 | `defaults` del config | Valor declarado del proyecto: explícito, revisable, estable |
+| 3 | Réplica de la última tarea creada | Heurística — adivina; cede ante cualquier valor declarado |
+
+`replicarUltimaTarea: false` apaga del todo el paso 3 (la copia de "todos los informados" de la
+última tarea del usuario). Por defecto es `true`, así que un config **sin** `defaults` se comporta
+exactamente como antes de 3.18.0.
 
 ## Credenciales para adjuntar — `~/.claude/rs-jira-credentials.json`
 

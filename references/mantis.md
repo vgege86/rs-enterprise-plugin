@@ -43,6 +43,12 @@ config de Jira). **No contiene secretos** (aun así, recomendado añadirlo al ig
     { "id": 8,  "name": "ClienteX 2024" }
   ],
   "defaultCategory": "General",
+  "defaults": {
+    "category": "General",
+    "priority": "normal",
+    "severity": "minor",
+    "tags": ["mantenimiento"]
+  },
   "statusChain": ["new", "acknowledged", "assigned", "confirmed"],
   "statusMap": { "inProgress": "assigned", "inValidation": "confirmed" }
 }
@@ -51,7 +57,19 @@ config de Jira). **No contiene secretos** (aun así, recomendado añadirlo al ig
 - `projects[]` — lista **curada manualmente** de proyectos Mantis del cliente (un repo puede tener
   varios; a menudo uno nuevo por año, los viejos siguen abiertos). No se filtra por nombre porque
   los nombres de cliente en Mantis no son consistentes. Se gestiona con `/rs-mantis proyectos`.
-- `defaultCategory` — categoría por defecto al crear una issue.
+- `defaultCategory` — categoría por defecto al crear una issue. **Legacy**: se conserva por
+  retrocompatibilidad y solo se aplica si no hay `defaults.category`.
+- `defaults` *(desde 3.18.0)* — valores por defecto del proyecto para **cualquier** issue que cree el
+  plugin (`/rs-tarea` Fase 1, `/rs-log-errores` Fase 3). Espejo del `defaults` de Jira, con los
+  campos que expone la REST de Mantis: `category`, `priority`, `severity` y `tags` (**etiquetas**).
+  Van a `mantis-cli.ps1 create` como `-Category -Priority -Severity -Tags`.
+  - **Precedencia** (⛔ el primero que informa un campo gana): lo que el usuario indique en la
+    conversación → `defaults` → `defaultCategory` (solo categoría) → el default del proyecto en
+    Mantis.
+  - `tags` es la excepción: se **acumulan** (los de `defaults` + los del usuario + los que aporte
+    quien llame al alta — p. ej. `/rs-log-errores` añade `log-<firma>`), sin duplicados. Si la
+    instancia rechaza una etiqueta nueva, la issue se crea sin ella; no se aborta el alta.
+  - Un config **sin** `defaults` se comporta exactamente como antes de 3.18.0.
 - `statusChain` — la cadena **ordenada** de nombres de estado del workflow de esta instancia, de
   inicial a final, tal como los recorre el subcomando `advance` (ver más abajo). Verificado en vivo
   contra la instancia objetivo: `new` (Nueva) → `acknowledged` (Aceptada) → `assigned` (Asignada) →
@@ -97,7 +115,7 @@ Header de autenticación: `Authorization: <token>` — token **crudo**, **sin** 
 | `projects` | `GET /projects` | listar todos los proyectos que ve el token |
 | `list -Project <id> [-PageSize <n>]` | `GET /issues?project_id={id}&page_size={n}` | issues del proyecto (proyectadas a `id`/`summary`/`status`) |
 | `get -Id <n>` | `GET /issues/{id}` | leer una issue |
-| `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Handler <id>]` | `POST /issues` (+ `PATCH` de handler) | crear issue; con `-Handler` la deja **asignada** (ver nota) |
+| `create -Project <id> -Category <s> -Summary <s> -Description <s> [-Priority <s>] [-Severity <s>] [-Tags <a,b>] [-Handler <id>]` | `POST /issues` (+ `PATCH` de handler) | crear issue; con `-Handler` la deja **asignada** (ver nota). `-Priority`/`-Severity`/`-Tags` alimentan `defaults` del config y son **aditivos**: sin ellos el body es el de siempre |
 | `transition -Id <n> -Status <name>` | `PATCH /issues/{id}` body `{"status":{"name":"<name>"}}` | cambiar estado (un solo salto, sin recorrer la cadena) |
 | `advance -Id <n> -To <name> -Chain <csv> [-Handler <id>] [-HandlerStatus <name>]` | `GET /issues/{id}` + N × `PATCH /issues/{id}` | recorre `statusChain` paso a paso desde el estado actual hasta `-To`, sin saltos (PATCH con pausa+retry) |
 | `assign -Id <n> -Handler <id>` | `PATCH /issues/{id}` body `{"handler":{"id":<id>}}` | fija el handler de una issue existente (pausa+retry) |

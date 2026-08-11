@@ -1,5 +1,162 @@
 # RS Enterprise Agent — Changelog
 
+## 3.19.0 — 2026-08-11
+
+### Los scripts de idiomas inventaban los idiomas y tiraban los IDTEXTO al final del montón
+
+Tres cosas mal en la misma zona —la de mayor historial de bugs del plugin—, y las tres afectaban
+igual al gate del pipeline (`rs-editor-tester`) y al modo directo (`/rs-idiomas`), porque las reglas
+están **duplicadas a propósito**: un subagente no puede invocar a otro, así que cada uno lleva su
+copia. Se han corregido las dos a la vez.
+
+#### Los idiomas salen del catálogo 32, no de una constante
+
+Los dos agentes decían *"idiomas activos (por defecto `ESP`, `POR` — confirmar si el proyecto tiene
+otros)"*. Un valor por defecto que hay que confirmar cada vez no es un valor por defecto: es una
+suposición esperando a colarse en un script. Y el dato está en la BD desde siempre.
+
+Ahora se resuelve con `SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32 ORDER BY TBCODE` —
+`TBCODE` es el id de idioma, `TBTEXT` su descripción—, y se emite una fila `RIDIOMA` por cada
+`TBCODE` devuelto. `TBCODE` se usa **tal cual** como `RIDIOMA.IDIDIOMA`, sin traducirlo ni
+normalizarlo, contrastando tipo y casing contra filas existentes antes de emitir (la misma cautela
+que ya existía para `ICFORM`). Sin filas → se para y se reporta; no se inventan idiomas. Los
+placeholders pasan de `[TEXTO_ESP]`/`[TEXTO_POR]` fijos a `[TEXTO_<TBCODE>]`.
+
+#### IDTEXTO por rangos, según el tipo de texto
+
+No existía la noción de rango: **todo** se asignaba desde 3000, daba igual que fuera un error, un
+mensaje o un label.
+
+| Tipo | Cómo se reconoce | Rango |
+|---|---|---|
+| Errores | `Idm.Texto(coerr.eXXXX, ...)` | 1000–1999 |
+| Mensajes en pantalla | `Idm.Texto(coMens.mXXXX, ...)` | 2000–2999 |
+| Textos de pantalla | `LabelText`/`Text`/`GroupingText`/`Titulo`, headers de grid, `ErrorMessage` de validadores | ≥ 3000, sin techo |
+
+El rango lo decide el **tipo de texto**, nunca el IDTEXTO que tenga otro texto cercano.
+
+De rebote se tapa un hueco de cobertura: el gate solo miraba `Idm.Texto(coerr.eXXXX, ...)`, así que
+un `coMens.mXXXX` nuevo o editado —texto igual de visible— no disparaba nada. Ahora dispara igual.
+
+#### Rellenar huecos de verdad
+
+La query de asignación era
+`SELECT MIN(r1.IDTEXTO + 1) ... WHERE r1.IDTEXTO >= 3000 AND NOT EXISTS (... = r1.IDTEXTO + 1)`,
+y fallaba en dos sitios:
+
+- **No devolvía el suelo del rango.** Con un solo 3005 en RIDIOMA devolvía 3007, dejando 3000–3004
+  libres para siempre. Ese es el relleno de huecos que se había perdido.
+- **No tenía techo**, así que no podía saber cuándo un rango se agotaba.
+
+La regla nueva son tres pasos, portables entre SQL Server y Oracle (sin generadores de filas):
+
+1. `SELECT COUNT(*) FROM RIDIOMA WHERE IDTEXTO = <MIN>` → si es 0, el id es el suelo del rango.
+2. Si no, la misma query de huecos pero **acotada**: `... WHERE r1.IDTEXTO >= <MIN> AND r1.IDTEXTO < <MAX> AND NOT EXISTS (...)`.
+3. `NULL` o `> <MAX>` → **rango agotado** → primer hueco a partir de 3000 (la única región sin
+   techo), **declarándolo** en la cabecera del `.sql` y en el `SUMMARY` de la etapa. Fuera de su
+   rango el id ya no identifica el tipo por su número, y eso no puede pasar en silencio.
+
+Para los ids sucesivos de una misma tanda se repite el proceso: se siguen rellenando huecos, no se
+incrementa a ciegas desde el primero — el número siguiente puede estar ocupado.
+
+El ⛔ de siempre se amplía: los huecos se buscan contra `RIDIOMA`, nunca en `coerr.cs` **ni en
+`coMens.cs`** (hay IDTEXTO sin constante).
+
+#### Ficheros
+
+- `agents/rs-editor-tester.md` — gate scripts-idiomas: `coMens` entre los disparadores, query del
+  catálogo 32, tabla de rangos, asignación por huecos acotada al rango, cabecera del `.sql` con
+  idiomas y rangos reales, y el aviso de rango agotado en el contrato `SUMMARY`.
+- `agents/rs-idiomas-standalone.md` — misma actualización (pasos 4/4b/7, reglas de generación y
+  ejemplo de output). Copia deliberada, no compartida.
+- `references/arquitectura.md` — § "Convenciones web Online": el catálogo 32 y la tabla de rangos
+  pasan a ser convención canónica. Antes solo decía que `coerr`/`coMens` mapean 1:1 a
+  `RIDIOMA.IDTEXTO`, sin decir a qué números.
+- `README.md` — sección 8 (nota de idiomas y rangos) y regla clave de idiomas.
+
+## 3.18.0 — 2026-08-11
+
+### El log de errores de la web sabía qué estaba roto y nadie lo leía
+
+Un log de producción es la mejor lista de tareas que hay: dice qué falla, dónde y cuántas veces. El
+problema es su forma. El mismo `NullReferenceException` sale 400 veces, entre miles de líneas de
+`INFO`, y revisarlo a mano cuesta lo suficiente como para no hacerlo. Convertirlo en tareas era
+trabajo manual, así que no se hacía, y los errores seguían ahí.
+
+#### `/rs-log-errores` — del log a las tareas
+
+Comando nuevo (`skills/rs-log-errores/SKILL.md`, orquestador de main thread como `rs-jira`/
+`rs-mantis` — crea tickets y lanza el pipeline, y ninguna de las dos cosas la puede hacer un
+subagente). Fases:
+
+| Fase | Qué hace |
+|---|---|
+| F0 | Fuente del log (ruta del argumento; ⛔ nunca se adivina) |
+| F1 | Parseo + deduplicación → tabla de firmas con recuento y ventana temporal |
+| F2 | Triaje: código / dato / configuración / infra / **ruido**, y propuesta de una tarea por firma accionable — ⛔ **gate**: nada existe en el gestor hasta que el usuario aprueba la lista |
+| F3 | Alta en el gestor del proyecto (Jira o Mantis, detectado igual que `/rs-tarea`), aplicando `defaults` y etiquetas |
+| F4 | Propone lanzar el pipeline **de una en una** — ⛔ nunca en lote, nunca sin que lo pida |
+
+**La deduplicación no la hace el modelo.** La hace el hook nuevo `hooks/parse-weblog.ps1` (tool
+`parse_web_log`, la nº 49), que agrupa las ocurrencias por **firma**: `SHA1(tipo de excepción +
+frame más profundo de código propio + mensaje normalizado)`. El mensaje se normaliza antes de
+hashear —números, GUIDs, fechas, rutas y hex pasan a marcadores—, así que "Cliente 4711 no existe" y
+"Cliente 8322 no existe" son la misma firma y no dos tareas. Reconoce NLog/log4net, ELMAH XML y
+volcados planos de stack .NET.
+
+Dos consecuencias de que el recuento lo haga el hook y no el modelo: es determinista, y **el log no
+entra en contexto**. La tool devuelve solo el agregado acotado (top-N firmas con muestras), nunca las
+líneas. Un log de cientos de MB se resume sin leerlo. Además, mensajes y muestras pasan por
+`Remove-RsPii` antes de salir: un log de una web lleva datos reales de usuario y esos textos acaban
+copiados literalmente en un ticket.
+
+**Reabrir la misma tarea en cada pasada** era el otro riesgo obvio. El resumen de cada tarea lleva el
+marcador `[log:<firma>]`, y F3 lo busca entre las issues abiertas antes de crear nada: si ya existe,
+no duplica — ofrece añadir una nota con las nuevas ocurrencias y la nueva ventana.
+
+F3 y F4 **delegan** en `rs-jira`/`rs-mantis` (Fase 1b/1 para el alta, Fase 2 en adelante para el
+desarrollo). Esta skill no reimplementa ni Jira ni Mantis, y no toca el pipeline.
+
+#### Valores por defecto y etiquetas del proyecto en el config del gestor
+
+Hasta ahora, al crear una issue, los campos "de siempre" del proyecto se adivinaban **copiándolos de
+la última tarea creada**. Funciona hasta que la última tarea es una excepción, y entonces propaga el
+error a la siguiente. Ese dato es declarable, no deducible.
+
+`docs\.jira-dev-config.json` acepta un bloque `defaults` que se vuelca en `additional_fields` de
+`createJiraIssue`: `issueTypeName`, `priority`, `components`, **`labels`** (las etiquetas), `versions`,
+`duedate`, cualquier `customfield_*`. `docs\.mantis-dev-config.json` acepta su espejo con lo que
+expone la REST de Mantis: `category`, `priority`, `severity` y **`tags`**.
+
+Precedencia, en este orden: **usuario → `defaults` → réplica de la última tarea**. La réplica no
+desaparece, baja a fallback para los campos que nadie declaró, y se apaga con
+`defaults.replicarUltimaTarea: false`. Las etiquetas son la excepción a "el primero gana": se
+**acumulan** (las de `defaults` + las del usuario + las que aporte quien llame al alta — así
+`/rs-log-errores` puede añadir `log-<firma>` sin pisar nada).
+
+Todo aditivo: un config sin `defaults` se comporta exactamente como en 3.17.0, y `defaultCategory`
+de Mantis sigue funcionando (solo cede ante `defaults.category`).
+
+#### Ficheros
+
+- `hooks/parse-weblog.ps1` — **nuevo**. Parser + deduplicador por firma, con redacción PII vía
+  `lib-pii.ps1`. Tope de líneas (`-MaxLines`) y de firmas (`-MaxSignatures`), ambos reportados en la
+  salida: un recuento truncado se declara truncado.
+- `mcp/rs-workspace-server.py` — tool `parse_web_log` (48 → **49 tools**).
+- `skills/rs-log-errores/SKILL.md`, `commands/rs-log-errores.md` — **nuevos**.
+- `hooks/mantis-cli.ps1` — `create` acepta `-Priority`, `-Severity`, `-Tags`. Aditivos: sin ellos, el
+  body del `POST /issues` es el de antes.
+- `skills/rs-jira/SKILL.md` — `defaults` en el config; Fase 1b gana un paso de precedencia explícita
+  y la confirmación indica de dónde sale cada valor.
+- `skills/rs-mantis/SKILL.md` — `defaults` en el config, precedencia en la Fase 1 rama b, nuevos
+  flags de `create`, `init` propone `defaults`.
+- `references/jira.md`, `references/mantis.md` — esquema de config con `defaults` y tabla de
+  precedencia.
+- `references/mcp.md`, `references/hooks.md`, `hooks/README.md` — alta de la tool y del hook.
+- `README.md` — sección 14 del catálogo ("Errores de producción → tareas"), nota de `defaults` en la
+  sección de tareas, nº de comandos (49 → 50) y de tools.
+- `docs/plugin-architecture.md` — §1 árbol de skills, §6 y §8 el nº de tools.
+
 ## 3.17.0 — 2026-08-11
 
 ### `/rs-tarea` preguntaba siempre a Jira, aunque el proyecto se gestionara en Mantis

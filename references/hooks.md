@@ -162,6 +162,7 @@ directorio inexistente — fallando abiertas y sin avisar. Los restos los retira
 | `hooks/log-execution.ps1` | `<workspace> <sln> <task> [-Status success\|fail\|partial] [-Agents <lista>]` | Registra en `executions/history.json` (max 500, archiva mensualmente) |
 | `hooks/scan-aspx.ps1` | `-SlnPath <sln>` | Extrae controles AIS de .aspx → `RIDIOMA/RCONTROLES` inserts |
 | `hooks/skill-trigger.ps1` | (stdin JSON, hook UserPromptSubmit de Claude Code) | Detecta `.sln` en el prompt dentro de workspaces RS e inyecta recordatorio de invocar la skill — no lo ejecutan los agentes |
+| `hooks/parse-weblog.ps1` | `-Path <fichero\|carpeta> [-Glob *.log] [-Desde <ISO>] [-Niveles ERROR,FATAL] [-MaxSignatures 30] [-Samples 2] [-MaxLines 500000]` | Parsea logs de error web (NLog/log4net, ELMAH XML, stack .NET plano) y agrupa por **firma** (`SHA1` de excepción + frame de código propio + mensaje normalizado) → `signatures[]` con recuento, ventana temporal y muestras. Emite **solo el agregado** (el log nunca entra en contexto) y pasa mensajes/muestras por `Remove-RsPii`. Fallback 1:1 de `parse_web_log`; base de `/rs-log-errores` |
 
 ## Jira
 

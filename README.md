@@ -29,8 +29,9 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
   - [9. Comprensión y onboarding](#9-comprensión-y-onboarding)
   - [10. Entorno, estadísticas y dashboard](#10-entorno-estadísticas-y-dashboard)
   - [11. Entregas a cliente: instalador y actualizador](#11-entregas-a-cliente-instalador-y-actualizador)
-  - [12. Jira](#12-jira)
+  - [12. Tareas (Jira / Mantis)](#12-tareas-jira--mantis)
   - [13. Mantis](#13-mantis)
+  - [14. Errores de producción → tareas](#14-errores-de-producción--tareas)
 - [Protección de datos personales en consultas a BD](#protección-de-datos-personales-en-consultas-a-bd)
 - [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
 - [Reglas clave](#reglas-clave)
@@ -198,7 +199,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 46 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 49 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto, y `/rs-mantis`, puerta explícita de Mantis —, que despachan a los skills `rs-jira` y `rs-mantis` y no al principal.
+> El catálogo de abajo lista 50 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los tres comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto; `/rs-mantis`, puerta explícita de Mantis; y `/rs-log-errores`, que convierte el log de errores de la web en tareas —, que despachan a los skills `rs-jira`, `rs-mantis` y `rs-log-errores` y no al principal.
 
 > ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
 > es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
@@ -297,6 +298,10 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-runbook <Solution>.sln <proceso>` 🔷 | Runbook operativo de un proceso (carga inicial, cierre, reproceso): precondiciones, procedimiento, reglas críticas de esa operación, verificación y errores conocidos. **Te entrevista** — lo que no está en el código lo aportas tú. Persiste en `docs/agentic_manual/funcional/OPERACION/`. Ej: `/rs-runbook RSProcIN.sln carga inicial de históricos` |
 | `/rs-idiomas <Solution>.sln` 🟣 | Escanea `.aspx`, busca controles AIS y genera INSERTs para `RIDIOMA`/`RCONTROLES`. **Solo Online.** Salida a `C:\AIS\<proyecto>\scripts\`. |
 
+> **Los idiomas salen de la BD, no de una lista fija**: del catálogo 32 de `RTABL` (`SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32`), donde `TBCODE` es el id de idioma. Varían por instalación, así que ni `/rs-idiomas` ni el gate del pipeline dan por hecho `ESP`/`POR`.
+>
+> **Los IDTEXTO van por rangos según el tipo de texto** — errores (`coerr.eXXXX`) **1000–1999**, mensajes en pantalla (`coMens.mXXXX`) **2000–2999**, textos de pantalla (labels, headers de grid, validadores) **desde 3000** sin techo. Al asignar uno nuevo se **rellenan los huecos** empezando por el suelo del rango, no se continúa desde el máximo. Si un rango se agota, el id se busca a partir de 3000 y el script lo avisa en su cabecera.
+
 > **Documentación en el pipeline.** El manual técnico de convenciones (`docs/agentic_manual/tecnica/`) es **input**: el planner clasifica la tarea y core lee los docs que aplican antes de emitir código. La doc **funcional** y el **resumen por-solución** se actualizan automáticamente tras un cambio; el manual técnico solo se toca por **propuesta que un humano confirma**.
 
 ---
@@ -373,6 +378,24 @@ Instalación en el servidor del cliente (ambos paquetes):
 > **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
 >
 > **Nota de rate**: la instancia devuelve HTTP 500 ante `PATCH` rápidos seguidos al mismo issue; `mantis-cli.ps1` intercala ~800ms + retry con backoff en `advance`/`create`/`assign` (ver `references/mantis.md`).
+
+> **Valores por defecto y etiquetas**: los dos configs aceptan un bloque `defaults` con los campos que se aplican a **toda** tarea que cree el plugin — en Jira `issueTypeName`, `priority`, `components`, `labels`, `customfield_*`; en Mantis `category`, `priority`, `severity`, `tags`. Precedencia: **lo que digas tú → `defaults` → réplica de la última tarea** (esta última se apaga con `defaults.replicarUltimaTarea: false`). Las etiquetas no se pisan: se acumulan. Detalle en `references/jira.md` / `references/mantis.md`.
+
+---
+
+### 14. Errores de producción → tareas
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-log-errores <ruta log\|carpeta> [--desde YYYY-MM-DD] [--max N] [--glob *.log] [--niveles ERROR,FATAL]` 🟣 | Lee el log de errores de la web, **deduplica** las ocurrencias del mismo fallo, tría lo que es bug de lo que es ruido, abre **una tarea por tipo de error** en el gestor del proyecto (Jira o Mantis, detectado igual que `/rs-tarea`) y propone lanzar el pipeline para cada una, de una en una. |
+
+> **La deduplicación no la hace el modelo**: la hace el hook `parse-weblog.ps1` agrupando por **firma** — excepción + frame de código propio + mensaje normalizado (números, GUIDs, fechas y rutas pasan a marcadores, así que "Cliente 4711 no existe" y "Cliente 8322 no existe" son **una** tarea, no dos). Reconoce NLog/log4net, ELMAH XML y volcados planos de stack .NET.
+>
+> **El log no entra en contexto**: la tool devuelve solo el agregado (top-N firmas con recuento, ventana temporal y un par de muestras), nunca las líneas — da igual que el fichero pese cientos de MB. Los mensajes y muestras van con **PII redactada** antes de acabar copiados en un ticket.
+>
+> **No duplica tareas entre pasadas**: cada tarea lleva el marcador `[log:<firma>]` en el resumen; si al volver a analizar ya existe una issue abierta con esa firma, en vez de crearla otra vez ofrece añadir una nota con las nuevas ocurrencias.
+>
+> ⛔ Nada se crea sin que apruebes la lista propuesta, y el pipeline se lanza **de una en una**, nunca en lote.
 
 ---
 
@@ -464,10 +487,11 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **48 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **49 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
+- `parse_web_log` devuelve el **agregado** de un log de errores (firmas + recuento), nunca sus líneas: un log de cientos de MB se resume sin cargarlo.
 - `render_erd`, `render_dashboard`, `generate_sql`, `export_dmd` generan **ficheros**, nunca cargan el contenido en contexto.
 - El modelo BD (~180K tokens) nunca se carga entero: `search_model` → `get_model_index` → `get_table_schema`.
 
@@ -523,7 +547,7 @@ Oracle no permite distinguir un objeto inexistente de uno sin permiso. Por eso:
 - **Build con evidencia**: nunca "build OK" sin output real del runner.
 - El modelo BD preserva siempre descripciones y relaciones manuales.
 - Scripts SQL generados siempre a `C:\AIS\<proyecto>\scripts\`.
-- Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos.
+- Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos. Idiomas del **catálogo 32** de `RTABL`; IDTEXTO por rango (errores 1000–1999, mensajes 2000–2999, pantalla ≥3000) **rellenando huecos**.
 - **VCS nunca se asume** — `detect_vcs` decide SVN/Git/ninguno antes de cualquier diff/commit.
 - Los comandos que **escriben** (`/rs-rename`, `/rs-format`, `/rs-migrar`, `/rs-commit`, `/rs-deshacer`, `/rs-pii audit|enforce|off`, pipeline) piden confirmación antes de aplicar.
 
@@ -566,7 +590,7 @@ skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-
 agents/           51 subagentes: pipeline y modos directos
 commands/         49 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 48 tools
+mcp/              servidor MCP con 49 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

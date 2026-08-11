@@ -775,6 +775,21 @@ def find_doc_section(workspace: Workspace, keyword: str) -> str:
     return json.dumps(_run_ps("find-doc-section.ps1", workspace, keyword), ensure_ascii=False, separators=_JSON_SEP)
 
 
+@mcp.tool(description="Parsea un log de errores web (NLog/log4net, ELMAH XML, volcado de stack .NET) y agrupa las ocurrencias por FIRMA (excepción + frame de código propio + mensaje normalizado) → [{hash,exception,origin,message,count,first_seen,last_seen,files,samples}] ordenado por count. Devuelve solo el agregado, nunca el log completo. path = fichero o carpeta. PII redactada en mensajes y muestras.")
+def parse_web_log(path: str, glob: str = "*.log", desde: str = "", niveles: str = "ERROR,FATAL",
+                  max_signatures: int = 30, samples: int = 2) -> str:
+    args = [
+        "-Path", path,
+        "-Glob", glob,
+        "-Niveles", niveles,
+        "-MaxSignatures", str(max_signatures),
+        "-Samples", str(samples),
+    ]
+    if desde:
+        args += ["-Desde", desde]
+    return json.dumps(_run_ps("parse-weblog.ps1", *args), ensure_ascii=False, separators=_JSON_SEP)
+
+
 # Firma de miembro C# en una línea añadida del diff — captura el nombre del símbolo (método/clase).
 _DIFF_SYMBOL_RE = re.compile(
     r'(?:public|private|protected|internal)\s+(?:static\s+)?(?:override\s+)?(?:async\s+)?(?:\w+\s+)+(\w+)\s*[\(\{]')
