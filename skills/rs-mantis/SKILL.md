@@ -1,6 +1,6 @@
 ---
 name: rs-mantis
-description: 'Orquestador del ciclo de vida de una tarea de MantisBT sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Mantis: "/rs-mantis", "trabaja la tarea Mantis 1234", "crea una tarea en Mantis", "mis tareas de Mantis", "issue de Mantis". No requiere MCP: usa el cliente REST autónomo `hooks/mantis-cli.ps1` con token de API. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
+description: 'Orquestador del ciclo de vida de una tarea de MantisBT sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Mantis: "/rs-mantis", "/rs-tarea" en un workspace con `docs\.mantis-dev-config.json` (el router `/rs-tarea` detecta el gestor y despacha aquí), "trabaja la tarea Mantis 1234", "crea una tarea en Mantis", "mis tareas de Mantis", "issue de Mantis". No requiere MCP: usa el cliente REST autónomo `hooks/mantis-cli.ps1` con token de API. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
 ---
 
 # RS Mantis

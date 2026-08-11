@@ -28,7 +28,9 @@ local del mantenedor es un checkout más — ningún artefacto del plugin puede 
 skills/
   rs-enterprise-agent/SKILL.md   skill orquestadora (pipeline + modos directos)
   rs-plugin-dev/SKILL.md         meta-skill: modifica el propio plugin
-  rs-jira/SKILL.md               orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
+  rs-jira/SKILL.md               orquestador de tareas de Jira — envuelve el pipeline
+  rs-mantis/SKILL.md             orquestador de tareas de MantisBT — envuelve el pipeline
+                                 (a ambos se llega por el router /rs-tarea; /rs-mantis es puerta directa)
 agents/                  subagentes .md — pipeline (rs-editor-*) y modos directos (rs-*)
 commands/                slash commands .md — wrappers finos que despachan a un subagente/skill
 mcp/
@@ -371,15 +373,27 @@ Frontmatter solo `description` (+ `Uso:`). Cuerpo en inglés. Los comandos de VC
 (`rs-diff`, `rs-commit`) llaman `detect_vcs` y despachan al subagente unificado (`rs-diff`/`rs-commit`),
 que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-svn`/`-git` separados.
 
-### 5.1 Dos formas de comando: con skill y autosuficiente
+### 5.1 Tres formas de comando: con skill, autosuficiente y router
 
-Desde 3.13.0 la primera línea del cuerpo no es siempre `Invoke the ... skill`. Hay dos formas, y
+Desde 3.13.0 la primera línea del cuerpo no es siempre `Invoke the ... skill`. Hay tres formas, y
 la que aplica depende de **qué necesita el comando de `SKILL.md`**, no de gusto:
 
 | Forma | Cuándo | Primera línea |
 |---|---|---|
 | **Con skill** | Resuelve una `.sln`, escribe, tiene gate, o es el pipeline | `Invoke the \`rs-enterprise-agent\` skill in <mode> mode.` |
 | **Autosuficiente** | Solo lectura, despacho mecánico a un subagente, sin resolución de ruta | `⛔ Self-contained — do NOT invoke the \`rs-enterprise-agent\` skill.` |
+| **Router** | Una misma intención se sirve con **skills distintas** según el estado del workspace | `Router command. It does NOT run the lifecycle itself — ...` |
+
+Un **router** no ejecuta trabajo propio: detecta y despacha. Reglas de la forma (3.17.0, `/rs-tarea`
+es el único hoy):
+- La regla de detección va **escrita en el comando**, no en las skills destino — así ninguna de ellas
+  tiene que saber de la otra. Se detecta por presencia de fichero en el workspace, con Glob.
+- ⛔ **Ambigüedad se pregunta, no se adivina.** Si el estado del workspace admite dos destinos, el
+  router usa una segunda señal (la forma del argumento) y, si tampoco basta, para y pregunta.
+- Anuncia el destino elegido antes de cualquier acción outward-facing, para que el usuario pueda
+  corregir el enrutado a tiempo.
+- Cada skill destino conserva su **puerta explícita** (comando propio o lenguaje natural): el router
+  es un atajo, no el único acceso.
 
 `SKILL.md` son ~7k tokens. Cargarlos para despachar `/rs-stats` a un Haiku que lee un JSON es
 peaje puro. Autosuficientes hoy: `rs-stats`, `rs-dashboard`, `rs-help`, `rs-deps`, `rs-env`,

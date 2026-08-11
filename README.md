@@ -198,7 +198,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 46 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 49 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+> El catálogo de abajo lista 49 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto, y `/rs-mantis`, puerta explícita de Mantis —, que despachan a los skills `rs-jira` y `rs-mantis` y no al principal.
 
 > ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
 > es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
@@ -352,13 +352,15 @@ Instalación en el servidor del cliente (ambos paquetes):
 
 ---
 
-### 12. Jira
+### 12. Tareas (Jira / Mantis)
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-tarea [PROJ-123 \| URL]` | Orquesta el ciclo de una tarea de Jira: selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config. |
+| `/rs-tarea [PROJ-123 \| URL \| 1234 \| init]` | **Router**: detecta qué gestor de tickets usa el proyecto y orquesta el ciclo completo de la tarea con el skill que corresponda (`rs-jira` o `rs-mantis`) — selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config del gestor elegido. |
 
-> **Requisitos**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron).
+> **Detección**: mira qué config existe en `docs\` del workspace — `.jira-dev-config.json` → Jira, `.mantis-dev-config.json` → Mantis. Si existen **los dos**, desambigua por la forma del argumento (`PROJ-123` → Jira, `1234` → Mantis) y, si no basta, **pregunta**: nunca adivina. Si no existe ninguno, pregunta el gestor y ofrece crear su config. El gestor detectado se anuncia antes de tocar ningún ticket.
+>
+> **Requisitos (rama Jira)**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron). Requisitos de la rama Mantis → sección siguiente.
 
 ---
 
@@ -366,7 +368,7 @@ Instalación en el servidor del cliente (ambos paquetes):
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue (siempre **asignada al usuario del token**) → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. El proyecto **nunca se asume**: si hay más de uno (o ninguno) se listan y se pregunta. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
+| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Puerta **explícita** de Mantis (salta la detección de `/rs-tarea`). Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue (siempre **asignada al usuario del token**) → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. El proyecto **nunca se asume**: si hay más de uno (o ninguno) se listan y se pregunta. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
 
 > **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
 >

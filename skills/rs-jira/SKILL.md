@@ -1,6 +1,6 @@
 ---
 name: rs-jira
-description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → asignar → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea", "trabaja la tarea PROJ-123", "coge una tarea de Jira", "crea una tarea en Jira", "mis tareas de Jira", "issue de Jira", "descarga los adjuntos de la issue". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
+description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → asignar → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea" en un workspace con `docs\.jira-dev-config.json` (el router `/rs-tarea` detecta el gestor y despacha aquí), "trabaja la tarea PROJ-123", "coge una tarea de Jira", "crea una tarea en Jira", "mis tareas de Jira", "issue de Jira", "descarga los adjuntos de la issue". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
 ---
 
 # RS Jira

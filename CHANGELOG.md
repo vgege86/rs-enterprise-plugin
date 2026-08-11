@@ -1,5 +1,47 @@
 # RS Enterprise Agent — Changelog
 
+## 3.17.0 — 2026-08-11
+
+### `/rs-tarea` preguntaba siempre a Jira, aunque el proyecto se gestionara en Mantis
+
+El plugin ya tenía las dos mitades: `rs-jira` (F1–F4, MCP Atlassian Rovo) y `rs-mantis` (F0–F4,
+cliente REST `hooks/mantis-cli.ps1`). Lo que no tenía era el conmutador. `/rs-tarea` estaba cableado
+a Jira, así que en un workspace gestionado con Mantis el comando natural —"trabaja la tarea"— llevaba
+al gestor equivocado, y había que acordarse de teclear `/rs-mantis`. Acordarse no es un mecanismo:
+el dato de qué gestor usa el proyecto ya está en disco.
+
+#### `/rs-tarea` pasa a ser un router
+
+Detecta qué config existe en `docs\` del workspace y despacha a la skill que toque:
+
+| Estado del workspace | Destino |
+|---|---|
+| solo `.jira-dev-config.json` | `rs-jira` |
+| solo `.mantis-dev-config.json` | `rs-mantis` |
+| los dos | desambigua por la forma del argumento (`PROJ-123` → Jira, `1234` → Mantis); si no basta, **pregunta** |
+| ninguno | pregunta el gestor y ofrece crear su config (`/rs-tarea init`) |
+
+Los argumentos se reenvían tal cual, y el gestor detectado se anuncia en una línea **antes** de tocar
+ningún ticket — el enrutado se corrige antes de la primera escritura outward-facing, no después.
+`/rs-mantis` sigue siendo la puerta explícita de Mantis, y la invocación en lenguaje natural de cada
+skill no cambia. En un workspace solo-Jira el comportamiento es idéntico al de 3.16.0.
+
+La regla de detección vive **en el comando**, no en las skills: ninguna de las dos necesita saber que
+la otra existe. Fundirlas en una sola skill se descartó — son dos integraciones distintas (MCP con
+OAuth interactivo frente a REST por token; transiciones por endpoint frente a la cadena `advance`),
+y unirlas habría duplicado el riesgo sin ganar nada.
+
+#### Ficheros
+
+- `commands/rs-tarea.md` — reescrito como router (detección, desambiguación, anuncio del destino).
+- `commands/rs-mantis.md` — se declara puerta explícita.
+- `skills/rs-jira/SKILL.md`, `skills/rs-mantis/SKILL.md` — `description`: el trigger `/rs-tarea` pasa
+  a ser condicional al config presente.
+- `docs/plugin-architecture.md` — §1: faltaba `rs-mantis` en el árbol de skills. §5.1: las formas de
+  comando pasan de dos a tres, con las reglas de la forma **router** (detección en el comando,
+  ambigüedad se pregunta, anuncio previo, puerta explícita conservada).
+- `README.md` — sección 12 pasa a "Tareas (Jira / Mantis)" con la tabla de detección.
+
 ## 3.16.0 — 2026-08-10
 
 ### El verificador de tests hablaba inglés y la máquina hablaba español, así que nadie contó nada
