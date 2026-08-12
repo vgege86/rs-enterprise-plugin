@@ -689,6 +689,7 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Nueva skill | README · CHANGELOG · §2/§3 este doc |
 | **Nuevo plugin en el marketplace** | `marketplace.json` (entrada + descripción del marketplace) · README raíz (sección de instalación) · CHANGELOG raíz (alta) · §1/§2/§9.5 este doc · README y CHANGELOG **propios** del plugin nuevo |
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
+| **Cualquier cambio visible al usuario** | `docs/manual-usuario/` (fuente Markdown del manual en Word) — el `.docx` se regenera desde ahí con `/rs-word` y no se versiona |
 | Mover contenido `SKILL.md` ↔ reference | tabla §8 este doc (contenido de la reference) · §9.6 si cambia la convención · CHANGELOG con el antes/después en tokens |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
 

@@ -3,7 +3,7 @@
 Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combina dos cosas:
 
 1. Un **pipeline de desarrollo automatizado** (planificación → análisis → validación → testing → build) que implementa un cambio de principio a fin con aprobación humana del plan.
-2. **46 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
+2. **45 modos directos** (slash commands `/rs-*` y lenguaje natural) para tareas puntuales: auditar, analizar un diff, medir impacto, validar código contra la BD, ver esquema, gestionar el modelo BD/ERD, generar tests, hacer commits SVN o Git, documentar, revisar seguridad, proteger datos personales en consultas, generar el instalador de cliente o un actualizador de entorno, y más.
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
@@ -197,9 +197,9 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 ## Catálogo de comandos
 
-46 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
+45 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 50 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los tres comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto; `/rs-mantis`, puerta explícita de Mantis; y `/rs-log-errores`, que convierte el log de errores de la web en tareas —, que despachan a los skills `rs-jira`, `rs-mantis` y `rs-log-errores` y no al principal.
+> El catálogo de abajo lista 49 comandos: los 45 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los tres comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto; `/rs-mantis`, puerta explícita de Mantis; y `/rs-log-errores`, que convierte el log de errores de la web en tareas —, que despachan a los skills `rs-jira`, `rs-mantis` y `rs-log-errores` y no al principal.
 
 > ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
 > es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
@@ -593,6 +593,7 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 
 - **Fuente canónica**: el repo Git privado `https://github.com/vgege86/rs-enterprise-plugin.git`. El checkout local es solo un checkout — nada del plugin debe depender de su ruta.
 - **Anatomía interna y patrón de extensión** → `docs/plugin-architecture.md`. Léelo antes de añadir un modo, agente, tool MCP o hook.
+- **Manual de usuario en Word** → la fuente vive en `docs/manual-usuario/` (dos capítulos Markdown, versionados). El `.docx` se **regenera** desde ahí con `/rs-word` sobre la plantilla corporativa y no se versiona (`docs/*.docx` está en `.gitignore`). Cambio visible al usuario en este README → actualizar también esos capítulos.
 - **Modificar el plugin de forma guiada** → `/rs-plugin-dev <qué cambiar>`: lee el doc de arquitectura, planifica, pide aprobación, **sube la versión** (obligatorio) y sincroniza la documentación.
 - ⛔ Nunca editar la copia cacheada por Claude Code (`~/.claude/plugins/cache/...`) — es un snapshot, se pisa en cada update.
 - Tras cualquier cambio → **bump de versión** en `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (idénticas), luego `/plugin marketplace update rs-enterprise-agent` y reiniciar.
@@ -604,11 +605,11 @@ Guía de problemas comunes → `references/troubleshooting.md`.
 .mcp.json         registro del MCP server rs-workspace
 skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-jira · rs-mantis
 agents/           51 subagentes: pipeline y modos directos
-commands/         49 definiciones de slash commands
+commands/         50 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
 mcp/              servidor MCP con 51 tools
 references/       documentación de referencia (carga bajo demanda)
-docs/             plugin-architecture.md (fuente canónica) + agentic_manual
+docs/             plugin-architecture.md (fuente canónica) + manual-usuario/ (fuente del Word)
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)
 runner/           runner.ps1 — ejecutor de builds (Stop hook)
 tests/            suite de tests del plugin (pytest + Pester)

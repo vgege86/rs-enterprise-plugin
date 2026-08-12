@@ -1,5 +1,57 @@
 # RS Enterprise Agent — Changelog
 
+## 3.23.1 — 2026-08-12
+
+### El manual de usuario en Word se quedó en la 3.1.0 porque no tenía fuente
+
+El `.docx` del manual de usuario se generó una vez, en la 3.1.0, con un script de PowerShell que
+vivía en una carpeta temporal de sesión. Ese script ya no existe, así que el documento no se podía
+regenerar: cada actualización habría que reconstruirla desde cero. Veintidós versiones después, el
+manual describía un plugin que ya no es el que hay — sin `/rs-word`, sin `/rs-log-errores`, sin el
+router `/rs-tarea`, sin los objetos de BD en el modelo, sin el actualizador que escribe el script de
+lo que cambió en la base de datos.
+
+La causa era la falta de fuente, no la falta de ganas. Ahora la hay: **`docs/manual-usuario/`**, dos
+capítulos Markdown versionados con el repo.
+
+- `01-como-funciona-el-plugin.md` — qué es, instalación, las tres formas de invocarlo, el pipeline y
+  dónde está el gate humano, el catálogo completo de los 45 modos directos con su modelo, el modelo
+  de BD y su inventario de objetos, qué hay por debajo (MCP, scripts, modelo), reglas clave,
+  requisitos de máquina y problemas frecuentes.
+- `02-puesta-en-produccion.md` — protección de datos personales y credenciales cifradas: los tres
+  modos, qué NO protege, el cifrado en reposo y sus dos límites, y los dos procedimientos de puesta
+  en marcha (repositorio nuevo y proyecto en marcha) paso a paso, con la lista de verificación final.
+
+El `.docx` se **regenera** desde ahí con `/rs-word` sobre la plantilla corporativa del workspace, que
+sigue sin entrar en este repo. Sale ignorado por git, como antes: el artefacto versionado es la
+fuente, no el documento.
+
+El manual describe **funcionalidad**, no historial de correcciones — que es lo que ya cuenta este
+fichero. Y no lleva los iconos de modelo del README: la columna dice Haiku, Sonnet u Opus, porque un
+nombre no depende de que la tipografía corporativa tenga el emoji.
+
+### Tres cifras del README que no cuadraban con el propio README
+
+El catálogo tiene **49 filas** de comando y `commands/` **50 ficheros** (los 49 más
+`/rs-plugin-dev`, documentado aparte). El README decía "46 modos directos", "el catálogo lista 50
+comandos" y "49 definiciones de slash commands". Los tres son ahora 45, 49 y 50 — el conteo real:
+49 filas menos el pipeline completo menos los tres comandos de gestión de tareas.
+
+Se corrigen porque el manual sale de aquí: una cifra mal en el README es una cifra mal en el Word que
+llega al usuario.
+
+### Sincronización
+
+`docs/plugin-architecture.md` §10 gana una fila: cualquier cambio visible al usuario obliga a
+actualizar `docs/manual-usuario/`. Es lo que evita que el manual vuelva a quedarse veintidós
+versiones atrás.
+
+**Ficheros**: `docs/manual-usuario/01-como-funciona-el-plugin.md` (nuevo),
+`docs/manual-usuario/02-puesta-en-produccion.md` (nuevo), `README.md`,
+`docs/plugin-architecture.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`.
+
+---
+
 ## 3.23.0 — 2026-08-12
 
 ### La regla de "sin nombres de cliente" ya no depende de que alguien se acuerde
