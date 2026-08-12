@@ -9,12 +9,18 @@ si la firma se calculara sobre otra lectura de la BD, "la firma cambió" dejarí
 
 Del cuerpo se guarda la ficha y la firma, nunca el texto: ver `scripts/_dbobjetos.py`.
 
-Uso: python model-objects.py <workspace> <proyecto> [--dry-run]
-     --dry-run  no escribe el modelo; imprime el inventario y el diff contra el actual.
+Uso: python model-objects.py <workspace> <proyecto> [--dry-run] [--conexion <id>]
+     --dry-run       no escribe el modelo; imprime el inventario y el diff contra el actual.
+     --conexion <id> conexión de docs\\.rs-databases.json a usar. Sin ella, la principal.
+
+⛔ Un inventario vacío NO significa "no hay objetos de ese tipo". El PL/SQL exige GRANT EXECUTE
+(no SELECT), y con 0 grants EXECUTE tanto ALL_OBJECTS como ALL_SOURCE devuelven cero
+procedimientos SIN ERROR. Por eso se emite un bloque de cobertura contrastando lo capturado con
+lo que el diccionario dice que hay, y se sale con 2 (parcial) cuando queda hueco: ver
+`hooks/db-visibilidad.ps1`.
 """
 
 import sys
-import json
 import importlib.util
 import concurrent.futures
 from pathlib import Path
@@ -31,6 +37,7 @@ if str(_AQUI) not in sys.path:
     sys.path.insert(0, str(_AQUI))
 
 import _dbobjetos as obj
+import _modeljson
 
 # installer-objects.py lleva guion -> no es importable con `import`; se carga por ruta.
 _spec = importlib.util.spec_from_file_location("_installer_objects", _AQUI / "installer-objects.py")
@@ -86,26 +93,28 @@ construir = obj.construir
 
 def main():
     if len(sys.argv) < 3:
-        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> [--dry-run]")
+        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> [--dry-run] [--conexion <id>]")
         sys.exit(1)
 
     workspace, proyecto = sys.argv[1], sys.argv[2]
     dry = "--dry-run" in sys.argv[3:]
+    conexion = _io._ins.arg_conexion(sys.argv[3:])
     model_path = Path(workspace) / "BD" / f"{proyecto}-model.json"
     if not model_path.exists():
         print(f"ERROR: Modelo no encontrado: {model_path}")
         sys.exit(1)
 
-    with open(model_path, encoding="utf-8-sig") as f:
-        model = json.load(f)
+    model = _modeljson.cargar(model_path)
 
-    cfg = _io._ins.read_db_config(workspace, model)
+    cfg = _io._ins.read_db_config(workspace, model, conexion)
     if cfg["motor"] not in ("ORACLE", "SQLSERVER"):
         print(f"ERROR: motor no soportado: {cfg['motor']}")
         sys.exit(1)
 
     tablas = list((model.get("tables") or {}).keys())
     print(f"Motor: {cfg['motor']} | schema/BD: {cfg['schema']} | {len(tablas)} tablas en el modelo")
+    if cfg.get("conexion"):
+        print(f"Conexión: {cfg['conexion']}")
 
     salidas, errores = extraer(cfg, _io._ins.read_max_paralelo(workspace, proyecto))
     for _fichero, titulo, err in errores:
@@ -126,6 +135,21 @@ def main():
     elif previo:
         print("Sin cambios respecto al modelo actual.")
 
+    # ---- cobertura: ¿este inventario está completo, o es lo poco que esta cuenta ve? ----
+    # ⛔ Sin esto, "0 procedimientos" y "no hay procedimientos" son la misma frase. El PL/SQL
+    # exige GRANT EXECUTE (no SELECT) y con 0 EXECUTE el diccionario devuelve cero sin error.
+    cob = None
+    vis = _io._ins.read_visibilidad(workspace, conexion)
+    if vis.get("soportado"):
+        capturado = {s: len(nuevo.get(s) or {}) for s in obj.SECCIONES}
+        cob = obj.cobertura(vis, capturado, _io.exclusiones_cobertura(salidas))
+        print()
+        for ln in obj.formato_cobertura(cob):
+            print(ln)
+        nuevo["_cobertura"] = cob
+    elif vis.get("error"):
+        print(f"\nAVISO: sin diagnóstico de cobertura ({vis['error']})")
+
     if dry:
         print("\n(--dry-run: no se ha escrito el modelo)")
         return
@@ -141,12 +165,14 @@ def main():
 
     model["objetos"] = nuevo
     model["updated_at"] = datetime.now().isoformat()
-    tmp = model_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(model, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(model_path)
+    # Escritura canónica, atómica y verificada: ver scripts/_modeljson.py.
+    _modeljson.guardar(model, model_path)
     print(f"\nOK — objetos sincronizados en {model_path}")
 
-    if errores:
+    # exit 2 = PARCIAL. Dos causas distintas con la misma consecuencia para el llamante —el
+    # inventario no está completo—: un tipo de objeto que falló al extraerse, o un hueco de
+    # cobertura (objetos que el diccionario ve y esta cuenta no).
+    if errores or (cob and cob.get("parcial")):
         sys.exit(2)
 
 

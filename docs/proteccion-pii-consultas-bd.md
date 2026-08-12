@@ -487,6 +487,15 @@ IDDEUDOR | NOMBRE            | DNI               | SALDO
 
 La clave reside en el perfil local del desarrollador, fuera del repositorio.
 
+El dominio del pseudónimo es el **nombre de la columna**, no la tabla, de modo que la
+correlación que ilustra el ejemplo no se limita a un resultado: el mismo valor devuelve el
+mismo pseudónimo en cualquier consulta y en cualquier tabla donde la columna se llame igual.
+Esa propiedad es deliberada —es la que permite unir las filas de una misma persona, contar
+distintos y detectar duplicados sin ver ningún dato personal—, y es también la que distingue
+esta medida de un enmascarado dinámico de servidor (§3.2, Opción B), que al no ser determinista
+inutiliza cualquier cruce. Su contrapartida: dos columnas homónimas con significados distintos
+comparten dominio, y un pseudónimo no es comparable entre máquinas, porque la clave es local.
+
 ### 4.2 Qué se considera dato personal
 
 Reglas evaluadas en cada consulta, sin necesidad de anotar el modelo por adelantado:
@@ -594,6 +603,41 @@ Una solución que **nunca** ha declarado política sí conserva el comportamient
 (`off`, datos en claro): esa es la situación ordinaria mientras el despliegue está en curso, y
 distinguir las dos es justamente lo que evita que un fichero perdido pase por una decisión.
 
+### 4.5 Qué camino pasa por el filtro
+
+El filtro vive en **un solo sitio**: el punto donde la herramienta recibe las filas de una
+consulta libre. Conviene decirlo explícitamente, porque el plugin habla con la base de datos por
+más de un camino y no todos transportan datos de negocio.
+
+**Pasa por el filtro:** la consulta libre —la que ejecuta un `SELECT` escrito para la ocasión— y
+su vía de respaldo (§5.2g). Es el único camino por el que pueden salir filas de tablas de
+negocio, y por tanto el único que necesita filtrarse.
+
+**No pasa por el filtro:** las funciones que mantienen el **mapa del esquema** —sincronizar el
+modelo de datos, comparar el modelo con la base real, leer índices, inferir relaciones, generar
+DDL, dibujar el diagrama—. No es una omisión: esas funciones leen del **catálogo del sistema**
+—nombres de tabla, de columna, tipos, longitudes, nullabilidad, índices— y del propio fichero de
+modelo. Ahí no hay datos de personas: hay metadatos de la estructura. Filtrarlos no protegería
+nada y dejaría el mapa inservible.
+
+**La consecuencia práctica, y es contraintuitiva.** Si en lugar de usar esas funciones se
+interroga el catálogo del sistema **con la consulta libre** (`ALL_TAB_COLUMNS`,
+`INFORMATION_SCHEMA.COLUMNS`, `USER_OBJECTS`), el resultado sale **enmascarado** con la medida
+activa: esas tablas no están en el modelo de datos, así que sus columnas caen en "no se puede
+resolver" (§4.2) y sus valores son texto, no números. Los nombres de tabla y de columna vuelven
+convertidos en pseudónimos.
+
+No es un fallo del filtro sino su regla general aplicada a un caso donde sobra, y la decisión
+consciente es **no** abrir una excepción: cada excepción es un camino más por el que una
+consulta puede salir sin filtrar, y el rodeo es barato —para leer estructura están las funciones
+de mapa del esquema, que no pasan por aquí—.
+
+Si aun así hace falta cruzar estructura con la consulta libre, la salida es **preguntar por
+números**: los nombres viajan dentro del `SELECT` y de vuelta solo vienen recuentos o códigos
+numéricos, que salen en claro por la prueba del §4.2. Con dos cuidados: un entero de nueve o más
+dígitos sin decimales se enmascara igual (tiene forma de identificador), y una columna que salga
+entera vacía también.
+
 ---
 
 ## 5. Límites de la medida provisional
@@ -603,7 +647,8 @@ equivalente al control en BD sería incorrecto y no resistiría una revisión.
 
 ### 5.1 Lo que sí protege
 
-- Consultas realizadas a través de la herramienta de consulta del plugin.
+- Consultas realizadas a través de la herramienta de consulta del plugin —y solo ese camino:
+  las funciones que mantienen el mapa del esquema leen metadatos y no pasan por el filtro (§4.5).
 - El contenido que la herramienta escribe **directamente** en un fichero: se inspecciona
   antes de escribirlo y se bloquea si contiene una forma de DNI/NIE, IBAN o correo.
 - El registro interno de ejecuciones, que se sanea siempre.

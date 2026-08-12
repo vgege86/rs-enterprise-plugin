@@ -1,0 +1,8 @@
+{
+  "name": "rs-validador",
+  "description": "Desarrollo, mantenimiento y corrección de bugs de RSValidador (validador de ficheros): app Python/FastAPI + HTML/JS que define estructuras de fichero (interfaces de entrada), las valida y genera los scripts SQL de configuración de uCollect (mandantes, especies, archivos, algoritmos). Usar SIEMPRE que el mensaje mencione el validador de ficheros, RSValidador, estructura.py, validator_service.py, scripts_sql.html o la generación de RMANDANTE/RESPECIE/RARCHIVOS. Todo cambio pasa por un PLAN con aprobación humana y deja la documentación funcional y técnica al día.",
+  "version": "1.1.0",
+  "author": {
+    "name": "RS"
+  }
+}

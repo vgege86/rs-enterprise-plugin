@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.2.1** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.22.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -29,8 +29,9 @@ Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect 
   - [9. Comprensión y onboarding](#9-comprensión-y-onboarding)
   - [10. Entorno, estadísticas y dashboard](#10-entorno-estadísticas-y-dashboard)
   - [11. Entregas a cliente: instalador y actualizador](#11-entregas-a-cliente-instalador-y-actualizador)
-  - [12. Jira](#12-jira)
+  - [12. Tareas (Jira / Mantis)](#12-tareas-jira--mantis)
   - [13. Mantis](#13-mantis)
+  - [14. Errores de producción → tareas](#14-errores-de-producción--tareas)
 - [Protección de datos personales en consultas a BD](#protección-de-datos-personales-en-consultas-a-bd)
 - [Qué hay por debajo (MCP, hooks, modelo BD)](#qué-hay-por-debajo)
 - [Reglas clave](#reglas-clave)
@@ -82,6 +83,21 @@ Para actualizar tras una versión nueva:
 …y reiniciar.
 
 **Requisitos** (detalle abajo): Python 3.11+ **con el paquete `mcp`**, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
+
+### El marketplace publica dos plugins
+
+Desde la 3.11.0 el mismo marketplace ofrece, además del agente C#, el plugin **`rs-validador`** —
+desarrollo, mantenimiento y documentación de la herramienta de validación de ficheros
+(Python/FastAPI + HTML/JS): estructuras de entrada, validación de lo que manda el cliente y
+generación de los scripts SQL de configuración de uCollect.
+
+```
+/plugin install rs-validador@rs-enterprise-agent
+```
+
+Son independientes: se instalan, se versionan y se actualizan por separado. `rs-enterprise-agent`
+trabaja sobre `.sln` de uCollect/RS; `rs-validador` no toca ninguna solución C#. Su guía está en
+`plugins/rs-validador/README.md`.
 
 > 💡 **Menos tokens por sesión (ya automático)**: Claude Code **difiere por defecto** los schemas de
 > las tools MCP de `rs-workspace` — solo se cargan bajo demanda vía tool-search cuando una tarea las
@@ -164,7 +180,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 | **planner** 🟣 | Siempre — analiza, valida contra BD y decide STAGES |
 | **Aprobación humana** | Siempre — gate bloqueante, no toca código sin tu OK |
 | `core` 🟣 | Siempre — implementa el cambio |
-| `plan-check` 🔷 | Siempre tras core — verifica que el código cubre **todos** los ítems del PLAN |
+| `plan-check` 🔷 | Tras core, **solo en cambios complejos** (≥3 ítems, ≥2 proyectos, esquema BD o funcionalidad nueva) — verifica que el código cubre **todos** los ítems del PLAN |
 | `validator` 🔷 | Siempre — compila + análisis estático + revisión lógica |
 | `fixer` 🟣 | Si el validator falla (máx 2 ciclos) |
 | `tester` 🔷 | Si hay lógica testeable, o es Online y toca controles/idiomas |
@@ -183,7 +199,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 
 46 modos directos. El argumento `<Solution>.sln` casi siempre puede sustituirse por lenguaje natural equivalente.
 
-> El catálogo de abajo lista 49 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los dos orquestadores de tarea `/rs-tarea` y `/rs-mantis`, que pertenecen a los skills `rs-jira` y `rs-mantis` y no al principal.
+> El catálogo de abajo lista 50 comandos: los 46 modos directos más el pipeline completo (`/rs-enterprise-agent`, que no es un modo directo) y los tres comandos de gestión de tareas — `/rs-tarea`, router que autodetecta el gestor de tickets del proyecto; `/rs-mantis`, puerta explícita de Mantis; y `/rs-log-errores`, que convierte el log de errores de la web en tareas —, que despachan a los skills `rs-jira`, `rs-mantis` y `rs-log-errores` y no al principal.
 
 > ⛔ **Los nombres de estas tablas van sin el prefijo del plugin, por legibilidad.** El comando real
 > es `/rs-enterprise-agent:<nombre>` — ver [Cómo se usa](#cómo-se-usa-activación). Basta con teclear
@@ -252,7 +268,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-test <Solution>.sln` ⚡ | Ejecuta `dotnet test` y reporta passed/failed/skipped. Sin lanzar el pipeline. Si no hay proyecto de test, deriva a `/rs-crear-tests`. |
+| `/rs-test <Solution>.sln` ⚡ | Ejecuta `dotnet test` y reporta passed/failed/skipped (leídos del `.trx`, no del texto de consola: así el conteo no depende del idioma del CLI). Sin lanzar el pipeline. Si no hay proyecto de test, deriva a `/rs-crear-tests`. Si el resultado no se puede leer o no corre ninguna prueba, lo dice — no lo presenta como verde. |
 | `/rs-crear-tests <Solution>.sln` 🔷 | Crea proyecto de test (xUnit/MSTest/NUnit) si no existe + genera tests unitarios para las clases públicas. |
 | `/rs-cobertura <Solution>.sln` 🔷 | Mapa de cobertura: qué clases/métodos públicos (DALC/BUS primero) **no** tienen test. Advisory. |
 
@@ -281,6 +297,10 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-doc-drift <Solution>.sln [--rev <r>]` 🔷 | Cruza los cambios recientes contra la doc funcional y marca secciones obsoletas / incompletas / sin doc. Advisory, no reescribe. |
 | `/rs-runbook <Solution>.sln <proceso>` 🔷 | Runbook operativo de un proceso (carga inicial, cierre, reproceso): precondiciones, procedimiento, reglas críticas de esa operación, verificación y errores conocidos. **Te entrevista** — lo que no está en el código lo aportas tú. Persiste en `docs/agentic_manual/funcional/OPERACION/`. Ej: `/rs-runbook RSProcIN.sln carga inicial de históricos` |
 | `/rs-idiomas <Solution>.sln` 🟣 | Escanea `.aspx`, busca controles AIS y genera INSERTs para `RIDIOMA`/`RCONTROLES`. **Solo Online.** Salida a `C:\AIS\<proyecto>\scripts\`. |
+
+> **Los idiomas salen de la BD, no de una lista fija**: del catálogo 32 de `RTABL` (`SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32`), donde `TBCODE` es el id de idioma. Varían por instalación, así que ni `/rs-idiomas` ni el gate del pipeline dan por hecho `ESP`/`POR`.
+>
+> **Los IDTEXTO van por rangos según el tipo de texto** — errores (`coerr.eXXXX`) **1000–1999**, mensajes en pantalla (`coMens.mXXXX`) **2000–2999**, textos de pantalla (labels, headers de grid, validadores) **desde 3000** sin techo. Al asignar uno nuevo se **rellenan los huecos** empezando por el suelo del rango, no se continúa desde el máximo. Si un rango se agota, el id se busca a partir de 3000 y el script lo avisa en su cabecera.
 
 > **Documentación en el pipeline.** El manual técnico de convenciones (`docs/agentic_manual/tecnica/`) es **input**: el planner clasifica la tarea y core lee los docs que aplican antes de emitir código. La doc **funcional** y el **resumen por-solución** se actualizan automáticamente tras un cambio; el manual técnico solo se toca por **propuesta que un humano confirma**.
 
@@ -337,13 +357,15 @@ Instalación en el servidor del cliente (ambos paquetes):
 
 ---
 
-### 12. Jira
+### 12. Tareas (Jira / Mantis)
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-tarea [PROJ-123 \| URL]` | Orquesta el ciclo de una tarea de Jira: selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config. |
+| `/rs-tarea [PROJ-123 \| URL \| 1234 \| init]` | **Router**: detecta qué gestor de tickets usa el proyecto y orquesta el ciclo completo de la tarea con el skill que corresponda (`rs-jira` o `rs-mantis`) — selecciona issue → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. `/rs-tarea init` crea el config del gestor elegido. |
 
-> **Requisitos**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron).
+> **Detección**: mira qué config existe en `docs\` del workspace — `.jira-dev-config.json` → Jira, `.mantis-dev-config.json` → Mantis. Si existen **los dos**, desambigua por la forma del argumento (`PROJ-123` → Jira, `1234` → Mantis) y, si no basta, **pregunta**: nunca adivina. Si no existe ninguno, pregunta el gestor y ofrece crear su config. El gestor detectado se anuncia antes de tocar ningún ticket.
+>
+> **Requisitos (rama Jira)**: MCP **Atlassian Rovo** conectado. Para adjuntar `.sql` hace falta un API token en `~/.claude/rs-jira-credentials.json`. Setup completo → `references/jira.md`. Uso interactivo (no corre en headless/cron). Requisitos de la rama Mantis → sección siguiente.
 
 ---
 
@@ -351,11 +373,29 @@ Instalación en el servidor del cliente (ambos paquetes):
 
 | Comando | Qué hace |
 |---------|----------|
-| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue (siempre **asignada al usuario del token**) → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. El proyecto **nunca se asume**: si hay más de uno (o ninguno) se listan y se pregunta. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
+| `/rs-mantis [1234 \| crear \| proyectos \| init]` | Puerta **explícita** de Mantis (salta la detección de `/rs-tarea`). Orquesta el ciclo de una issue de MantisBT: selecciona o **crea** issue (siempre **asignada al usuario del token**) → formatea el requisito a `<Sln>.sln - <cambio>` → transiciona a "En Proceso" → **lanza el pipeline** → tras el commit, adjunta los `.sql` y pasa a "En Validación". Capa **opcional y aditiva**. El proyecto **nunca se asume**: si hay más de uno (o ninguno) se listan y se pregunta. `/rs-mantis proyectos` gestiona la lista curada de proyectos; `/rs-mantis init` crea el config. |
 
 > **Requisitos**: MantisBT no tiene MCP — usa el cliente REST autónomo `hooks/mantis-cli.ps1` (token auth, sin depender de `python.exe`). Token en `~/.claude/rs-mantis-credentials.json`; lista curada de proyectos en `docs\.mantis-dev-config.json`. Setup completo → `references/mantis.md`. Auth por token (a diferencia de rs-jira, no depende de OAuth interactivo), pero toda escritura en Mantis se confirma en uso interactivo.
 >
 > **Nota de rate**: la instancia devuelve HTTP 500 ante `PATCH` rápidos seguidos al mismo issue; `mantis-cli.ps1` intercala ~800ms + retry con backoff en `advance`/`create`/`assign` (ver `references/mantis.md`).
+
+> **Valores por defecto y etiquetas**: los dos configs aceptan un bloque `defaults` con los campos que se aplican a **toda** tarea que cree el plugin — en Jira `issueTypeName`, `priority`, `components`, `labels`, `customfield_*`; en Mantis `category`, `priority`, `severity`, `tags`. Precedencia: **lo que digas tú → `defaults` → réplica de la última tarea** (esta última se apaga con `defaults.replicarUltimaTarea: false`). Las etiquetas no se pisan: se acumulan. Detalle en `references/jira.md` / `references/mantis.md`.
+
+---
+
+### 14. Errores de producción → tareas
+
+| Comando | Qué hace |
+|---------|----------|
+| `/rs-log-errores <ruta log\|carpeta> [--desde YYYY-MM-DD] [--max N] [--glob *.log] [--niveles ERROR,FATAL]` 🟣 | Lee el log de errores de la web, **deduplica** las ocurrencias del mismo fallo, tría lo que es bug de lo que es ruido, abre **una tarea por tipo de error** en el gestor del proyecto (Jira o Mantis, detectado igual que `/rs-tarea`) y propone lanzar el pipeline para cada una, de una en una. |
+
+> **La deduplicación no la hace el modelo**: la hace el hook `parse-weblog.ps1` agrupando por **firma** — excepción + frame de código propio + mensaje normalizado (números, GUIDs, fechas y rutas pasan a marcadores, así que "Cliente 4711 no existe" y "Cliente 8322 no existe" son **una** tarea, no dos). Reconoce NLog/log4net, ELMAH XML y volcados planos de stack .NET.
+>
+> **El log no entra en contexto**: la tool devuelve solo el agregado (top-N firmas con recuento, ventana temporal y un par de muestras), nunca las líneas — da igual que el fichero pese cientos de MB. Los mensajes y muestras van con **PII redactada** antes de acabar copiados en un ticket.
+>
+> **No duplica tareas entre pasadas**: cada tarea lleva el marcador `[log:<firma>]` en el resumen; si al volver a analizar ya existe una issue abierta con esa firma, en vez de crearla otra vez ofrece añadir una nota con las nuevas ocurrencias.
+>
+> ⛔ Nada se crea sin que apruebes la lista propuesta, y el pipeline se lanza **de una en una**, nunca en lote.
 
 ---
 
@@ -375,7 +415,7 @@ el repositorio— sin renunciar a ella. Con eso, el actualizador ya pregunta por
 cambiaron en vez de depender de que alguien se acuerde, y el instalador avisa si el modelo y
 la BD han derivado.
 
-Desde la 3.11.0 el actualizador ya no solo pregunta: **escribe el script**. Con
+Desde la 3.22.0 el actualizador ya no solo pregunta: **escribe el script**. Con
 `hooks\actualizador-objetos.ps1 "<trunk>" "<destino>\scripts"` genera el `.sql` de todo lo que
 cambió desde la última entrega, con el mismo texto que emitiría el instalador y en orden de
 dependencias, listo para declarar en `scripts.json`. Dos cosas no las decide solo, a propósito:
@@ -445,11 +485,12 @@ La clasificación va por nombre, tipo y tabla — no adivina. Las dos direccione
 
 Resumen de `docs/proteccion-pii-consultas-bd.md` §5. Esta medida es **provisional**: el control definitivo (usuario de BD de solo lectura + redacción en el propio motor) está pedido a Sistemas en ese mismo documento.
 
+- **Solo filtra `db_query`.** Las tools que mantienen el modelo y leen estructura (`sync_from_db`, `compare_model`, `get_table_schema`, `render_erd`…) no pasan por el filtro: leen metadatos —nombres de tabla, columna, tipo, índice—, no datos de personas. Nombres en claro siempre, también en `enforce`. ⚠️ Reverso: si el **catálogo del sistema** se consulta con `db_query` (`ALL_TAB_COLUMNS`, `INFORMATION_SCHEMA.COLUMNS`), esos nombres **sí** vuelven enmascarados —esas tablas no están en el modelo—. Para leer estructura, usar las tools de modelo. Ver `docs/proteccion-pii-consultas-bd.md` §4.5.
 - **El dato sale de la base de datos.** El motor sigue emitiendo el valor en claro y el filtro actúa después. Cualquier fallo, error de configuración o ruta no prevista lo expone. El control en BD no tiene esta propiedad.
 - **Es evitable.** El bloqueo de `sqlplus`/`sqlcmd` es un **guardarraíl frente al descuido, no una frontera de seguridad**: se elude con un script intermedio o invocando el binario por otra vía.
 - **Un `WHERE` sigue infiriendo el valor.** `SELECT COUNT(*) ... WHERE DNI LIKE '1234%'` devuelve un número, que sale en claro por diseño; repitiendo la consulta se reconstruye el dato sin haber visto un solo valor enmascarado. La medida **avisa** (`pii.predicate_warning`), no bloquea — bloquear rompería el filtrado legítimo.
 - **Un seudónimo sigue siendo dato personal.** Art. 4(5) RGPD: la seudonimización reduce el riesgo, no saca el dato del ámbito de la norma. `pii:3f9a2c1b7e04` se sigue transfiriendo al proveedor externo. Si el requisito es que el dato personal **no salga en claro**, esto lo cumple; si es que **no salga**, no lo cumple.
-- **Depende de configuración local no versionada.** Las guardas viven en la configuración personal de cada desarrollador y no viajan con el repositorio: un equipo nuevo sin configurar queda desprotegido. `/rs-pii status` lo dice (`guards_missing`), pero sigue siendo una dependencia de puesto de trabajo.
+- **Depende de que el plugin esté instalado.** *(Corregido en 3.4.0: hasta entonces las guardas se registraban a mano en la configuración personal de cada desarrollador, no viajaban con el repositorio y guardaban rutas absolutas que cada actualización dejaba apuntando a una carpeta inexistente — fallaban abiertas y sin señal.)* Hoy las declara el propio plugin y se instalan, actualizan y retiran con él. Queda la dependencia ordinaria: sin plugin no hay guardas, y un plugin recién instalado o actualizado no las tiene vivas hasta reiniciar Claude Code. `/rs-env` y `/rs-pii status` distinguen las dos caras — si están **disponibles** y si **bloquean aquí** (`guards_missing`).
 - **La vía de respaldo puede devolver datos sin filtrar.** Si `db_query` cae al hook y ahí el filtro **no se puede ni ejecutar** (falta Python o el fichero del filtro en el puesto), la consulta devuelve los datos sin enmascarar y lo señala en la respuesta. Es deliberado: dejar sin servicio la consulta empuja al cliente de BD directo, que no pasa por ningún filtro. Si el filtro sí corre y falla, no se devuelve ninguna fila.
 - **Una columna marcada `"safe"` por error no se detecta** salvo que sus valores tengan forma reconocible — nombres, apellidos y direcciones no la tienen. Solo lo ve la revisión del cambio en el control de versiones.
 - **Fuera del filtro**: los ficheros que generan el instalador y el actualizador, la exportación del modelo y los informes HTML. Se entregan al cliente por diseño y pueden contener datos reales; su control es organizativo.
@@ -462,10 +503,11 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **50 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **51 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
+- `parse_web_log` devuelve el **agregado** de un log de errores (firmas + recuento + pantalla), nunca sus líneas: un log de cientos de MB se resume sin cargarlo. Reconoce NLog/log4net, ELMAH XML, el formato propio de la AgendaWeb y volcados de stack .NET.
 - `render_erd`, `render_dashboard`, `generate_sql`, `export_dmd` generan **ficheros**, nunca cargan el contenido en contexto.
 - El modelo BD (~180K tokens) nunca se carga entero: `search_model` → `get_model_index` → `get_table_schema`.
 
@@ -488,6 +530,28 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 - Export a DDL y Oracle Data Modeler (`.dmd`).
 - Detección de drift + generación de scripts de migración.
 - **Merge seguro**: preserva siempre `source="manual"` y descripciones; tablas ausentes se marcan `orphan`, nunca se borran.
+- **Formato estable**: lo escribe un único serializador canónico (`indent=2`, `ensure_ascii`,
+  CRLF, UTF-8 con BOM), verificado tras cada escritura. El fichero vive en el repositorio y se
+  revisa por diff, así que dos escritores con dos formatos hacían el diff inservible aunque el
+  contenido fuera idéntico.
+
+#### "No lo veo" no es "no existe"
+
+Si la cuenta de BD **no es dueña del esquema**, ve solo lo que tiene concedido por GRANT — y
+Oracle no permite distinguir un objeto inexistente de uno sin permiso. Por eso:
+
+- Una tabla que no sale en la sincronización **se conserva entera** (columnas, relaciones e
+  índices) y se marca `visible: false`. Nunca se borra ni se degrada.
+- Cada sincronización emite un **bloque de cobertura**: cuántos objetos de cada tipo ve el
+  diccionario frente a los capturados, con qué cuenta se leyó y qué GRANTs tiene. Con hueco,
+  devuelve `parcial` — "el modelo está incompleto", que no es lo mismo que "eso ya no está".
+- El **PL/SQL exige `GRANT EXECUTE`**, no `SELECT`. Sin él, el diccionario devuelve cero
+  procedimientos sin error; `/rs-instalador` y `/rs-actualizador` ahora **fallan** en ese caso en
+  vez de entregar un paquete sin lógica de servidor.
+- Para leer con otra cuenta: `-Conexion <id>` en los hooks y `conexion=<id>` en las tools, contra
+  las `conexiones[]` de `.rs-databases.json`. Es la única forma de ver los **sinónimos privados**.
+  Sin `-Conexion` se usa siempre la conexión principal; un id que no existe corta con la lista de
+  válidas, y la conexión usada aparece en la salida.
 
 ---
 
@@ -499,7 +563,7 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 - **Build con evidencia**: nunca "build OK" sin output real del runner.
 - El modelo BD preserva siempre descripciones y relaciones manuales.
 - Scripts SQL generados siempre a `C:\AIS\<proyecto>\scripts\`.
-- Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos.
+- Scripts de idiomas (RIDIOMA/RCONTROLES) obligatorios en Online cuando hay controles/`Idm.Texto`/rebinds nuevos. Idiomas del **catálogo 32** de `RTABL`; IDTEXTO por rango (errores 1000–1999, mensajes 2000–2999, pantalla ≥3000) **rellenando huecos**.
 - **VCS nunca se asume** — `detect_vcs` decide SVN/Git/ninguno antes de cualquier diff/commit.
 - Los comandos que **escriben** (`/rs-rename`, `/rs-format`, `/rs-migrar`, `/rs-commit`, `/rs-deshacer`, `/rs-pii audit|enforce|off`, pipeline) piden confirmación antes de aplicar.
 
@@ -512,9 +576,9 @@ Modelo JSON vivo en `BD/<proyecto>-model.json`:
 | Componente | Para qué |
 |------------|----------|
 | Python 3.11+ + `pip install "mcp>=1.2.0,<2"` | MCP server. El paquete **no se instala solo** y sin él `rs-workspace` no arranca; el tope `<2` es obligatorio (`mcp` 2.0.0 eliminó `mcp.server.fastmcp`). Debe quedar en el Python que resuelve `python` en el PATH |
-| .NET SDK | `dotnet build` / `dotnet test` |
+| .NET SDK | Compilar y testear las soluciones SDK-style (.NET moderno) |
 | PowerShell 7+ | Hooks |
-| Visual Studio + MSBuild | Builds Online (vía vswhere) |
+| Visual Studio o Build Tools | Compilar y testear las soluciones .NET Framework (web, batch, COM) y los builds Online. Se localiza con vswhere: `msbuild.exe` y `vstest.console.exe`. El plugin elige compilador y runner **solo**, leyendo los `.csproj` de cada solución; si falta el que hace falta, avisa de que la compilación no se ha verificado en vez de dar un falso "no compila" |
 | Subversion CLI **o** Git CLI 2.x | Diff/commit/historial (según el proyecto) |
 
 > Subversion: instala el CLI con la **misma versión que TortoiseSVN** para evitar conflictos de working copy.
@@ -542,7 +606,7 @@ skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-
 agents/           51 subagentes: pipeline y modos directos
 commands/         49 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 50 tools
+mcp/              servidor MCP con 51 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

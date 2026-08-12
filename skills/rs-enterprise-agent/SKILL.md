@@ -93,7 +93,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 
 **1. Resolver solución** → `mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution(sln_path)` (fallback `hooks/validate-solution.ps1`).
 **1b. Scope** (una sola vez) → `mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope(sln_path)` → `scope_dirs`, `tipo`, `workspace`. Reenviar a TODAS las etapas.
-**2. Planner** → Task `rs-enterprise-agent:rs-editor-planner` (+ `cambio` = texto de la petición). Es **el cerebro**: analiza con acceso al modelo BD y al código, clasifica la tarea contra el índice maestro técnico (tabla tarea→docs), y devuelve el bloque `PLAN` legible + `STAGES` + `READ_DOCS` (docs técnicos que core debe leer + CHECKLIST) + `CONTEXT` + `STATUS`. El pipeline nunca llega a Core sin un `PLAN`. Cuando `STAGES` incluye `core`, el planner coloca `plan-check` **justo después** — la etapa que verifica que el código cubre todos los ítems del `PLAN` aprobado (red de seguridad en el paso 3 si el planner lo omitiera).
+**2. Planner** → Task `rs-enterprise-agent:rs-editor-planner` (+ `cambio` = texto de la petición). Es **el cerebro**: analiza con acceso al modelo BD y al código, clasifica la tarea contra el índice maestro técnico (tabla tarea→docs), y devuelve el bloque `PLAN` legible + `STAGES` + `READ_DOCS` (docs técnicos que core debe leer + CHECKLIST) + `CONTEXT` + `STATUS`. El pipeline nunca llega a Core sin un `PLAN`. Si el cambio es **complejo** (≥3 ítems, ≥2 proyectos, esquema BD o funcionalidad nueva — criterios en el agente), el planner coloca `plan-check` **justo después** de `core`; en un cambio de un solo ítem localizado lo omite deliberadamente, porque verificar cobertura de un plan de un ítem cuesta tokens y no aporta.
    - `STATUS: NEEDS_INPUT` → resolver con el usuario antes de seguir.
    - ⛔ **Verificar el contrato:** si la respuesta NO contiene un bloque `STAGES`, el planner que ha corrido es de una versión antigua (contrato `SUMMARY`+`STATUS` sin `PLAN`/`STAGES`). Detener y reportar: "planner devolvió contrato antiguo — se está ejecutando una copia obsoleta del agente; revisa `~/.claude/agents/` y ejecuta `/rs-env`". ⛔ Nunca continuar a Core: sin `PLAN` no hay nada que aprobar y el Gate A se saltaría en silencio.
 **2b. Aprobación del plan** → **Gate A** (`references/gates.md`). ⛔ PARADA: presentar el `PLAN` y detener el turno hasta aprobación explícita. No invocar Core en el mismo turno.
@@ -112,13 +112,43 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 Control de flujo (vive en el orquestador):
 - **core** `STATUS=FAIL` (duda bloqueante) → detener, escalar, ir a Log con `status="partial"`.
 - **plan-check** `INCOMPLETE` → reinvocar `core` (+ `MISSING`, `plan`, foco en el hueco) → nuevo `FILES_CHANGED` → volver a plan-check. **Máx 1 ciclo** de re-implementación (independiente del presupuesto de fixer); si sigue `INCOMPLETE` → detener, escalar al usuario (el hueco requiere decisión funcional, no reintento ciego), Log `partial`. Ruta a `core`, no a `fixer`: un ítem faltante suele ser lógica nueva, y `fixer` tiene prohibido añadirla.
-- **Red de seguridad plan-check:** si `core` corrió y `plan-check` NO estaba en `STAGES` → ejecutarlo igualmente antes de validator y anotarlo (misma corrección empírica permitida que db-modeler). Sin él, un `core` que implementa medio plan pasaría en silencio.
+- **Red de seguridad plan-check:** si `plan-check` NO estaba en `STAGES` y `core` devuelve un `FILES_CHANGED` de **≥3 ficheros o ≥2 proyectos** → ejecutarlo igualmente antes de validator y anotarlo: `⚠️ El cambio salió mayor de lo planificado (N ficheros, M proyecto(s)) → ejecuto plan-check aunque no venía en STAGES.` El planner lo clasificó como simple y no lo fue; a esa escala, un `core` que implementa medio plan pasaría en silencio. ⛔ Por debajo de ese umbral **no** se ejecuta: el planner ya decidió que no compensa, y ejecutarlo igualmente convertiría la excepción en peaje fijo.
 - **validator** FAIL → `rs-editor-fixer` (+ `ERRORS`, `FILES_CHANGED`) → nuevo `FILES_CHANGED` → volver a validator. Máx **2 ciclos totales** (compartidos con tester). Agotado o `NO SAFE FIX` → detener, escalar, Log `partial`.
 - **tester** `NEEDS_TESTS` → `rs-crear-tests` (+ `FILES_CHANGED`) → reinvocar tester con marca anti-bucle. Advisory: si no compilan los tests, no abortar — continuar y Log `partial` motivo "tests pendientes". `FAIL` → fixer → validator → tester (mismo límite de 2 ciclos).
 - **build** solo si validator PASS + tester OK (o tester no estaba en `STAGES`) + sin dudas abiertas.
-- **Red de seguridad db-modeler:** si `core` devuelve `TABLES_TOUCHED` no vacío y `db-modeler` NO estaba en `STAGES` → ejecutarlo igualmente y anotarlo (única corrección empírica permitida sobre `STAGES`).
+- **Red de seguridad db-modeler:** si `core` devuelve `TABLES_TOUCHED` no vacío y `db-modeler` NO estaba en `STAGES` → ejecutarlo igualmente y anotarlo (ver § Redes de seguridad).
 - **Manual técnico (patrón nuevo):** si `core` devuelve `NEW_PATTERN` no vacío, asegurar que `documentar` corre (si no estaba en `STAGES`, ejecutarlo). `documentar` **propone** el cambio al manual de convenciones (`TECNICA_PROPUESTA`) — ⛔ **no se escribe** en `tecnica/`. El orquestador surface la propuesta en el reporte final: `⚠️ Patrón nuevo → propuesta de manual técnico: <fichero/sección/diff>. Confirma para aplicar.` Solo tras "confirmo" del usuario se aplica (turno siguiente).
 - **Configuración de los batch sin centralizar:** si `build` devuelve `BATCH_CONFIG` no vacío, el workspace sigue con un `app.config` por proyecto en lugar de `Batch\App.Batch.config` + `Batch\Directory.Build.targets` — de ahí salen los bindingRedirects desalineados (`FileLoadException` → `StackOverflow`) y los `*.dll.config` huérfanos. Mismo idioma que `NEW_PATTERN`: la etapa **propone**, ⛔ **no escribe**. El orquestador surface en el reporte final: `⚠️ Batch sin configuración centralizada → propuesta: centralizar N proyecto(s) (M excepción(es) se conservan). Confirma para aplicar.` Solo tras "confirmo" se ejecuta `.\hooks\batch-centralizar.ps1 "<workspace>" -Aplicar` (turno siguiente), y después hay que recompilar. Convención: `references/batch-config.md`.
+
+## Redes de seguridad sobre `STAGES`
+
+El orquestador **no re-decide** qué etapas corren: ejecuta la lista del Planner. Hay exactamente
+**tres** excepciones, todas de la misma forma —una señal empírica que el Planner no podía conocer
+al planificar obliga a añadir una etapa que omitió— y todas se **anotan** en el reporte final:
+
+| Señal | Etapa que se añade | Por qué no bastaba el plan |
+|---|---|---|
+| `core` devuelve `FILES_CHANGED` de ≥3 ficheros o ≥2 proyectos | `plan-check` (antes de validator) | El tamaño real del cambio solo se conoce al escribirlo: el planner lo clasificó simple y no lo era |
+| `core` devuelve `TABLES_TOUCHED` no vacío | `db-modeler` | Qué tablas se tocan solo se sabe al escribir el código |
+| `core` devuelve `NEW_PATTERN` no vacío | `documentar` | Que el patrón sea nuevo se descubre implementándolo |
+
+⛔ Añadir una etapa **fuera de esta tabla** no es una red de seguridad, es re-planificar. Si el
+resultado de una etapa sugiere que falta algo más, parar y escalar al usuario.
+
+## Etapas que pueden solaparse
+
+El orden de `STAGES` es secuencial **porque encadena el contrato**, no por ceremonia. Dos pares no
+lo encadenan y pueden lanzarse en el mismo turno, en un solo mensaje con varias llamadas Task:
+
+- `db-modeler` ∥ `documentar` — consumen `FILES_CHANGED`/`TABLES_TOUCHED` de `core`, no se leen
+  entre sí y ninguna alimenta a la otra. Van al final del pipeline, así que solapan limpio.
+- `plan-check` ∥ `validator` — uno comprueba cobertura del `PLAN`, el otro compila. Independientes.
+  ⚠️ Si `validator` da FAIL se tira el trabajo de `plan-check`; compensa porque `plan-check` es
+  Sonnet y la alternativa es esperar a la compilación completa. Con `fixer` en juego, **volver a
+  serializar**: tras un ciclo de fixer, `plan-check` se ejecuta sobre el `FILES_CHANGED` nuevo.
+
+⛔ El resto sigue estrictamente en orden: `core` → (`plan-check`/`validator`) → `tester` → `build`.
+`build` es el que no admite solapamiento de ningún tipo — necesita validator PASS y tester OK.
 
 **4. Checklist final** → **Gate B** (`references/gates.md`). ⛔ Verificar evidencia real antes de reportar éxito.
 **5. Log** → **siempre** (`references/gates.md`), con `agents=<etapas de STAGES ejecutadas>`.

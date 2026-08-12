@@ -26,9 +26,11 @@ Solo `FILES_CHANGED` + clases afectadas + dependencias directas (`search_code` p
 Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__compile_check(sln_path)` → JSON con `errors[]`, `warnings[]`, `success`.
 Fallback: `hooks/compile-check.ps1 <ruta.sln> -NoRestore`.
 
+El compilador lo elige la propia tool leyendo los `.csproj` de la solución: MSBuild de Visual Studio si hay proyectos .NET Framework / web / COM, CLI `dotnet` si todos son SDK-style modernos. Lo dice en `builder` y `builder_reason`. ⛔ **No forzar `builder`** salvo que se esté diagnosticando la propia detección: lo normal es `auto`.
+
 - Si `success = false` → reportar `errors[]` directamente → FAIL inmediato. No continuar con paso 2.
 - Si `success = true` → continuar con paso 2.
-- Si dotnet no disponible o el sln no compila por razones de entorno → marcar "compilación no verificable" y aplicar solo paso 2.
+- Si viene `builder_error` → el compilador que hacía falta **no está instalado en esta máquina**. ⛔ Eso NO es "no compila": es "no se ha verificado". Marcar "compilación no verificable", trasladar el mensaje literal al usuario (dice qué instalar) y aplicar solo paso 2. Nunca reportarlo como error de compilación ni mandarlo al fixer: no hay nada que corregir en el código.
 
 ⛔ `compile_check` aquí es SOLO el gate de compilación del validator — NO sustituye ni implica el Build del pipeline (`rs-editor-build`: compila Debug+Release y copia binarios a AIS). Ese paso sigue siendo obligatorio tras tester, aunque `compile_check` haya devuelto `success=true`.
 

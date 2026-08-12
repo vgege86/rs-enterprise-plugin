@@ -17,6 +17,11 @@
 
     ⛔ De lo eliminado no se emite ningun DROP activo: va comentado al final del fichero.
 
+    ⛔ Con hueco de COBERTURA (la cuenta no ve todo el esquema) NO se escribe nada. El PL/SQL
+    exige GRANT EXECUTE, no SELECT: con cero grants el diccionario devuelve cero procedimientos
+    SIN ERROR, y ese diff diria "se han eliminado todos". Aqui eso no es un aviso: es la entrada
+    de un fichero que alguien ejecuta contra la BD de un cliente. -SinCobertura lo fuerza.
+
 .PARAMETER Workspace
     Ruta raiz del proyecto (carpeta trunk).
 
@@ -40,6 +45,13 @@
 .PARAMETER DryRun
     No escribe nada: solo lista lo que cambio y lo que entraria en el script.
 
+.PARAMETER Conexion
+    Id de conexion de docs\.rs-databases.json. Sin ella, la principal.
+
+.PARAMETER SinCobertura
+    Continua aunque la cuenta no vea todo el esquema. ⛔ Solo cuando se sabe que el hueco es
+    legitimo: revisa el delta objeto a objeto antes de entregarlo.
+
 .EXAMPLE
     .\actualizador-objetos.ps1 "C:\SVN\RS\<Proyecto>\trunk" "C:\AIS\<Proyecto>\Actualizador\TEST_20260812\scripts"
 .EXAMPLE
@@ -51,8 +63,10 @@ param(
     [string]$Proyecto = "",
     [string]$Prefijo = "",
     [string]$Nombre = "",
+    [string]$Conexion = "",
     [switch]$Sincronizar,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$SinCobertura
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -76,8 +90,10 @@ if (!(Test-Path $py)) {
 $argumentos = @($py, $Workspace, $Proyecto, $Destino)
 if ($Prefijo)      { $argumentos += @('--prefijo', $Prefijo) }
 if ($Nombre)       { $argumentos += @('--nombre', $Nombre) }
+if ($Conexion)     { $argumentos += @('--conexion', $Conexion) }
 if ($Sincronizar)  { $argumentos += '--sincronizar' }
 if ($DryRun)       { $argumentos += '--dry-run' }
+if ($SinCobertura) { $argumentos += '--sin-cobertura' }
 
 # La salida del script va TAL CUAL a la consola: lleva el detalle de que cambio, que entra en el
 # script y que queda retenido. El JSON de abajo es solo el veredicto.

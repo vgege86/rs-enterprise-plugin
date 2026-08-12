@@ -1,6 +1,6 @@
 ---
 name: rs-jira
-description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → asignar → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea", "trabaja la tarea PROJ-123", "coge una tarea de Jira", "crea una tarea en Jira", "mis tareas de Jira", "issue de Jira", "descarga los adjuntos de la issue". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
+description: 'Orquestador del ciclo de vida de una tarea de Jira sobre una solución uCollect/RS: seleccionar/crear issue → formatear el requisito → transicionar estado → asignar → lanzar el pipeline de desarrollo → commit → adjuntar scripts SQL → transicionar a validación. Usar cuando el usuario quiere trabajar una tarea de Jira: "/rs-tarea" en un workspace con `docs\.jira-dev-config.json` (el router `/rs-tarea` detecta el gestor y despacha aquí), "trabaja la tarea PROJ-123", "coge una tarea de Jira", "crea una tarea en Jira", "mis tareas de Jira", "issue de Jira", "descarga los adjuntos de la issue". Requiere el MCP Atlassian Rovo conectado. NO sustituye al pipeline rs-enterprise-agent — lo envuelve.'
 ---
 
 # RS Jira
@@ -79,9 +79,14 @@ workspace es el cwd de la sesión). Campos:
   (nombres reales del workflow del proyecto).
 - `openStatuses` *(opcional)* — lista de estados considerados "abiertos" en Fase 1; por defecto se
   usa `statusCategory = "To Do"` (robusto a idioma).
+- `defaults` *(opcional)* — valores por defecto del proyecto que se aplican a **toda** issue creada
+  por el plugin: `issueTypeName`, `priority`, `components`, `labels` (**etiquetas**), `versions`,
+  `duedate`, cualquier `customfield_*`, y el interruptor `replicarUltimaTarea` (bool, por defecto
+  `true`). Ver "Precedencia de campos al crear" y `references/jira.md`.
 
 Si el fichero **no existe** → ofrecer scaffolding (`/rs-tarea init`): proponer el JSON con los
-campos y, ⛔ solo tras aprobación, escribirlo. Recordar añadirlo al ignore de VCS. Las
+campos —incluido un `defaults` vacío o con los valores que el usuario indique— y, ⛔ solo tras
+aprobación, escribirlo. Recordar añadirlo al ignore de VCS. Las
 **credenciales** (`baseUrl`, `email`, `token` para adjuntar) viven aparte en
 `~/.claude/rs-jira-credentials.json` (fuera del repo) — se necesitan en la Fase 4 si hay SQL
 que adjuntar, y también en Fase 1 si se descargan adjuntos (oferta + subrutina `/rs-tarea descargar`);
@@ -103,8 +108,21 @@ Ofrecer tres vías:
 Espejo de `rs-mantis` Fase 1b. ⛔ Toda escritura tras confirmación.
 
 1. Pedir `issueTypeName`, `summary`, `description` (summary/description pueden derivarse del encuadre
-   de Fase 2 si el submodo es crear-y-trabajar).
-2. **Replicar "todos los informados" de la última tarea** del usuario:
+   de Fase 2 si el submodo es crear-y-trabajar). Si `defaults.issueTypeName` existe, proponerlo como
+   valor por defecto en vez de preguntar en seco.
+2. **Precedencia de campos al crear** (⛔ en este orden, el primero que informa un campo gana):
+   1. Lo que el **usuario** indique explícitamente en esta conversación.
+   2. **`defaults`** del config del workspace — es el valor declarado del proyecto: explícito,
+      revisable y estable entre tareas.
+   3. **Réplica de la última tarea** (abajo) — solo para los campos que ni el usuario ni `defaults`
+      hayan informado, y solo si `defaults.replicarUltimaTarea` no es `false`. Es una heurística:
+      adivina a partir de lo último que se hizo, así que cede ante cualquier valor declarado.
+
+   Las `labels` son la excepción a "el primero gana": se **acumulan** (`defaults.labels` + las que
+   pida el usuario + las que aporte quien llame a esta fase, sin duplicados). Una etiqueta más no
+   pisa a otra.
+3. **Replicar "todos los informados" de la última tarea** del usuario (solo si el paso 2 lo deja
+   activo):
    - `searchJiraIssuesUsingJql(cloudId, "project = <projectKey> AND assignee = <me> ORDER BY created DESC")`
      → `getJiraIssue` del primer resultado.
    - Copiar a `additional_fields` los campos **no vacíos**, con esta **blocklist (nunca copiar)**:
@@ -115,15 +133,16 @@ Espejo de `rs-mantis` Fase 1b. ⛔ Toda escritura tras confirmación.
      `duedate`, `environment`, y cualquier `customfield_*` con valor no vacío. `issuetype` lo fija el
      usuario en el paso 1 (no se copia de la última tarea).
    - Incluir además `assignee = { accountId: <me> }` (ver "Asignación").
-3. ⛔ **Confirmar**: mostrar al usuario el objeto completo a enviar (todos los campos + valores) →
-   permitir editar/quitar antes de crear.
-4. `createJiraIssue(cloudId, projectKey, issueTypeName, summary, description, additional_fields)`
+4. ⛔ **Confirmar**: mostrar al usuario el objeto completo a enviar (todos los campos + valores,
+   indicando de dónde sale cada uno: usuario / `defaults` / última tarea) → permitir editar/quitar
+   antes de crear.
+5. `createJiraIssue(cloudId, projectKey, issueTypeName, summary, description, additional_fields)`
    (deferred: `ToolSearch("select:mcp__claude_ai_Atlassian_Rovo__createJiraIssue")` antes de llamar).
    Manejo de error: si Jira devuelve `field is required` / `is invalid` / `cannot be set` → mostrar el
    error tal cual, **quitar o preguntar** el campo señalado y reintentar. **Máx 3 intentos**; si sigue
    fallando → reportar el último error y ⛔ parar (no crear a ciegas; sin `createmeta` en Rovo, el
    error de Jira es la red de seguridad).
-5. Con la KEY creada, dos submodos (aclarar con el usuario si no se desprende de la petición):
+6. Con la KEY creada, dos submodos (aclarar con el usuario si no se desprende de la petición):
    - **crear-y-trabajar** → continuar a Fase 2 con la issue creada.
    - **crear-suelto** → confirmar la KEY y parar aquí (alta sin arrancar desarrollo).
 

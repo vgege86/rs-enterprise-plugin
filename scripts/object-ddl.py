@@ -21,10 +21,10 @@ DERIVA
     objeto en la BD después de la última sincronización.
 
 Uso: python object-ddl.py <workspace> <proyecto> <NOMBRE> [--seccion <sec>] [--out <fichero>]
+                          [--conexion <id>]
 """
 
 import sys
-import json
 import importlib.util
 from pathlib import Path
 
@@ -39,6 +39,7 @@ if str(_AQUI) not in sys.path:
     sys.path.insert(0, str(_AQUI))
 
 import _dbobjetos as obj
+import _modeljson
 
 
 def _por_ruta(nombre, fichero):
@@ -66,7 +67,8 @@ def localizar(inventario: dict, nombre: str) -> list:
 
 def main():
     if len(sys.argv) < 4:
-        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <NOMBRE> [--seccion <sec>] [--out <fichero>]")
+        print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <NOMBRE> [--seccion <sec>] "
+              f"[--out <fichero>] [--conexion <id>]")
         sys.exit(1)
 
     workspace, proyecto, nombre = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -78,13 +80,13 @@ def main():
 
     seccion_pedida = _opt("--seccion").strip().lower()
     salida = _opt("--out")
+    conexion = _io._ins.arg_conexion(resto)
 
     model_path = Path(workspace) / "BD" / f"{proyecto}-model.json"
     if not model_path.exists():
         print(f"ERROR: Modelo no encontrado: {model_path}")
         sys.exit(1)
-    with open(model_path, encoding="utf-8-sig") as f:
-        model = json.load(f)
+    model = _modeljson.cargar(model_path)
 
     inventario = model.get("objetos") or {}
     if seccion_pedida and seccion_pedida not in obj.SECCIONES:
@@ -106,7 +108,7 @@ def main():
         else:
             print(f"AVISO: '{nombre}' no está en el inventario del modelo; se buscan los siete tipos.")
 
-    cfg = _io._ins.read_db_config(workspace, model)
+    cfg = _io._ins.read_db_config(workspace, model, conexion)
     if cfg["motor"] not in ("ORACLE", "SQLSERVER"):
         print(f"ERROR: motor no soportado: {cfg['motor']}")
         sys.exit(1)

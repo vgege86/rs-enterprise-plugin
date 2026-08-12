@@ -29,13 +29,20 @@ QUÉ VIAJA Y QUÉ NO
     una equivocación borra código en producción. Se emiten al final COMENTADOS, para que quien
     entrega decida y descomente.
 
+COBERTURA
+    ⛔ Con hueco de cobertura NO se escribe nada. El PL/SQL exige GRANT EXECUTE (no SELECT), y
+    con cero grants tanto ALL_OBJECTS como ALL_SOURCE devuelven cero procedimientos SIN ERROR:
+    una cuenta que no ve un tipo entero produciría un diff que dice "se han eliminado todos los
+    procedimientos". Aquí eso no es un aviso cosmético —es la entrada de un fichero que alguien
+    va a ejecutar contra la BD de un cliente—, así que se para y se dice qué GRANT falta.
+
 Uso: python delta-objects.py <workspace> <proyecto> <out_dir>
                              [--prefijo NN] [--nombre FICHERO] [--sincronizar] [--dry-run]
+                             [--conexion <id>] [--sin-cobertura]
 """
 
 import sys
 import re
-import json
 import importlib.util
 from pathlib import Path
 from datetime import datetime
@@ -51,6 +58,7 @@ if str(_AQUI) not in sys.path:
     sys.path.insert(0, str(_AQUI))
 
 import _dbobjetos as obj
+import _modeljson
 
 # Los dos módulos llevan guion en el nombre -> no son importables con `import`; se cargan por ruta.
 def _por_ruta(nombre, fichero):
@@ -183,13 +191,16 @@ def siguiente_prefijo(out_dir: Path) -> str:
 def main():
     if len(sys.argv) < 4:
         print(f"Uso: {sys.argv[0]} <workspace> <proyecto> <out_dir> "
-              f"[--prefijo NN] [--nombre FICHERO] [--sincronizar] [--dry-run]")
+              f"[--prefijo NN] [--nombre FICHERO] [--sincronizar] [--dry-run] "
+              f"[--conexion <id>] [--sin-cobertura]")
         sys.exit(1)
 
     workspace, proyecto, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
     resto = sys.argv[4:]
     dry = "--dry-run" in resto
     sincronizar = "--sincronizar" in resto
+    sin_cobertura = "--sin-cobertura" in resto
+    conexion = _io._ins.arg_conexion(resto)
 
     def _opt(bandera, defecto=""):
         return resto[resto.index(bandera) + 1] if bandera in resto and resto.index(bandera) + 1 < len(resto) else defecto
@@ -201,8 +212,7 @@ def main():
     if not model_path.exists():
         print(f"ERROR: Modelo no encontrado: {model_path}")
         sys.exit(1)
-    with open(model_path, encoding="utf-8-sig") as f:
-        model = json.load(f)
+    model = _modeljson.cargar(model_path)
 
     previo = model.get("objetos") or {}
     if not previo or obj.total(previo) == 0:
@@ -212,12 +222,14 @@ def main():
         print("       estuviera en la BD NO saldrá como cambio en esta entrega.")
         sys.exit(1)
 
-    cfg = _io._ins.read_db_config(workspace, model)
+    cfg = _io._ins.read_db_config(workspace, model, conexion)
     if cfg["motor"] not in ("ORACLE", "SQLSERVER"):
         print(f"ERROR: motor no soportado: {cfg['motor']}")
         sys.exit(1)
 
     print(f"Motor: {cfg['motor']} | schema/BD: {cfg['schema']}")
+    if cfg.get("conexion"):
+        print(f"Conexión: {cfg['conexion']}")
     print(f"Línea base: {model_path.name} ({obj.total(previo)} objetos)")
 
     salidas, errores = _mo.extraer(cfg, _io._ins.read_max_paralelo(workspace, proyecto))
@@ -225,6 +237,30 @@ def main():
         print(f"   ERROR en {titulo}: {err}")
 
     actual = obj.construir(salidas, list((model.get("tables") or {}).keys()))
+
+    # ---- cobertura: ¿esta cuenta ve todo el esquema, o solo un trozo? ----
+    # ⛔ Aquí no basta con avisar, como en el sync. Un tipo entero invisible —el PL/SQL exige
+    # GRANT EXECUTE y con cero grants el diccionario devuelve cero SIN ERROR— produce un diff que
+    # dice "se han eliminado todos los procedimientos", y esto escribe un fichero que alguien
+    # ejecuta contra la BD de un cliente. Con hueco se para.
+    vis = _io._ins.read_visibilidad(workspace, conexion)
+    if vis.get("soportado"):
+        cob = obj.cobertura(vis, {s: len(actual.get(s) or {}) for s in obj.SECCIONES},
+                            _io.exclusiones_cobertura(salidas))
+        print()
+        for ln in obj.formato_cobertura(cob):
+            print(ln)
+        if cob.get("parcial") and not sin_cobertura:
+            print("\n⛔ PARADA: la cuenta no ve todo el esquema, así que este diff no es de fiar —")
+            print("   un tipo invisible se lee como 'se ha eliminado todo'. Concede los GRANT que")
+            print("   faltan y repite. Si sabes que el hueco es legítimo: --sin-cobertura.")
+            sys.exit(1)
+        if cob.get("parcial"):
+            print("\nAVISO: se continúa con hueco de cobertura por --sin-cobertura. Revisa el delta"
+                  " objeto a objeto antes de entregarlo.")
+    elif vis.get("error"):
+        print(f"\nAVISO: sin diagnóstico de cobertura ({vis['error']})")
+
     cambios = obj.comparar(previo, actual)
 
     # ⛔ Una sección cuya extracción falló sale vacía, y el diff la leería como "se ha eliminado
@@ -294,9 +330,8 @@ def main():
         # generado y luego descartado deja el modelo diciendo que esos cambios ya se entregaron.
         model["objetos"] = actual
         model["updated_at"] = datetime.now().isoformat()
-        tmp = model_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(model, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(model_path)
+        # Escritura canónica, atómica y verificada: ver scripts/_modeljson.py.
+        _modeljson.guardar(model, model_path)
         print(f"   Línea base actualizada en {model_path.name}: el próximo delta parte de aquí.")
     else:
         print("   Cuando la entrega esté cerrada, resincroniza la línea base:")

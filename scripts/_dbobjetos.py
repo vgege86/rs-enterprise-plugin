@@ -273,6 +273,85 @@ def para_entregar(cambios: dict) -> tuple:
             entregables[sec] = sorted(set(vivos))
     return entregables, retenidos
 
+def cobertura(visibilidad: dict, capturado: dict, excluido: dict = None) -> dict:
+    """Cuánto del esquema se ha llegado a ver, frente a lo que el diccionario dice que hay.
+
+    ⛔ Existe porque un inventario vacío NO significa "no hay objetos de ese tipo". El PL/SQL
+    exige GRANT EXECUTE, no SELECT: con cero grants EXECUTE, ALL_OBJECTS y ALL_SOURCE devuelven
+    cero procedimientos y cero paquetes SIN ERROR. Medido en una instalación de cliente — tras
+    conceder 13 grants aparecieron 12 procedimientos y 1 paquete que hasta entonces "no
+    existían". Lo mismo con las tablas: 323 pasaron a 329.
+
+    `visibilidad` es lo que devuelve hooks/db-visibilidad.ps1 (es_dueno, grants, diccionario).
+    `capturado` es {sección: n}. `excluido` es {sección: {"n": k, "motivo": "..."}} para lo que
+    el propio script descarta a propósito — sin declararlo, una exclusión legítima se cuenta
+    como hueco y la cobertura cría avisos que nadie vuelve a mirar.
+
+    Devuelve un dict listo para escribir en el modelo y para imprimir. `parcial` es lo que
+    decide el exit 2 del llamante.
+    """
+    excluido = excluido or {}
+    dicc = (visibilidad or {}).get("diccionario") or {}
+    es_dueno = bool((visibilidad or {}).get("es_dueno"))
+
+    secciones, huecos = [], 0
+    for sec in sorted(capturado):
+        real = dicc.get(sec)
+        cap  = int(capturado[sec] or 0)
+        exc  = int((excluido.get(sec) or {}).get("n") or 0)
+        motivo = str((excluido.get(sec) or {}).get("motivo") or "")
+        hueco = 0 if real is None else max(0, int(real) - cap - exc)
+        secciones.append({"seccion": sec, "real": real, "capturado": cap,
+                          "excluido": exc, "motivo": motivo, "hueco": hueco})
+        huecos += hueco
+
+    cob = {"es_dueno": es_dueno,
+           "usuario": (visibilidad or {}).get("usuario") or "",
+           "esquema": (visibilidad or {}).get("esquema") or "",
+           "conexion": (visibilidad or {}).get("conexion") or "",
+           "grants": (visibilidad or {}).get("grants") or {},
+           "secciones": secciones, "huecos": huecos,
+           "parcial": huecos > 0, "nota": ""}
+
+    if huecos > 0:
+        cob["nota"] = ("Descuadre con la cuenta DUEÑA del esquema: no son permisos, es un filtro "
+                       "del propio script."
+                       if es_dueno else
+                       "La cuenta no es dueña del esquema: el hueco puede ser un objeto real sin "
+                       "GRANT. Nada se ha borrado del modelo.")
+    elif not es_dueno:
+        cob["nota"] = "Cuenta no dueña del esquema, pero el conteo cuadra con el diccionario."
+    return cob
+
+
+def formato_cobertura(cob: dict) -> list:
+    """El bloque de cobertura como líneas de texto, para el log. Equivalente de
+    Format-RsCobertura en hooks/lib-dbvisibilidad.ps1."""
+    quien = "DUEÑA del esquema" if cob.get("es_dueno") else "solo con GRANT per-object"
+    l = ["---- Cobertura (conteo real en el diccionario vs capturado) ----",
+         f"   Cuenta: {cob.get('usuario')} sobre {cob.get('esquema')} ({quien})"]
+    grants = cob.get("grants") or {}
+    if grants:
+        l.append("   Grants: " + " · ".join(f"{k} {grants[k]}" for k in sorted(grants)))
+    elif not cob.get("es_dueno"):
+        l.append("   Grants: NINGUNO detectado sobre este esquema.")
+
+    for s in cob.get("secciones") or []:
+        real = "n/d" if s["real"] is None else str(s["real"])
+        linea = f"   {s['seccion']:<16} diccionario {real:>6}  capturado {s['capturado']:>6}"
+        if s["excluido"]:
+            linea += f"  excluidas {s['excluido']} ({s['motivo']})"
+        if s["hueco"]:
+            linea += f"  << HUECO {s['hueco']}"
+        l.append(linea)
+
+    if cob.get("nota"):
+        l.append(f"   {cob['nota']}")
+    if cob.get("parcial") and not cob.get("es_dueno"):
+        l.append("   Para cerrarlo: conceder los GRANT que falten (SELECT para tablas y vistas,")
+        l.append("   EXECUTE para procedimientos y paquetes) y repetir.")
+    return l
+
 
 def total(inventario: dict) -> int:
     return sum(len((inventario or {}).get(s) or {}) for s in SECCIONES)

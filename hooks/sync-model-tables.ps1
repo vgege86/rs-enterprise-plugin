@@ -10,12 +10,16 @@
 .PARAMETER Tables
     Nombres de tablas a sincronizar, separados por coma.
 
+.PARAMETER Conexion
+    Id de conexion de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+
 .EXAMPLE
     .\sync-model-tables.ps1 "C:\...\trunk" "RNUEVATABLA,RCLIENTES"
 #>
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [Parameter(Mandatory=$true)][string]$Tables
+    [Parameter(Mandatory=$true)][string]$Tables,
+    [string]$Conexion = ""
 )
 
 
@@ -24,9 +28,12 @@ $ErrorActionPreference = "Stop"
 $hooksDir = Split-Path $PSCommandPath -Parent
 . (Join-Path $hooksDir "lib-dbconfig.ps1")
 . (Join-Path $hooksDir "lib-dbmodel.ps1")
+. (Join-Path $hooksDir "lib-modeljson.ps1")
 
-# Config BD
-$configJson = & "$hooksDir\get-config.ps1" $Workspace | ConvertFrom-Json
+# Config BD. -Conexion se propaga a get-config.ps1: si no, los campos planos (motor, schema,
+# datasource) saldrian de conexiones[0] y la password de la conexion pedida — mezclando dos
+# conexiones distintas en la misma lectura.
+$configJson = & "$hooksDir\get-config.ps1" $Workspace -Conexion $Conexion | ConvertFrom-Json
 if ($configJson.error) {
     @{ success = $false; error = $configJson.error } | ConvertTo-Json; exit 1
 }
@@ -42,7 +49,12 @@ $dbCfg = Read-RsDatabases (Resolve-RsWorkspace $Workspace)
 if (-not $dbCfg.ok) {
     @{ success = $false; error = $dbCfg.error } | ConvertTo-Json; exit 1
 }
-$password = Unprotect-RsSecret (Get-CsPart -Cadena "$($dbCfg.conexiones[0].cadena)" -Clave "Password")
+$conSel = Select-RsConexion -Config $dbCfg -Id $Conexion
+if (-not $conSel) {
+    $validas = ($dbCfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
+    @{ success = $false; error = "Conexion '$Conexion' no existe. Validas: $validas" } | ConvertTo-Json; exit 1
+}
+$password = Unprotect-RsSecret (Get-CsPart -Cadena "$($conSel.cadena)" -Clave "Password")
 
 if (-not (Test-Path $modelPath)) {
     @{ success = $false; error = "Modelo BD no encontrado: $modelPath" } | ConvertTo-Json; exit 1
@@ -234,18 +246,21 @@ if ($defRes.ok) {
 $updated  = @($requestedTables | Where-Object { $found.ContainsKey($_) })
 $notInDb  = @($requestedTables | Where-Object { -not $found.ContainsKey($_) })
 
-# Guardar modelo actualizado (escritura atómica: tmp -> rename, igual que sync-from-db.ps1)
+# Guardar modelo actualizado (formato canonico, atomico y verificado — ver lib-modeljson.ps1)
 $model.updated_at = (Get-Date -Format "o")
-$tmpPath = $modelPath + ".tmp"
-$model | ConvertTo-Json -Depth 10 | Set-Content $tmpPath -Encoding UTF8
-Move-Item $tmpPath $modelPath -Force
+Save-RsModelJson -Model $model -Path $modelPath | Out-Null
 
+# ⛔ `not_in_db` es un nombre optimista: con una cuenta que solo ve por GRANT, "no ha salido en
+# la consulta" puede ser tanto "no existe" como "no lo veo". Aqui las tablas las pide el llamante
+# por nombre, asi que no se toca ninguna de las que no salen — pero el mensaje no puede afirmar
+# que no estan en la BD.
 @{
     success    = $true
+    conexion   = "$($conSel.id)"
     model_path = $modelPath
     updated    = $updated
     not_in_db  = $notInDb
     defaults   = $defaultsCount
     warning    = $defaultsAviso
-    message    = if ($updated.Count -gt 0) { "Modelo actualizado para: $($updated -join ', ')" } else { "Sin cambios -- tablas no encontradas en BD: $($notInDb -join ', ')" }
+    message    = if ($updated.Count -gt 0) { "Modelo actualizado para: $($updated -join ', ')" } else { "Sin cambios -- tablas no leidas (no existen, o esta conexion no las ve): $($notInDb -join ', ')" }
 } | ConvertTo-Json -Depth 3

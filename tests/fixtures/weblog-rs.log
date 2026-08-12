@@ -1,0 +1,43 @@
+Error: (11/08/2026 13:45) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-12899: el valor es demasiado grande para la columna "APPDB"."RUSRLOTE"."ULUFCOD" (real: 54, máximo: 50)
+https://docs.oracle.com/error-help/db/ora-12899/(Query: INSERT INTO RUSRLOTE(ULLOTE,ULUFCOD,ULFECHA) VALUES('L0001','persona.apellido@correo.ejemplo','2026-08-11') )     en Comun.cConexionOracle.EjecutarQuery(String sQuery)
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+   en RSDalc.Agenda.TomarLote(String sLote, String sUsuarioSession)
+   en RSFac.Agenda.TomarLote(String sLote, String sUsuarioSession) en C:\src\OnLine\Negocio\RSFac\Agenda.cs:línea 240
+   en FrmDetalleClie.CargoDatosPagina() en C:\src\OnLine\AgendaWeb\FrmDetalleClie.aspx.cs:línea 784
+Error: (11/08/2026 13:47) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-12899: el valor es demasiado grande para la columna "APPDB"."RUSRLOTE"."ULUFCOD" (real: 58, máximo: 50)
+https://docs.oracle.com/error-help/db/ora-12899/(Query: INSERT INTO RUSRLOTE(ULLOTE,ULUFCOD,ULFECHA) VALUES('L0002','otra.persona@correo.ejemplo','2026-08-11') )     en Comun.cConexionOracle.EjecutarQuery(String sQuery)
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+   en RSDalc.Agenda.TomarLote(String sLote, String sUsuarioSession)
+   en FrmDetalleClie.CargoDatosPagina() en C:\src\OnLine\AgendaWeb\FrmDetalleClie.aspx.cs:línea 784
+Error: (20/02/2026 8:41) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-00001: restricción única (APPDB.IDX_0000000000000001) violada
+https://docs.oracle.com/error-help/db/ora-00001/(Query: INSERT INTO RUSUARIOS(UFUSR,UFNOMBRE) VALUES('UF01','Nombre Apellido') )     en Comun.cConexionOracle.EjecutarQuery(String sQuery)
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+   en FrmGestionUsuarios.GraboUsuario() en C:\src\OnLine\AgendaWeb\FrmGestionUsuarios.aspx.cs:línea 512
+Error: (20/02/2026 9:05) - Codigo error: 200 Codigo error sql: 0 Descripción error: System.Threading.ThreadAbortException: Subproceso anulado.
+   en System.Threading.Thread.AbortInternal()
+   en System.Web.HttpResponse.End()
+   en FrmBase.Redireccionar(String sPagina) en C:\src\OnLine\AgendaWeb\includes\FrmBase.cs:línea 118
+   en FrmLogin.btnEntrar_Click(Object sender, EventArgs e) en C:\src\OnLine\AgendaWeb\FrmLogin.aspx.cs:línea 96
+Error: (21/02/2026 10:00) - Codigo error: 200 Codigo error sql: 0 Descripción error: System.Threading.ThreadAbortException: Subproceso anulado.
+   en System.Threading.Thread.AbortInternal()
+   en FrmBase.OnLoad(EventArgs e) en C:\src\OnLine\AgendaWeb\includes\FrmBase.cs:línea 64
+   en FrmLogin.Page_Load(Object sender, EventArgs e) en C:\src\OnLine\AgendaWeb\FrmLogin.aspx.cs:línea 41
+cErrores: (22/05/2026 10:11) - Codigo error: 700 Codigo error sql: 0 Descripción error: {"success":false,"data":{"hasErrors":true,"errorsMessages":["No existe algún tipo de iter procesal indicado."]}}
+   en RSFac.Integracion.EnviarAsunto(String sJson) en C:\src\OnLine\Negocio\RSFac\Integracion.cs:línea 302
+Fail: (04/08/2026 9:36) - Codigo error: 1 Codigo error sql: 0 Descripción error: No se pudo descifrar el appSetting clientSecret: Value was either too large or too small for a character.. Se deshabilita la integración.
+Error: (05/08/2026 14:02) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-12899: el valor es demasiado grande para la columna "APPDB"."RUSUARIOS"."UFUSRMODIF" (real: 34, máximo: 30)
+https://docs.oracle.com/error-help/db/ora-12899/(Query: UPDATE RUSUARIOS SET UFUSRMODIF='persona.apellido@correo.ejemplo' WHERE UFUSR='UF01' )     en Comun.cConexionOracle.EjecutarQuery(String sQuery)
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+   en FrmGestionUsuarios.GraboUsuario() en C:\src\OnLine\AgendaWeb\FrmGestionUsuarios.aspx.cs:línea 640
+Error: (06/08/2026 11:12) - Codigo error: -2147467261 Codigo error sql: 0 Descripción error: System.NullReferenceException: Referencia a objeto no establecida como instancia de un objeto. Usuario 12345678Z sin ficha.
+   en RSFac.Agenda.CargoFicha(String sUsuario) en C:\src\OnLine\Negocio\RSFac\Agenda.cs:línea 88
+   en FrmDetalleClie.Page_Load(Object sender, EventArgs e) en C:\src\OnLine\AgendaWeb\FrmDetalleClie.aspx.cs:línea 120
+Error: (07/08/2026 08:03:22) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-00933: comando SQL no terminado correctamente
+https://docs.oracle.com/error-help/db/ora-00933/(Query: SELECT * FROM RUSRLOTE WHERE ULUFCOD='UF01' ORDER )     en Comun.cConexionOracle.EjecutarScalar(String sQuery)
+   en FrmListadoLotes.CargoGrid() en C:\src\OnLine\AgendaWeb\FrmListadoLotes.aspx.cs:línea 55
+Error: (08/08/2026 16:20) - Codigo error: 0 Codigo error sql: 0 Descripción error: System.InvalidCastException: La conversión especificada no es válida.
+   en RSFac.Cartera.CalculoImporte(String sImporte) en C:\src\OnLine\Negocio\RSFac\Cartera.cs:línea 210
+   en FrmCartera.btnCalcular_Click(Object sender, EventArgs e) en C:\src\OnLine\AgendaWeb\FrmCartera.aspx.cs:línea 233
+Error: (09/08/2026 7:05) - Codigo error: 4 Codigo error sql: 0 Descripción error: No se han encontrado resultados coincidentes
+Warn: (10/08/2026 12:00) - Codigo error: 300 Codigo error sql: 0 Descripción error: El lote 'L0003' se ha cerrado sin registros.
+   en RSFac.Agenda.CierroLote(String sLote) en C:\src\OnLine\Negocio\RSFac\Agenda.cs:línea 410

@@ -23,12 +23,16 @@ local del mantenedor es un checkout más — ningún artefacto del plugin puede 
 ```
 .claude-plugin/
   plugin.json            manifiesto: name, version, author, hooks SessionStart + Stop + UserPromptSubmit
-  marketplace.json       marketplace de un solo plugin (source: "./")
+  marketplace.json       marketplace de dos plugins: rs-enterprise-agent (source "./") + rs-validador
 .mcp.json                registro del MCP server rs-workspace (stdio, python)
 skills/
   rs-enterprise-agent/SKILL.md   skill orquestadora (pipeline + modos directos)
   rs-plugin-dev/SKILL.md         meta-skill: modifica el propio plugin
-  rs-jira/SKILL.md               orquestador de tareas de Jira (/rs-tarea) — envuelve el pipeline
+  rs-jira/SKILL.md               orquestador de tareas de Jira — envuelve el pipeline
+  rs-mantis/SKILL.md             orquestador de tareas de MantisBT — envuelve el pipeline
+                                 (a ambos se llega por el router /rs-tarea; /rs-mantis es puerta directa)
+  rs-log-errores/SKILL.md        log de errores web → firmas deduplicadas → tareas en Jira/Mantis
+                                 (delega el alta en rs-jira/rs-mantis y propone el pipeline por tarea)
 agents/                  subagentes .md — pipeline (rs-editor-*) y modos directos (rs-*)
 commands/                slash commands .md — wrappers finos que despachan a un subagente/skill
 mcp/
@@ -40,9 +44,15 @@ runner/
 references/              conocimiento de dominio, cargado bajo demanda
 docs/                    esta doc + design specs
 scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd, install, etc.)
+tests/                   suite Pester (*.Tests.ps1) + pytest (test_*.py) de hooks y scripts
+  fixtures/              entradas de ejemplo para los tests (recortadas y anonimizadas)
 assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
 executions/
   history.json           historial de ejecuciones del pipeline (lo escribe log_execution)
+plugins/                 plugins adicionales publicados por el mismo marketplace (§9.5)
+  rs-validador/          mantenimiento de RSValidador (validador de ficheros) — árbol propio y
+                         completo: .claude-plugin/, skills/, agents/, commands/, references/,
+                         README y CHANGELOG. Versión independiente de la del plugin raíz
 ```
 
 Nota: `README.md` menciona una carpeta `BD/<proyecto>-model.json`; ese modelo vive en el
@@ -73,7 +83,7 @@ resuelto y verificado (§11.4).
 | Fichero | Declara |
 |---------|---------|
 | `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 15), inline con `${CLAUDE_PLUGIN_ROOT}`. Los 3 commands se lanzan con `powershell -NoProfile` (evita cargar el perfil de usuario en cada arranque → timeouts; ver CHANGELOG 2.15.9) |
-| `.claude-plugin/marketplace.json` | Entrada de marketplace: un plugin `rs-enterprise-agent`, `source: "./"`, `category: productivity`. Puede llevar su propia `version` |
+| `.claude-plugin/marketplace.json` | El marketplace y **la lista de plugins que publica** (desde 3.11.0 son dos): `rs-enterprise-agent` con `source: "./"` y `rs-validador` con `source: "./plugins/rs-validador"`, ambos `category: productivity` y con su propia `version` |
 | `.mcp.json` | El MCP server `rs-workspace` (type `stdio`, `command: python`, arg `${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py`, env `PYTHONUTF8=1`) |
 
 **Qué se auto-descubre por convención** (no se lista en ningún manifiesto):
@@ -85,6 +95,12 @@ resuelto y verificado (§11.4).
 ⛔ Consecuencia clave: crear el fichero en la carpeta correcta **registra** el artefacto, pero
 Claude Code solo lo detecta tras **subir la versión** en `plugin.json` (§9) + `/plugin
 marketplace update` + reinicio. Sin bump de versión el cambio no se propaga.
+
+⚠️ El auto-descubrimiento es **relativo a la raíz de cada plugin**, no del repo: `skills/`,
+`agents/` y `commands/` de un plugin de `plugins/<x>/` solo se cargan cuando se instala *ese*
+plugin. Por eso los dos árboles no colisionan aunque compartan repo — y por eso el plugin raíz,
+cuyo `source` es `"./"`, arrastra en su copia los ficheros de `plugins/` como peso muerto sin
+efecto funcional.
 
 ---
 
@@ -101,9 +117,26 @@ solución y scope, y despacha cada etapa como subagente Task-tool aislado.
    STAGES ⊆ { core⇄[plan-check], validator⇄[fixer], tester⇄[crear-tests], build, db-modeler, documentar }
 ```
 
+⛔ **La definición del pipeline vive SOLO en `SKILL.md`.** `commands/rs-enterprise-agent.md` es un
+wrapper fino que apunta ahí. Hasta 3.14.0 repetía las etapas y su control de flujo, y la copia se
+quedó atrás: `plan-check` entró en 2.18.0 y nunca llegó al comando, así que los dos documentos
+describían pipelines distintos dentro del mismo contexto. Si hace falta tocar el pipeline, se toca
+`SKILL.md` y nada más.
+
 El **planner** analiza con acceso al modelo BD y al código, y emite `PLAN` (para el humano) + `STAGES`
 (lista ordenada, autoritativa). El orquestador **ejecuta `STAGES` sin re-decidir** qué etapas corren —
-el resto de agentes solo aplican el plan. `validator` absorbe el antiguo `analyzer`; la validación BD
+el resto de agentes solo aplican el plan.
+
+**Excepciones a "sin re-decidir": exactamente tres redes de seguridad** (§ Redes de seguridad de
+`SKILL.md`), todas de la misma forma —una señal que el planner no podía conocer al planificar
+obliga a añadir una etapa que omitió— y todas anotadas en el reporte: `FILES_CHANGED` de ≥3 ficheros
+o ≥2 proyectos → `plan-check`; `TABLES_TOUCHED` no vacío → `db-modeler`; `NEW_PATTERN` no vacío →
+`documentar`. Cada una se describía a sí misma como "la única", lo que dejaba las otras dos sin
+respaldo escrito.
+
+**Etapas que pueden solaparse:** `db-modeler` ∥ `documentar` (no se encadenan) y
+`plan-check` ∥ `validator` (uno mira cobertura del PLAN, el otro compila). El resto es estrictamente
+secuencial, y `build` no solapa con nada. `validator` absorbe el antiguo `analyzer`; la validación BD
 (antiguo `bd`) la hace el planner. Ya no hay flags `CREATE_TESTS`/`UPDATE_DOCS`: todo se lee de `STAGES`.
 
 **Documentación:** el planner también clasifica la tarea contra el índice maestro técnico (tabla
@@ -145,7 +178,7 @@ Cuerpo en español, arranca con `# Rol`.
 |--------|--------|----------------------|
 | `rs-editor-planner` | **opus** | 2 — cerebro: analiza (modelo BD + `db_query` + símbolos) y decide `STAGES` |
 | `rs-editor-core` | opus | `core` |
-| `rs-editor-plan-check` | sonnet | `plan-check` — verifica cobertura del PLAN tras core (INCOMPLETE ⇄ core, máx 1 ciclo) |
+| `rs-editor-plan-check` | sonnet | `plan-check` — verifica cobertura del PLAN tras core, solo en cambios complejos (INCOMPLETE ⇄ core, máx 1 ciclo) |
 | `rs-editor-validator` | sonnet | `validator` (absorbe el antiguo analyzer) |
 | `rs-editor-fixer` | opus | ciclo de `validator`/`tester` |
 | `rs-editor-tester` | sonnet | `tester` |
@@ -201,6 +234,13 @@ y `powershell` 5.1, que es el que ejecuta los hooks de verdad (`plugin.json` los
 `powershell -NoProfile ... -File`). Hasta la 3.5.1 solo pasaban con 7 —usaban `Join-Path` con varios
 `ChildPath` (`-AdditionalChildPath`), que no existe en 5.1—, y una suite que solo pasa en el
 intérprete que no ejecuta nada en producción no prueba lo que hace falta probar.
+
+Desde la 3.16.0 el Pester cubre además la lectura del resultado de `dotnet test`
+(`tests/TrxParser.Tests.ps1`, sobre `hooks/lib-trx.ps1`), con una regla que vale para **cualquier
+hook que informe de una verificación**: *un conteo que no se ha podido leer no es un cero, y un cero
+no es un verde*. El parser devuelve `$null` cuando no entiende la salida y el hook lo convierte en
+`success=false` + `parse_failed`. La versión anterior hacía lo contrario —caía a 0/0 y marcaba
+éxito— y el pipeline entero daba por verificados tests que nunca se contaron.
 
 Segunda tanda de modos directos (v2.20.0), todos **agente-solo** (sin hooks/tools nuevos): `rs-cobertura`
 (sonnet) mapa de cobertura de tests; `rs-dead-code` (sonnet) inverso de `rs-impacto`, símbolos sin
@@ -268,7 +308,7 @@ completa (delega en `installer-agendaweb.ps1`) y las DLL recién compiladas de l
 `excluirEntrega`), pero **mantiene los `*.config` del binario** (`RSProcIN.exe.config`): llevan los
 binding redirects y separarlos de sus DLL reproduce el `FileLoadException`.
 
-Su delta es **por VCS**, y eso deja un agujero que la 3.11.0 cierra: un procedimiento, vista o
+Su delta es **por VCS**, y eso deja un agujero que la 3.22.0 cierra: un procedimiento, vista o
 trigger modificado **en la BD no está en el repo**, así que no aparecía en ningún delta y solo
 viajaba si alguien se acordaba de escribir su script a mano. `hooks/actualizador-objetos.ps1`
 (`scripts/delta-objects.py`) compara la BD contra el inventario `objetos` del `model.json` —la
@@ -280,7 +320,9 @@ cliente reiniciaría el contador en la posición de *nuestra* base de datos, rep
 usados— y de lo **eliminado no se emite ningún `DROP` activo**, que va comentado: un objeto que
 falta puede ser un borrado real o una extracción incompleta, y equivocarse borra código en
 producción. La línea base solo avanza cuando se pide (`-Sincronizar`), porque un delta generado y
-luego descartado dejaría el modelo diciendo que eso ya se entregó.
+luego descartado dejaría el modelo diciendo que eso ya se entregó. Y con **hueco de cobertura**
+(§7.1) no escribe nada: donde el sync avisa, esto para, porque su salida no es un modelo que
+alguien revisa sino un `.sql` que alguien ejecuta contra la BD de un cliente.
 
 Ambos modos comparten el **paquete de instalación en cliente** (`hooks/instalacion-paquete.ps1` +
 plantillas versionadas en `assets/instalacion/`: `Instalar.ps1` con backup ZIP previo,
@@ -360,12 +402,48 @@ Frontmatter solo `description` (+ `Uso:`). Cuerpo en inglés. Los comandos de VC
 (`rs-diff`, `rs-commit`) llaman `detect_vcs` y despachan al subagente unificado (`rs-diff`/`rs-commit`),
 que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-svn`/`-git` separados.
 
+### 5.1 Tres formas de comando: con skill, autosuficiente y router
+
+Desde 3.13.0 la primera línea del cuerpo no es siempre `Invoke the ... skill`. Hay tres formas, y
+la que aplica depende de **qué necesita el comando de `SKILL.md`**, no de gusto:
+
+| Forma | Cuándo | Primera línea |
+|---|---|---|
+| **Con skill** | Resuelve una `.sln`, escribe, tiene gate, o es el pipeline | `Invoke the \`rs-enterprise-agent\` skill in <mode> mode.` |
+| **Autosuficiente** | Solo lectura, despacho mecánico a un subagente, sin resolución de ruta | `⛔ Self-contained — do NOT invoke the \`rs-enterprise-agent\` skill.` |
+| **Router** | Una misma intención se sirve con **skills distintas** según el estado del workspace | `Router command. It does NOT run the lifecycle itself — ...` |
+
+Un **router** no ejecuta trabajo propio: detecta y despacha. Reglas de la forma (3.17.0, `/rs-tarea`
+es el único hoy):
+- La regla de detección va **escrita en el comando**, no en las skills destino — así ninguna de ellas
+  tiene que saber de la otra. Se detecta por presencia de fichero en el workspace, con Glob.
+- ⛔ **Ambigüedad se pregunta, no se adivina.** Si el estado del workspace admite dos destinos, el
+  router usa una segunda señal (la forma del argumento) y, si tampoco basta, para y pregunta.
+- Anuncia el destino elegido antes de cualquier acción outward-facing, para que el usuario pueda
+  corregir el enrutado a tiempo.
+- Cada skill destino conserva su **puerta explícita** (comando propio o lenguaje natural): el router
+  es un atajo, no el único acceso.
+
+`SKILL.md` son ~7k tokens. Cargarlos para despachar `/rs-stats` a un Haiku que lee un JSON es
+peaje puro. Autosuficientes hoy: `rs-stats`, `rs-dashboard`, `rs-help`, `rs-deps`, `rs-env`,
+`rs-schema`, `rs-word`, `rs-comparar-modelo`, `rs-comparar-entornos`, `rs-historial`.
+
+⛔ Un comando autosuficiente **no cita** `SKILL.md`: escribe la regla entera. Son dos, cortas —
+`workspace` = cwd de la sesión ("Primary working directory"), y la normalización de `plugin_root`
+(subir dos niveles si acaba en `\skills\<x>`, verificar `hooks\` y `runner\` con Glob, nunca
+`${CLAUDE_PLUGIN_ROOT}`). Si un comando llegara a necesitar la **resolución de solución**, deja de
+ser autosuficiente: esa regla vive en `SKILL.md` y duplicarla en 25 comandos es cómo divergen.
+
+⚠️ Al añadir un comando autosuficiente, comprobar que `hooks/skill-trigger.ps1` no lo contradice
+(§7): ese hook dispara **solo** por `.sln` explícita, precisamente para no imponer la skill
+encima de un comando que declara no necesitarla.
+
 ---
 
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**50 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**51 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -373,6 +451,11 @@ bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
 Protección de contexto (por qué es preferente sobre leer ficheros a pelo):
 - Truncado configurable: `max_errors` (compile_check, 20), `max_failures` (run_tests, 10),
   `max_results` (find_symbol, 50), `max_rows` (db_query, 200).
+- **Salida compacta** (`_JSON_SEP = (",", ":")`, desde 3.13.0): la respuesta de una tool la lee el
+  modelo, no una persona, así que la indentación son tokens sin contenido. Medido sobre 40
+  coincidencias de `find_symbol`: 7901 caracteres con `indent=2` contra 6213 compactos, −21%.
+  ⛔ Es solo para lo que va al contexto: el `model.json` lo formatea `scripts/_modeljson.py`
+  (§7.1) con su propio contrato de indentado, y ese no se toca.
 - `render_erd`/`generate_sql`/`export_dmd` **generan ficheros**, nunca cargan contenido en contexto.
 - El modelo BD **nunca se carga entero** (~180K tokens): `search_model` → `get_model_index`
   → `get_table_schema`.
@@ -392,11 +475,20 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
   para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS. Fail-fast si
   `cwd` es inaccesible (unidad de red caída) para no bloquear el evento.
+  ⛔ Dispara **solo** por `.sln` explícita. El disparo por `^/rs-` que tuvo hasta 3.13.0 era
+  redundante (con un comando, Claude Code ya carga `commands/rs-<x>.md`, que dice a qué subagente
+  despachar) y contradecía a los comandos autosuficientes de §5.1, que declaran justo lo
+  contrario. Los comandos que necesitan la skill la piden en su propio texto.
 
 ⚠️ Los 3 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
 de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output discarded`). Ver
 CHANGELOG 2.15.9.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / service-build / copy-ais).
+  Corre al final de **cada** turno, así que lee la **cola** del transcript (`-Tail 400`) hacia
+  atrás y corta en el primer `assistant`; si ahí no hay ninguno, cae a la lectura completa. Antes
+  parseaba el fichero entero siempre: 1709 ms sobre 15 000 líneas contra 478 ms ahora, y subiendo
+  con la sesión. Devuelve el texto del último `assistant` **aunque venga vacío** — un texto
+  anterior puede llevar un `COMMAND:` ya consumido, y reejecutarlo lanzaría un build sin pedirlo.
 
 ⛔ **Todo `.ps1` del repo va en UTF-8 con BOM.** No es estilo: sin BOM, Windows PowerShell 5.1
 decodifica con la codepage ANSI y cualquier no-ASCII (un `—` basta) impide que el fichero **parsee**.
@@ -408,22 +500,64 @@ defecto.
 
 ⛔ **El intérprete de referencia es Windows PowerShell 5.1**, el que usa `plugin.json` con
 `powershell -File`. Todo lo que se escriba aquí —hooks y también los tests que los ejercitan— tiene
-que funcionar en 5.1, no solo en `pwsh`. Dos trampas ya pagadas, ambas verificadas hoy por
-`tests/Encoding.Tests.ps1` y detalladas en `hooks/README.md`:
+que funcionar en 5.1, no solo en `pwsh`. Tres trampas ya pagadas, detalladas en `hooks/README.md`:
 
 - `Join-Path` admite **dos** argumentos posicionales; el tercero (`-AdditionalChildPath`) es de
   PowerShell 6+. Usar `Join-Path $base "a/b/c"`, que vale en Windows y en Linux.
 - `$IsWindows` **no existe en 5.1** (vale `$null`), así que `-not $IsWindows` se cumple en Windows.
   Comparar contra `$false` explícito.
+- `Get-Command <nombre>` con un nombre que **aún no existe** no falla: recorre `PSModulePath`
+  entero analizando módulos por si alguno lo exporta. **1763 ms medidos**, sobre un suelo de
+  arranque de 228 ms. Para "¿está ya definida esta función?" usar `Test-Path Function:\<nombre>`
+  (291 ms), que resuelve por la cadena de scopes igual que la invocación. `Get-Command` sigue
+  siendo lo correcto para un **binario externo** (`dotnet`, `sqlplus`): ahí no hay alternativa
+  y el caso normal es que exista, que es el camino barato. Ver 3.13.0.
 
-Los dos fallan en **ejecución, no al parsear**, así que el parser no los caza y hacen falta
-comprobaciones aparte. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
+Las tres fallan en **ejecución, no al parsear** —la última ni siquiera falla, solo cuesta—, así
+que el parser no las caza y hacen falta comprobaciones aparte. Las dos primeras las verifica hoy
+`tests/Encoding.Tests.ps1`. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
 producción, `pwsh` porque es el del CI.
 
 **Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
 usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,
 VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira_attach`).
+
+⚡ **Buscar en el árbol tiene un solo motor: `hooks/lib-buscar.ps1`** (desde 3.14.0). `find-symbol`,
+`search-code` y `security-scan` hacían cada uno su propio recorrido con `Get-ChildItem` +
+`Get-Content` + `-match`, que es el camino más caro de PowerShell. El motor usa
+`[IO.Directory]::EnumerateFiles` + `Select-String` multi-patrón: 6650 ms → 1480 ms sobre 3200
+`.cs` (detalle y trampas en `hooks/README.md` § Buscar en el árbol). ⛔ No hay ripgrep disponible
+para los hooks: `rg` es una función del shell de la herramienta Bash, no un binario del PATH.
+
+**Librería** (`hooks/lib-*.ps1`) — no se invocan solas: se dot-sourcean. Aíslan una regla que
+más de un hook necesita, para que no haya dos implementaciones que puedan divergir (el camino
+que ya recorrió el mapeo de tipos antes de `scripts/_dbtypes.py`). Cuando un script Python
+necesita la misma regla, la librería se acompaña de un **hook ejecutable delgado** que la emite
+como JSON y el script lo invoca por subproceso —patrón `lib-dbconfig.ps1` + `get-config.ps1`, y
+`lib-dbvisibilidad.ps1` + `db-visibilidad.ps1`—, en vez de reescribir la regla en Python.
+
+### 7.1 Reglas con un solo dueño
+
+Tres decisiones del dominio BD viven en **un único sitio** cada una. Si un cambio necesita
+tocarlas, se toca ahí, no en el hook que las consume:
+
+| Regla | Dueño | Por qué duele si se duplica |
+|---|---|---|
+| Búsqueda de texto en el scope | `hooks/lib-buscar.ps1` | Tres recorridos distintos = tres criterios distintos de qué carpetas se miran, y dos bugs que solo estaban en uno de ellos |
+| Formato del `model.json` | `scripts/_modeljson.py` (desde PS: `Save-RsModelJson`) | Dos escritores produjeron dos formatos incompatibles y el diff del repositorio quedó inservible — sin que el JSON dejara de ser válido |
+| "No lo veo" vs "no existe" | `hooks/lib-dbvisibilidad.ps1` (+ `db-visibilidad.ps1` para Python) | Decide si un cero significa "no hay" o "sin permiso". Divergir aquí es borrar tablas reales del modelo |
+| Elección de conexión | `Select-RsConexion` en `hooks/lib-dbconfig.ps1` | Sus tres guardarraíles (defecto fijo, id inexistente corta, id elegido publicado) solo valen si los cumplen todos los hooks igual |
+| Qué compilador construye una `.sln` | `Get-RsBuildToolchain` en `hooks/lib-msbuild.ps1` | Lo consumen `compile-check.ps1` y `test-runner-check.ps1`, y el pipeline se apoya en que compilar y testear vean la MISMA solución. Divergir da el caso peor: compila con MSBuild y luego intenta ejecutar tests con `dotnet test`, que sobre .NET Framework no ejecuta ninguno |
+
+⛔ **La decisión de toolchain se lee de los `.csproj`, nunca de nombres.** Un plugin genérico no
+sabe cómo se llaman las soluciones ni los procesos de cada cliente, y una lista de nombres queda
+obsoleta con el primer proyecto nuevo. `Get-RsBuildToolchain` clasifica por lo que declara cada
+proyecto (formato SDK-style o legacy, TFM, `COMReference`, import de `Microsoft.WebApplication.targets`)
+y, ante la duda, elige MSBuild de Visual Studio: compila también los SDK-style, mientras que el CLI
+`dotnet` no compila .NET Framework. Si el compilador necesario no está instalado, el hook falla
+**cerrado** (`builder_error`/`runner_error`): "no verificado" y "no compila" son cosas distintas, y
+confundirlas fue el bug que motivó la librería (CHANGELOG 3.21.0).
 
 ---
 
@@ -437,7 +571,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD, incluida la sección `objetos` (inventario: ficha + firma, no el cuerpo) |
-| `references/mcp.md` | Catálogo completo de las 50 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 51 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |
@@ -477,6 +611,29 @@ spec y en la tabla de pasos del `README.md`.
 Carpeta `skills/<nombre>/SKILL.md` (frontmatter `name` + `description` con triggers). Se
 auto-descubre. Añadir un comando wrapper si se quiere invocación por slash.
 
+### 9.5 Nuevo plugin en el mismo marketplace
+
+Para una herramienta que **no es** una solución uCollect/RS (otro stack, sin `.sln`, sin las tools
+MCP de este plugin): plugin aparte, no skills más aquí. Se instala y versiona por separado, y sus
+triggers no contaminan al agente C#.
+
+1. Árbol propio bajo `plugins/<nombre>/` con su `.claude-plugin/plugin.json` (`name`, `description`
+   con triggers explícitos, `version` **independiente**, `author`) y las carpetas que necesite:
+   `skills/`, `agents/`, `commands/`, `references/`.
+2. Entrada nueva en el array `plugins` de `.claude-plugin/marketplace.json`, con
+   `source: "./plugins/<nombre>"` y su `version`. La `version` de esa entrada y la de su
+   `plugin.json` deben quedar **idénticas** (misma regla que el plugin raíz).
+3. `README.md` y `CHANGELOG.md` propios dentro de su carpeta. El CHANGELOG del repo raíz solo
+   registra el alta del plugin, no su evolución posterior.
+4. La descripción del **marketplace** deja de describir a un solo plugin: revisarla.
+
+⛔ El plugin nuevo **no hereda** nada del raíz: ni hooks, ni MCP server, ni references. Si necesita
+un `plugin_root`, define su propia regla de resolución y verifícala con Glob contra carpetas que
+existan en *su* árbol (`${CLAUDE_PLUGIN_ROOT}` sigue sin expandirse en markdown — §11.2).
+
+⚠️ El plugin raíz mantiene `source: "./"`, así que su copia instalada incluye también `plugins/`.
+Es peso muerto sin efecto funcional (§2): no se auto-descubre nada desde ahí.
+
 ---
 
 ## 10. Puntos de sincronización de documentación
@@ -490,6 +647,7 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Nueva tool MCP | `references/mcp.md` · `references/hooks.md` · README (nº de tools) · CHANGELOG · §6 este doc |
 | Nuevo hook | `references/hooks.md` · `hooks/README.md` · CHANGELOG |
 | Nueva skill | README · CHANGELOG · §2/§3 este doc |
+| **Nuevo plugin en el marketplace** | `marketplace.json` (entrada + descripción del marketplace) · README raíz (sección de instalación) · CHANGELOG raíz (alta) · §1/§2/§9.5 este doc · README y CHANGELOG **propios** del plugin nuevo |
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
 

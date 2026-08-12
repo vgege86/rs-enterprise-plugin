@@ -72,7 +72,7 @@ Perfiles de publicación: `<WebFolder>\Properties\PublishProfiles\*.pubxml`. Ele
 
 Build usa `msbuild` (no `dotnet publish`) — proyectos OnLine son .NET Framework WebForms.
 
-⛔ CLI `dotnet` (`build`/`test`/`compile_check`/`run_tests`) puede fallar con `MSB4019` sobre proyectos WebForms — ver `references/troubleshooting.md#msb4019-en-buildtest-online-webforms-vía-cli-dotnet` para causa y solución (usar `msbuild.exe`/`vstest.console.exe` reales).
+⛔ El CLI `dotnet` (`build`/`test` a pelo) falla con `MSB4019` sobre proyectos WebForms — usar `msbuild.exe`/`vstest.console.exe` reales. Desde 3.21.0 `compile_check` y `run_tests` ya lo hacen solos (detectan el toolchain leyendo los `.csproj`), así que su `success=false` sobre una solución Online **sí** es un fallo del código, salvo que traiga `builder_error`/`runner_error`. Ver `references/troubleshooting.md#msb4019-en-buildtest-online-webforms-vía-cli-dotnet`.
 
 COMMAND: `.\hooks\online-publish.ps1 "<workspace>\OnLine\<WebFolder>\<Project>.csproj" <ProfileName>`
 

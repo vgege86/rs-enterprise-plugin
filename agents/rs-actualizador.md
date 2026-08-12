@@ -241,6 +241,12 @@ Dos cosas que el hook **no** hace solo, y hay que trasladar al usuario y al `rea
   objeto que falta puede ser un borrado real o una extracción incompleta, y equivocarse borra
   código en producción.
 
+⛔ **Si el hook para por cobertura**, no lo fuerces sin pensarlo. Significa que la cuenta no ve
+todo el esquema —el PL/SQL exige `GRANT EXECUTE`, no `SELECT`, y con cero grants el diccionario
+devuelve cero procedimientos **sin error**—, así que el diff diría "se han eliminado todos" sobre
+un tipo que simplemente no se ve. Traslada al usuario qué `GRANT` falta y repite. `-SinCobertura`
+solo cuando él confirme que el hueco es legítimo, y entonces revisad el delta objeto a objeto.
+
 Si el modelo no trae inventario todavía no hay línea base y el hook lo dice en vez de inventarla:
 entonces esta comprobación **no está disponible** y hay que decirlo en el SUMMARY, no darla por
 hecha. Se arregla con `.\hooks\sync-model-objects.ps1 "<workspace>"`, teniendo en cuenta que esa
@@ -249,6 +255,15 @@ primera sincronización fija la base y lo que ya estuviera en la BD no saldrá c
 ⛔ **Cuando la entrega esté cerrada**, resincronizar la línea base con
 `.\hooks\sync-model-objects.ps1 "<workspace>"` (o generar el script con `-Sincronizar`). Si no,
 el siguiente actualizador vuelve a proponer exactamente lo mismo.
+
+⛔ **`eliminado` no significa "lo borraron de la BD".** El `-DryRun` imprime antes un bloque
+`---- Cobertura ----` con la cuenta usada, si es dueña del esquema y sus GRANTs. Si la cuenta no
+es dueña, Oracle no permite distinguir "no existe" de "no lo veo": un objeto sin GRANT sale como
+`eliminado` siendo perfectamente real. Y `EXECUTE 0` hace que **todos** los procedimientos y
+paquetes salgan así a la vez — que es la señal de que el problema son los permisos, no la BD.
+Con `parcial` (exit 2) o con cualquier `<< HUECO` en la cobertura: **no cerrar la lista de
+scripts**. Repetir con `-Conexion <id de la conexión dueña del esquema>` o pedir los GRANT, y
+decirlo en el SUMMARY.
 
 Después escribir `<destino>\scripts\scripts.json` declarando ese orden explícitamente — formato en
 `assets\instalacion\scripts.json.tpl`. Cuando existe, **manda sobre el descubrimiento alfabético**

@@ -1,6 +1,6 @@
 # RS Enterprise Agent — Changelog
 
-## 3.11.0 — 2026-08-12
+## 3.22.0 — 2026-08-12
 
 ### El actualizador ya no solo detecta los objetos de BD que cambiaron: escribe su script
 
@@ -38,6 +38,13 @@ ya se entregó.
 Y una sección cuya extracción falla queda **fuera** del delta, no vacía: vacía, el diff la habría
 leído como "se ha eliminado todo".
 
+Por lo mismo, con **hueco de cobertura** (la 3.18.0 lo mide: la cuenta ve menos objetos de los que
+el diccionario dice que hay, porque el PL/SQL exige `GRANT EXECUTE` y con cero grants el
+diccionario devuelve cero **sin error**) esto **no escribe nada**. Donde el sync del modelo avisa,
+el delta para: su salida no es un modelo que alguien revisa después, es un `.sql` que alguien
+ejecuta contra la BD de un cliente. `-SinCobertura` lo fuerza cuando se sabe que el hueco es
+legítimo.
+
 ### La firma de las secuencias cambiaba sola
 
 El DDL de una secuencia lleva su posición actual (`START WITH LAST_NUMBER` en Oracle,
@@ -48,7 +55,7 @@ significado proponer reentregar todas las secuencias en cada entrega — justo l
 secuencia no admite. Se descuenta antes de firmar (`_dbobjetos.firma_objeto`), así que un cambio
 real sí se detecta y el mero avance del contador no.
 
-⚠️ Efecto de una vez al actualizar: la primera sincronización tras instalar la 3.11.0 marcará las
+⚠️ Efecto de una vez al actualizar: la primera sincronización tras instalar la 3.22.0 marcará las
 secuencias como modificadas, porque su firma se calcula distinto. A partir de ahí, estables.
 
 ### Y todo paquete salía como "firma distinta" en cada instalador
@@ -93,9 +100,1015 @@ Ficheros: `scripts/delta-objects.py` y `scripts/object-ddl.py` (nuevos),
 `hooks/actualizador-objetos.ps1` y `hooks/ddl-objeto.ps1` (nuevos), `scripts/_dbobjetos.py`,
 `scripts/installer-objects.py`, `scripts/model-objects.py`, `scripts/erd-template.html`,
 `mcp/rs-workspace-server.py`, `agents/rs-actualizador.md`, `agents/rs-impacto.md`,
-`agents/rs-validacion-bd.md`, `tests/test_delta_objetos.py` (nuevo, 31 casos), `README.md`,
-`docs/plugin-architecture.md`, `references/hooks.md`, `references/mcp.md`, `hooks/README.md`.
+`agents/rs-validacion-bd.md`, `tests/test_delta_objetos.py` (nuevo, 31 casos), `tests/test_mcp.py`,
+`README.md`, `docs/plugin-architecture.md`, `references/hooks.md`, `references/mcp.md`,
+`references/actualizador.md`, `hooks/README.md`.
 
+## 3.21.0 — 2026-08-11
+
+### El validador compilaba con .NET Core la mitad de las soluciones, que son .NET Framework
+
+`compile_check` llamaba **siempre** a `dotnet build`, y `run_tests` **siempre** a `dotnet test`. En un
+workspace mixto —web y procesos batch en .NET Framework, servicio y sus módulos en .NET moderno— eso
+falla en cuanto el build toca un proyecto WebForms o con COM: el SDK de `dotnet` no trae
+`Microsoft.WebApplication.targets` y devuelve `MSB4019` sobre código que compila sin una queja en
+Visual Studio.
+
+Encima el resultado salía **mudo**. El parser de diagnósticos solo reconocía `CS####`, así que el
+`MSB4019` real no aparecía en ningún sitio: el JSON decía `error_count: 0` con `exit_code: 1`. El
+efecto operativo era una advertencia crónica —"plan-check OK · validator OK, pero su compile_check
+falló por entorno, la compilación no está verificada"— y un humano compilando a mano con el MSBuild
+de Visual Studio antes de poder seguir. La solución ya vivía en el repo (`service-build.ps1`,
+`actualizador-build.ps1` localizan msbuild con vswhere desde hace versiones); lo que faltaba era que
+llegara al camino que usa el pipeline en cada iteración.
+
+#### El compilador se decide leyendo los `.csproj`, no una lista de nombres
+
+Librería nueva `hooks/lib-msbuild.ps1`. `Get-RsBuildToolchain` recorre los proyectos de la `.sln` y
+exige MSBuild de Visual Studio si alguno es legacy (no SDK-style), declara un TFM `net4x`/`v4.x`, es
+web (import de `Microsoft.WebApplication.targets` o su ProjectTypeGuid) o lleva `COMReference`; si
+todos son SDK-style con TFM moderno, CLI `dotnet`.
+
+⛔ Deliberadamente **no hay nombres de solución, de proyecto ni de ruta** en la regla. El plugin es
+genérico: no sabe cómo se llaman los procesos de cada cliente y una lista blanca queda obsoleta con
+el primer proyecto nuevo. La distinción de TFM se apoya en la nomenclatura oficial —`net5+` siempre
+lleva versión menor (`net8.0`), .NET Framework nunca (`net48`)—, así que "sin punto = Framework".
+
+Ante la duda, MSBuild: compila también los proyectos SDK-style, mientras que el CLI `dotnet` no
+compila .NET Framework. Sobre-detectar cuesta unos segundos de arranque; infra-detectar devuelve un
+falso "no compila" sobre código correcto. Por eso una solución mixta se resuelve entera con MSBuild.
+
+#### "No verificado" y "no compila" dejan de confundirse
+
+Si el compilador que hace falta no está instalado, el hook **falla cerrado**: `builder_error` (o
+`runner_error` en los tests) con el mensaje de qué instalar, en vez de caer al otro compilador en
+silencio. `rs-editor-validator` y `rs-editor-fixer` llevan la instrucción explícita de no tratarlo
+como error de compilación ni intentar corregir nada — no hay nada que corregir.
+
+#### `MSB####`, `NU####` y demás dejan de ser invisibles
+
+El parser de `compile-check.ps1` acepta ahora cualquier código `[A-Za-z]+\d+`, con o sin posición
+`(línea,columna)` —los fallos de infraestructura del build salen sin ella—. El caso que originó todo
+esto (`error_count: 0` con `exit_code: 1`) ya no se puede dar callando.
+
+#### `vswhere -latest` elegía SSMS en vez de Visual Studio
+
+Cazado al probar contra la máquina real. `-products *` —necesario para que valga una instalación de
+solo Build Tools— mete en el saco a todo lo que se instala sobre el shell de Visual Studio, y `-latest`
+se queda con **una** instancia: la de versión más alta. En una máquina con SQL Server Management
+Studio 22 y Visual Studio 2022, `-latest` devolvía SSMS, que no trae `vstest.console.exe`, y el hook
+concluía "no está instalado" con Visual Studio delante. Los dos buscadores usan `-sort` (todas las
+instancias, de más nueva a más antigua) y se quedan con la primera que **tiene** el fichero. El
+buscador de MSBuild se libraba de casualidad, por el `-requires Microsoft.Component.MSBuild`.
+
+#### Tests también
+
+`test-runner-check.ps1` usa el mismo veredicto: `dotnet test` donde procede, y MSBuild +
+`vstest.console.exe` sobre el `.dll` compilado en las soluciones .NET Framework, donde `dotnet test`
+no llegaba a ejecutar ni una prueba. Se mantienen intactas las reglas de la 3.15.0/3.16.0: sin
+resumen legible o con 0 pruebas, `success: false` — ausencia de evidencia nunca es verde.
+
+**Gate**: `tests/MsBuild.Tests.ps1` (26 casos) ejercita el detector con `.csproj` de prueba en un
+temp, sin Visual Studio y sin workspace de cliente, para que corra en CI. Incluye la invariante del
+fallo cerrado: si hace falta MSBuild y no está, el resultado trae `error`, no un fallback silencioso.
+
+**Ficheros**: `hooks/lib-msbuild.ps1` (nuevo), `hooks/compile-check.ps1`, `hooks/test-runner-check.ps1`,
+`tests/MsBuild.Tests.ps1` (nuevo), `mcp/rs-workspace-server.py`, `agents/rs-editor-validator.md`,
+`agents/rs-editor-fixer.md`, `agents/rs-editor-build.md`, `references/hooks.md`, `references/mcp.md`,
+`references/troubleshooting.md`, `hooks/README.md`, `docs/plugin-architecture.md` §7.1.
+
+### Los agentes no sabían que los datos enmascarados sí se pueden cruzar
+
+El pseudónimo de la política PII es `HMAC(clave, NOMBRE_COLUMNA + valor)`: determinista, así que el
+mismo valor devuelve el mismo `pii:xxxxxxxx` en cualquier consulta y en cualquier tabla donde la
+columna se llame igual. Es una propiedad de diseño —está en el docstring de `scripts/pii_mask.py`
+desde que existe— pero las references que leen los agentes solo decían "no reproduzcas el
+pseudónimo". Resultado: se trataba el resultset enmascarado como inservible y se dejaban de hacer
+cruces perfectamente legítimos (unir las filas de una misma persona entre tablas, contar distintos,
+detectar duplicados, verificar integridad referencial) que no requieren ver ningún dato personal.
+
+Documentado en `references/bd.md` (sección nueva "Los pseudónimos SÍ se pueden cruzar entre
+tablas"), en la tabla del bloque `pii` de `references/mcp.md` y en `docs/proteccion-pii-consultas-bd.md`
+§4.1, con los cuatro límites que hacen falta para no sacar conclusiones falsas:
+
+- **El dominio es el nombre de la columna de salida, no la tabla.** `A.DNI` ↔ `B.DNI` cruzan;
+  `A.DNI` ↔ `B.NIF` no, salvo que se alineen con un alias. Y dos columnas homónimas con
+  significados distintos comparten dominio: un pseudónimo repetido dice "mismo texto", no "misma
+  entidad".
+- El cruce es por coincidencia **exacta** del valor normalizado (solo se colapsan espacios): que
+  dos no cuadren no prueba que sean personas distintas.
+- Con `transform: "suppress"` no hay correlación posible.
+- La clave es local al perfil del usuario: un `pii:xxxxxxxx` **no** es comparable entre máquinas y
+  no vale como identificador en un ticket, un commit ni un informe.
+
+**Ficheros**: `references/bd.md`, `references/mcp.md`, `docs/proteccion-pii-consultas-bd.md`.
+
+---
+
+## 3.20.0 — 2026-08-11
+
+### Un log con 2.544 errores se reportaba como "1 error, de infraestructura"
+
+`parse_web_log` (hook `hooks/parse-weblog.ps1`, base de `/rs-log-errores`) no reconocía el formato
+propio de la AgendaWeb uCollect/RS. Sobre un log real de 55.494 líneas devolvía `total_events: 1`,
+`distinct_signatures: 1` y `format_detected: "stacktrace-plano"` — **con `success: true`**. Nada en
+la respuesta delataba el fallo, así que el triaje leía ese "1 error" como incidencia aislada de
+infraestructura y no se abría ninguna tarea. Es el mismo patrón silencioso que la 3.15.0 con el
+parser de `dotnet test`: salida sintácticamente correcta, JSON sano, recuento inventado.
+
+El formato abre cada evento con una cabecera propia y sigue con el stack:
+
+```
+Error: (11/08/2026 13:45) - Codigo error: -2147467259 Codigo error sql: 0 Descripción error: ORA-12899: ...
+   en Comun.cConexion.EjecutarQuery(String sQuery)
+```
+
+Fallaba por dos motivos encadenados. `$rxStamp` exigía `[` y `HH:mm:ss`, y aquí la fecha va entre
+**paréntesis** y **sin segundos**: ninguna línea abría evento por timestamp, así que la rama
+NLog/log4net nunca entraba y ningún evento tenía ventana temporal. Al caer al volcado plano, el gate
+era `$rxExcepcion`, que pide al menos un carácter antes de `Error`
+(`[A-Za-z_][\w.]*(?:Exception|Error)`) y **no casa el literal `Error:` a secas**: el único evento
+que se abrió en todo el log fue el de la única línea que contenía un token tipo
+`InternalServerError`.
+
+#### Formato `rs-cerrores` reconocido
+
+Cabecera propia detectada antes que `$rxStamp`, con la etiqueta variable (`Error`, `cErrores`,
+`Fail`…) de la que se **deriva el nivel**, para que `-Niveles` siga filtrando. La hora se acepta con
+**una o dos cifras** y con los segundos opcionales: en el log de referencia el 20% de los eventos
+llevan hora de un dígito (`(20/02/2026 8:41)`), y exigir `HH` no solo los pierde — los pega como
+continuación del evento anterior, falseando también la firma de ese otro evento. Mientras un evento
+de este formato está abierto solo lo cierra otra cabecera suya: dentro del SQL del mensaje hay
+fechas que sí casarían `$rxStamp`.
+
+El stamp se normaliza a `yyyy-MM-dd HH:mm:ss`. `first_seen`/`last_seen` se calculan comparando
+cadenas, y `dd/MM/yyyy` como texto ordena por el día.
+
+#### La firma va por CÓDIGO, no por token `*Exception`
+
+En este formato la excepción útil es el código. Se toma, por este orden: el `ORA-xxxxx` del texto →
+el `Codigo error: <n>` de la cabecera (descartando el `0`, que no discrimina) → la excepción .NET.
+Sin esto todas las firmas colapsan en `SinExcepcion` y el dedup queda inservible. Un mismo
+`ORA-12899` sobre dos columnas distintas sigue siendo dos firmas.
+
+#### El frame propio ya no se ancla a inicio de línea
+
+`$rxFrame` buscaba `^\s*(?:at|en)\s+…`. En este formato el frame **más profundo** viene pegado al
+final del texto del mensaje (`… ) )     en Comun.cConexionOracle.EjecutarQuery(…)`), y el que abre
+línea es el de la capa de arriba: anclando a `^` se atribuía el fallo a la capa equivocada. Ahora se
+busca también embebido, en todos los formatos.
+
+#### Campo nuevo `pantalla`
+
+Cada firma trae la página `.aspx.cs` (o el control `.ascx.cs`) más cercana a la cima del stack —
+`FrmDetalleClie`, `FrmLogin`…—, que es lo que permite triar sin abrir el código: dos errores
+idénticos en dos pantallas distintas son dos tareas distintas. Es el **único** cambio del contrato
+de salida; el resto de campos no se toca.
+
+#### PII: el dato viaja dentro del SQL
+
+El mensaje trae la query entera y los datos personales van **dentro de los literales entre comillas
+simples**, donde ninguna detección por forma llega (un nombre o un número de lote no tienen forma
+reconocible). `Remove-RsPii` seguía cubriendo correo, IBAN y DNI/NIE fuera de comillas; ahora
+`message` y `samples` pasan además por una redacción de literales (`'…'` → `'<val>'`).
+⛔ Solo en la **salida**, nunca en la clave de firma: el hash es el marcador `[log:<hash>]` con el
+que `/rs-log-errores` deduplica contra los tickets ya abiertos, y cambiarlo los recrearía todos.
+
+#### Dos correcciones que salieron por el camino
+
+- **Codificación**: `[IO.File]::ReadLines` sin argumento asume UTF-8 y los logs de una web .NET en
+  Windows salen en la codepage ANSI. Cada acento se convertía en `U+FFFD`, lo que no solo afea el
+  texto que acaba en el ticket: `Descripción error:` dejaba de casar y el mensaje salía con la
+  cabecera pegada delante. Ahora se detecta la codificación (BOM, y si no, UTF-8 estricto sobre los
+  primeros 64 KB).
+- **Eventos descartados**: al filtrar una cabecera por nivel o por `-Desde`, sus líneas de stack
+  quedaban sueltas y una que contuviera `…Exception` abría un evento nuevo por el camino del volcado
+  plano — el recuento devolvía justo lo que se acababa de filtrar. Ahora se descarta el evento
+  entero.
+
+#### Cobertura
+
+`tests/WebLogParser.Tests.ps1` (24 aserciones) sobre `tests/fixtures/weblog-rs.log`, un fixture de
+12 eventos recortados y anonimizados: recuento, firmas distintas, hora de una cifra, segundos,
+código como excepción, frame embebido, `pantalla`, ventana ordenable, redacción de PII, filtros
+`-Niveles`/`-Desde`, lectura de un log ANSI y no regresión de NLog/log4net, volcado plano y log sin
+errores. `hooks/parse-weblog.ps1` estaba además **sin BOM** desde su alta, incumpliendo la
+convención de §7 del doc de arquitectura; se ha corregido.
+
+Contra el log de referencia (55.494 líneas): de `1` evento y `1` firma a **2.544 eventos y 271
+firmas**, con la ventana poblada (`2026-02-20` → `2026-08-11`).
+
+## 3.19.0 — 2026-08-11
+
+### Los scripts de idiomas inventaban los idiomas y tiraban los IDTEXTO al final del montón
+
+Tres cosas mal en la misma zona —la de mayor historial de bugs del plugin—, y las tres afectaban
+igual al gate del pipeline (`rs-editor-tester`) y al modo directo (`/rs-idiomas`), porque las reglas
+están **duplicadas a propósito**: un subagente no puede invocar a otro, así que cada uno lleva su
+copia. Se han corregido las dos a la vez.
+
+#### Los idiomas salen del catálogo 32, no de una constante
+
+Los dos agentes decían *"idiomas activos (por defecto `ESP`, `POR` — confirmar si el proyecto tiene
+otros)"*. Un valor por defecto que hay que confirmar cada vez no es un valor por defecto: es una
+suposición esperando a colarse en un script. Y el dato está en la BD desde siempre.
+
+Ahora se resuelve con `SELECT TBCODE, TBTEXT FROM RTABL WHERE TBNUME = 32 ORDER BY TBCODE` —
+`TBCODE` es el id de idioma, `TBTEXT` su descripción—, y se emite una fila `RIDIOMA` por cada
+`TBCODE` devuelto. `TBCODE` se usa **tal cual** como `RIDIOMA.IDIDIOMA`, sin traducirlo ni
+normalizarlo, contrastando tipo y casing contra filas existentes antes de emitir (la misma cautela
+que ya existía para `ICFORM`). Sin filas → se para y se reporta; no se inventan idiomas. Los
+placeholders pasan de `[TEXTO_ESP]`/`[TEXTO_POR]` fijos a `[TEXTO_<TBCODE>]`.
+
+#### IDTEXTO por rangos, según el tipo de texto
+
+No existía la noción de rango: **todo** se asignaba desde 3000, daba igual que fuera un error, un
+mensaje o un label.
+
+| Tipo | Cómo se reconoce | Rango |
+|---|---|---|
+| Errores | `Idm.Texto(coerr.eXXXX, ...)` | 1000–1999 |
+| Mensajes en pantalla | `Idm.Texto(coMens.mXXXX, ...)` | 2000–2999 |
+| Textos de pantalla | `LabelText`/`Text`/`GroupingText`/`Titulo`, headers de grid, `ErrorMessage` de validadores | ≥ 3000, sin techo |
+
+El rango lo decide el **tipo de texto**, nunca el IDTEXTO que tenga otro texto cercano.
+
+De rebote se tapa un hueco de cobertura: el gate solo miraba `Idm.Texto(coerr.eXXXX, ...)`, así que
+un `coMens.mXXXX` nuevo o editado —texto igual de visible— no disparaba nada. Ahora dispara igual.
+
+#### Rellenar huecos de verdad
+
+La query de asignación era
+`SELECT MIN(r1.IDTEXTO + 1) ... WHERE r1.IDTEXTO >= 3000 AND NOT EXISTS (... = r1.IDTEXTO + 1)`,
+y fallaba en dos sitios:
+
+- **No devolvía el suelo del rango.** Con un solo 3005 en RIDIOMA devolvía 3007, dejando 3000–3004
+  libres para siempre. Ese es el relleno de huecos que se había perdido.
+- **No tenía techo**, así que no podía saber cuándo un rango se agotaba.
+
+La regla nueva son tres pasos, portables entre SQL Server y Oracle (sin generadores de filas):
+
+1. `SELECT COUNT(*) FROM RIDIOMA WHERE IDTEXTO = <MIN>` → si es 0, el id es el suelo del rango.
+2. Si no, la misma query de huecos pero **acotada**: `... WHERE r1.IDTEXTO >= <MIN> AND r1.IDTEXTO < <MAX> AND NOT EXISTS (...)`.
+3. `NULL` o `> <MAX>` → **rango agotado** → primer hueco a partir de 3000 (la única región sin
+   techo), **declarándolo** en la cabecera del `.sql` y en el `SUMMARY` de la etapa. Fuera de su
+   rango el id ya no identifica el tipo por su número, y eso no puede pasar en silencio.
+
+Para los ids sucesivos de una misma tanda se repite el proceso: se siguen rellenando huecos, no se
+incrementa a ciegas desde el primero — el número siguiente puede estar ocupado.
+
+El ⛔ de siempre se amplía: los huecos se buscan contra `RIDIOMA`, nunca en `coerr.cs` **ni en
+`coMens.cs`** (hay IDTEXTO sin constante).
+
+#### Ficheros
+
+- `agents/rs-editor-tester.md` — gate scripts-idiomas: `coMens` entre los disparadores, query del
+  catálogo 32, tabla de rangos, asignación por huecos acotada al rango, cabecera del `.sql` con
+  idiomas y rangos reales, y el aviso de rango agotado en el contrato `SUMMARY`.
+- `agents/rs-idiomas-standalone.md` — misma actualización (pasos 4/4b/7, reglas de generación y
+  ejemplo de output). Copia deliberada, no compartida.
+- `references/arquitectura.md` — § "Convenciones web Online": el catálogo 32 y la tabla de rangos
+  pasan a ser convención canónica. Antes solo decía que `coerr`/`coMens` mapean 1:1 a
+  `RIDIOMA.IDTEXTO`, sin decir a qué números.
+- `README.md` — sección 8 (nota de idiomas y rangos) y regla clave de idiomas.
+
+## 3.18.0 — 2026-08-11
+
+### El log de errores de la web sabía qué estaba roto y nadie lo leía
+
+Un log de producción es la mejor lista de tareas que hay: dice qué falla, dónde y cuántas veces. El
+problema es su forma. El mismo `NullReferenceException` sale 400 veces, entre miles de líneas de
+`INFO`, y revisarlo a mano cuesta lo suficiente como para no hacerlo. Convertirlo en tareas era
+trabajo manual, así que no se hacía, y los errores seguían ahí.
+
+#### `/rs-log-errores` — del log a las tareas
+
+Comando nuevo (`skills/rs-log-errores/SKILL.md`, orquestador de main thread como `rs-jira`/
+`rs-mantis` — crea tickets y lanza el pipeline, y ninguna de las dos cosas la puede hacer un
+subagente). Fases:
+
+| Fase | Qué hace |
+|---|---|
+| F0 | Fuente del log (ruta del argumento; ⛔ nunca se adivina) |
+| F1 | Parseo + deduplicación → tabla de firmas con recuento y ventana temporal |
+| F2 | Triaje: código / dato / configuración / infra / **ruido**, y propuesta de una tarea por firma accionable — ⛔ **gate**: nada existe en el gestor hasta que el usuario aprueba la lista |
+| F3 | Alta en el gestor del proyecto (Jira o Mantis, detectado igual que `/rs-tarea`), aplicando `defaults` y etiquetas |
+| F4 | Propone lanzar el pipeline **de una en una** — ⛔ nunca en lote, nunca sin que lo pida |
+
+**La deduplicación no la hace el modelo.** La hace el hook nuevo `hooks/parse-weblog.ps1` (tool
+`parse_web_log`, la nº 49), que agrupa las ocurrencias por **firma**: `SHA1(tipo de excepción +
+frame más profundo de código propio + mensaje normalizado)`. El mensaje se normaliza antes de
+hashear —números, GUIDs, fechas, rutas y hex pasan a marcadores—, así que "Cliente 4711 no existe" y
+"Cliente 8322 no existe" son la misma firma y no dos tareas. Reconoce NLog/log4net, ELMAH XML y
+volcados planos de stack .NET.
+
+Dos consecuencias de que el recuento lo haga el hook y no el modelo: es determinista, y **el log no
+entra en contexto**. La tool devuelve solo el agregado acotado (top-N firmas con muestras), nunca las
+líneas. Un log de cientos de MB se resume sin leerlo. Además, mensajes y muestras pasan por
+`Remove-RsPii` antes de salir: un log de una web lleva datos reales de usuario y esos textos acaban
+copiados literalmente en un ticket.
+
+**Reabrir la misma tarea en cada pasada** era el otro riesgo obvio. El resumen de cada tarea lleva el
+marcador `[log:<firma>]`, y F3 lo busca entre las issues abiertas antes de crear nada: si ya existe,
+no duplica — ofrece añadir una nota con las nuevas ocurrencias y la nueva ventana.
+
+F3 y F4 **delegan** en `rs-jira`/`rs-mantis` (Fase 1b/1 para el alta, Fase 2 en adelante para el
+desarrollo). Esta skill no reimplementa ni Jira ni Mantis, y no toca el pipeline.
+
+#### Valores por defecto y etiquetas del proyecto en el config del gestor
+
+Hasta ahora, al crear una issue, los campos "de siempre" del proyecto se adivinaban **copiándolos de
+la última tarea creada**. Funciona hasta que la última tarea es una excepción, y entonces propaga el
+error a la siguiente. Ese dato es declarable, no deducible.
+
+`docs\.jira-dev-config.json` acepta un bloque `defaults` que se vuelca en `additional_fields` de
+`createJiraIssue`: `issueTypeName`, `priority`, `components`, **`labels`** (las etiquetas), `versions`,
+`duedate`, cualquier `customfield_*`. `docs\.mantis-dev-config.json` acepta su espejo con lo que
+expone la REST de Mantis: `category`, `priority`, `severity` y **`tags`**.
+
+Precedencia, en este orden: **usuario → `defaults` → réplica de la última tarea**. La réplica no
+desaparece, baja a fallback para los campos que nadie declaró, y se apaga con
+`defaults.replicarUltimaTarea: false`. Las etiquetas son la excepción a "el primero gana": se
+**acumulan** (las de `defaults` + las del usuario + las que aporte quien llame al alta — así
+`/rs-log-errores` puede añadir `log-<firma>` sin pisar nada).
+
+Todo aditivo: un config sin `defaults` se comporta exactamente como en 3.17.0, y `defaultCategory`
+de Mantis sigue funcionando (solo cede ante `defaults.category`).
+
+#### Ficheros
+
+- `hooks/parse-weblog.ps1` — **nuevo**. Parser + deduplicador por firma, con redacción PII vía
+  `lib-pii.ps1`. Tope de líneas (`-MaxLines`) y de firmas (`-MaxSignatures`), ambos reportados en la
+  salida: un recuento truncado se declara truncado.
+- `mcp/rs-workspace-server.py` — tool `parse_web_log` (48 → **49 tools**).
+- `skills/rs-log-errores/SKILL.md`, `commands/rs-log-errores.md` — **nuevos**.
+- `hooks/mantis-cli.ps1` — `create` acepta `-Priority`, `-Severity`, `-Tags`. Aditivos: sin ellos, el
+  body del `POST /issues` es el de antes.
+- `skills/rs-jira/SKILL.md` — `defaults` en el config; Fase 1b gana un paso de precedencia explícita
+  y la confirmación indica de dónde sale cada valor.
+- `skills/rs-mantis/SKILL.md` — `defaults` en el config, precedencia en la Fase 1 rama b, nuevos
+  flags de `create`, `init` propone `defaults`.
+- `references/jira.md`, `references/mantis.md` — esquema de config con `defaults` y tabla de
+  precedencia.
+- `references/mcp.md`, `references/hooks.md`, `hooks/README.md` — alta de la tool y del hook.
+- `README.md` — sección 14 del catálogo ("Errores de producción → tareas"), nota de `defaults` en la
+  sección de tareas, nº de comandos (49 → 50) y de tools.
+- `docs/plugin-architecture.md` — §1 árbol de skills, §6 y §8 el nº de tools.
+
+## 3.17.0 — 2026-08-11
+
+### `/rs-tarea` preguntaba siempre a Jira, aunque el proyecto se gestionara en Mantis
+
+El plugin ya tenía las dos mitades: `rs-jira` (F1–F4, MCP Atlassian Rovo) y `rs-mantis` (F0–F4,
+cliente REST `hooks/mantis-cli.ps1`). Lo que no tenía era el conmutador. `/rs-tarea` estaba cableado
+a Jira, así que en un workspace gestionado con Mantis el comando natural —"trabaja la tarea"— llevaba
+al gestor equivocado, y había que acordarse de teclear `/rs-mantis`. Acordarse no es un mecanismo:
+el dato de qué gestor usa el proyecto ya está en disco.
+
+#### `/rs-tarea` pasa a ser un router
+
+Detecta qué config existe en `docs\` del workspace y despacha a la skill que toque:
+
+| Estado del workspace | Destino |
+|---|---|
+| solo `.jira-dev-config.json` | `rs-jira` |
+| solo `.mantis-dev-config.json` | `rs-mantis` |
+| los dos | desambigua por la forma del argumento (`PROJ-123` → Jira, `1234` → Mantis); si no basta, **pregunta** |
+| ninguno | pregunta el gestor y ofrece crear su config (`/rs-tarea init`) |
+
+Los argumentos se reenvían tal cual, y el gestor detectado se anuncia en una línea **antes** de tocar
+ningún ticket — el enrutado se corrige antes de la primera escritura outward-facing, no después.
+`/rs-mantis` sigue siendo la puerta explícita de Mantis, y la invocación en lenguaje natural de cada
+skill no cambia. En un workspace solo-Jira el comportamiento es idéntico al de 3.16.0.
+
+La regla de detección vive **en el comando**, no en las skills: ninguna de las dos necesita saber que
+la otra existe. Fundirlas en una sola skill se descartó — son dos integraciones distintas (MCP con
+OAuth interactivo frente a REST por token; transiciones por endpoint frente a la cadena `advance`),
+y unirlas habría duplicado el riesgo sin ganar nada.
+
+#### Ficheros
+
+- `commands/rs-tarea.md` — reescrito como router (detección, desambiguación, anuncio del destino).
+- `commands/rs-mantis.md` — se declara puerta explícita.
+- `skills/rs-jira/SKILL.md`, `skills/rs-mantis/SKILL.md` — `description`: el trigger `/rs-tarea` pasa
+  a ser condicional al config presente.
+- `docs/plugin-architecture.md` — §1: faltaba `rs-mantis` en el árbol de skills. §5.1: las formas de
+  comando pasan de dos a tres, con las reglas de la forma **router** (detección en el comando,
+  ambigüedad se pregunta, anuncio previo, puerta explícita conservada).
+- `README.md` — sección 12 pasa a "Tareas (Jira / Mantis)" con la tabla de detección.
+
+## 3.16.0 — 2026-08-10
+
+### El verificador de tests hablaba inglés y la máquina hablaba español, así que nadie contó nada
+
+Síntoma reportado: `run_tests` devolvía `passed=0, failed=0, success=true` y `raw_summary` vacío en
+**cualquier** solución del entorno. No en una: en todas.
+
+#### Por qué salía verde
+
+`hooks/test-runner-check.ps1` ejecutaba `dotnet test` y leía el resultado del **texto de consola**,
+con tres expresiones en inglés:
+
+```powershell
+if ($line -match 'Passed:\s*(\d+)')  { $passed = [int]$Matches[1] }
+if ($line -match 'Failed:\s*(\d+)')  { $failed = [int]$Matches[1] }
+if ($line -match 'Skipped:\s*(\d+)') { $skipped = [int]$Matches[1] }
+```
+
+Con el CLI localizado, la salida real es `Pruebas totales: 84` / `Correcto: 84`. Ninguna expresión
+encontraba número, los contadores se quedaban en su valor inicial —cero— y el veredicto se calculaba
+aparte, `success = ($exitCode -eq 0)`. El filtro de `raw_summary` buscaba esas mismas palabras
+inglesas, así que también salía vacío: ni cifras, ni evidencia con la que sospechar.
+
+El fallo no es el número mal. Es que **un fallo de lectura se presentaba como un éxito de
+ejecución**. Toda etapa que se fiara de la tool —el `tester` del pipeline, `/rs-test`,
+`/rs-validar-req`— concluía "los tests pasan" sin que se hubiera contado una sola prueba. Y como el
+JSON salía bien formado y coherente consigo mismo, ninguna revisión posterior tenía de qué tirar.
+
+Lo cazó el tester porque se negó a leer 0/0/0 como verde.
+
+#### Dos arreglos, no uno
+
+**Que el conteo no dependa del idioma.** El resultado pasa a leerse del **`.trx`** (`--logger trx`
+sobre una carpeta temporal por ejecución): es XML y los conteos son atributos, no frases, así que no
+hay traducción que los rompa. El texto de consola queda como último recurso —el `.trx` no llega a
+escribirse si el build revienta antes— y para ese camino se fuerza además
+`DOTNET_CLI_UI_LANGUAGE=en` + `VSLANG=1033` y se reconocen los rótulos en ambos idiomas. La lógica
+vive en el hook nuevo `hooks/lib-trx.ps1` (`Get-TrxSummary`, `Get-DotnetConsoleSummary`,
+`Get-RsLineasResumen`).
+
+**Que un cero no pueda volver a leerse como verde.** Es la mitad importante: forzar el idioma
+arregla *este* fallo, pero cualquier formato futuro que el parser no entienda reproduciría el mismo
+falso verde. Ahora los parsers devuelven `$null` cuando no pueden contar —nunca cero— y el hook lo
+traduce a estado explícito:
+
+| Situación | Salida |
+|---|---|
+| Ni `.trx` ni resumen en consola | `success=false`, `parse_failed=true`, `error`, `raw_summary` con la cola de la salida |
+| Proyecto de test presente y 0 pruebas ejecutadas | `success=false`, `no_tests_ran=true`, `error` |
+| Cifras de consola que no cuadran con el total | `counts_inconsistent=true` + `warning` |
+
+Además `success` ya exige `failed = 0`, no solo `exitCode = 0`. Se añaden `total` y `source`
+(`trx`/`console`/`none`) para que el agente sepa de dónde salen las cifras que está leyendo.
+
+#### Dos fallos más que aparecieron al probarlo de verdad
+
+Con una solución de prueba real (2 pasan, 1 falla, 1 saltado) salieron a la luz:
+
+- ⛔ **El hook moría sin emitir JSON en cuanto un test fallaba.** Con `$ErrorActionPreference =
+  "Stop"`, el stderr de un comando **nativo** es un error terminante: el runner escribía `[FAIL]` y
+  el script reventaba ahí. Es decir, el único caso que de verdad importa —hay tests rojos— era
+  justamente el que no se podía reportar. El veredicto se juzga por `$LASTEXITCODE` y el `.trx`, así
+  que la preferencia baja a `Continue` solo durante esa llamada (también en `compile-check.ps1`,
+  donde el mismo patrón estaba latente).
+- **Los saltados se perdían.** VSTest escribe el resultado con `outcome="NotExecuted"` y aun así
+  deja `notExecuted="0"` en los contadores. Se toman como `max(notExecuted+inconclusive,
+  total-executed)`.
+
+#### El mismo bug, latente, en el compilador
+
+`hooks/compile-check.ps1` parseaba `(error|warning)\s+(CS\w+)`. En español el compilador emite
+`advertencia CS0168`: **todos los warnings desaparecían del JSON** sin que nada fallara. Los errores
+colaban por casualidad, porque "error" se escribe igual en los dos idiomas. Ahora fija las mismas
+variables de entorno y acepta `advertencia`/`aviso` normalizando a `warning`, por si un SDK antiguo
+ignora el env var. Verificado: sobre un `CS0168` real pasa de 0 warnings a 2.
+
+#### Gate ejecutable
+
+`tests/TrxParser.Tests.ps1` (18 tests, sin dependencia de `dotnet`) fija el contrato: un resumen en
+español devuelve 84 y no 0, una salida sin resumen devuelve `$null` y no cero, el `.trx` manda sobre
+el texto, y el hook conserva el idioma forzado, el logger `trx` y los dos caminos de no-falso-verde.
+Una convención que solo vive en un comentario no la comprueba nadie.
+
+**Ficheros**: `hooks/lib-trx.ps1` (nuevo), `hooks/test-runner-check.ps1`, `hooks/compile-check.ps1`,
+`tests/TrxParser.Tests.ps1` (nuevo), `mcp/rs-workspace-server.py` (contrato de `run_tests`),
+`agents/rs-editor-tester.md` (condición 0: sin evidencia → FAIL), `agents/rs-test.md`,
+`references/hooks.md`, `references/mcp.md`, `docs/plugin-architecture.md`, `README.md`,
+`docs/crowdstrike-fp-justification.md` (la fila de `Invoke-Expression` ya no describía el código).
+
+## 3.15.0 — 2026-08-10
+
+### Una red de seguridad que salta siempre no es una red de seguridad, es una etapa mal declarada
+
+Síntoma reportado: la nota `⚠️ Nota: plan-check no venía en STAGES → lo ejecuto igualmente (red de
+seguridad). Va en paralelo con validator.` aparecía en **todas** las ejecuciones del pipeline.
+
+#### Por qué salía siempre
+
+`plan-check` entró como etapa en 2.18.0 y se cableó en el orquestador (`SKILL.md`), pero **nunca se
+añadió al vocabulario de `STAGES` del planner**. La tabla "Etapas disponibles" de
+`agents/rs-editor-planner.md` listaba `core`, `validator`, `tester`, `build`, `db-modeler` y
+`documentar` — y nada más. Con dos reglas del propio agente encima ("incluir solo las necesarias",
+"no asumir etapas sin justificación"), un token que no está en la tabla no se emite jamás.
+
+Resultado: durante diecisiete versiones menores el planner fue **incapaz** de declarar `plan-check`,
+la red de seguridad del orquestador se disparó en el 100% de las ejecuciones, y `SKILL.md` afirmaba
+—falsamente— que "el planner coloca `plan-check` justo después" de `core`. El contrato documentado
+y el implementado describían cosas distintas.
+
+El daño no era solo el ruido. Un aviso que aparece siempre deja de leerse: si un día el planner
+hubiera omitido la etapa por un motivo real, nadie lo habría notado entre el resto de notas.
+
+#### La corrección no es "que lo emita siempre"
+
+`plan-check` cuesta tokens (lee `FILES_CHANGED` y busca evidencia de cada ítem del PLAN) y en un
+cambio de un literal no aporta: verificar la cobertura de un plan de un solo ítem es trabajo que
+`validator` y el gate final ya cubren. Así que la etapa pasa a ser **condicional**, con criterios
+contables en `agents/rs-editor-planner.md` § "Criterios para incluir `plan-check`":
+
+- **≥3 ítems accionables** en el plan
+- toca **≥2 proyectos/capas**
+- lleva cambio de esquema BD o SQL nuevo (`db-modeler` en `STAGES`)
+- es una **fase** de un desarrollo por fases
+- introduce funcionalidad nueva (`documentar` en `STAGES`)
+
+Umbrales contables a propósito: un criterio cualitativo ("si el cambio es grande") lo resuelve el
+planner incluyendo la etapa siempre por prudencia, y entonces no se ahorra nada.
+
+#### La red de seguridad cambia de señal
+
+Con la etapa condicional, la red anterior (`core` corrió → `plan-check`) habría seguido disparando
+en todos los cambios simples, que es justo el ruido que se quería quitar. Nueva señal:
+
+> `plan-check` no estaba en `STAGES` **y** `core` devuelve `FILES_CHANGED` de ≥3 ficheros o ≥2
+> proyectos → ejecutarlo igualmente y anotarlo.
+
+Ahora sí encaja con la forma canónica de las tres redes de seguridad —un dato empírico que el
+planner no podía conocer al planificar—, porque el tamaño real del cambio solo se sabe al
+escribirlo. Y la nota pasa a decir algo útil: `⚠️ El cambio salió mayor de lo planificado (N
+ficheros, M proyecto(s)) → ejecuto plan-check aunque no venía en STAGES`, es decir, el planner
+subestimó. Por debajo del umbral no se ejecuta.
+
+#### Riesgo asumido
+
+En un cambio clasificado como simple, un `core` que implemente medio plan ya no se detecta por
+cobertura; queda en manos de `validator` (compila + revisión lógica) y del Gate B. Aceptable para
+un plan de un único ítem localizado — por eso el umbral está en 3 ítems y no más arriba.
+
+Ficheros: `agents/rs-editor-planner.md` (fila `plan-check` en la tabla de vocabulario + sección de
+criterios + ejemplos de `STAGES típico` + ejemplo de output) ·
+`skills/rs-enterprise-agent/SKILL.md` (paso 2, control de flujo y tabla § Redes de seguridad) ·
+`README.md` · `docs/plugin-architecture.md`.
+
+## 3.14.0 — 2026-08-07
+
+### Buscar en el árbol tenía tres implementaciones, y dos bugs que solo estaban en una
+
+Continuación de 3.13.0 con los cuatro puntos que quedaban del análisis de rendimiento. Al medir el
+camino de búsqueda aparecieron dos defectos silenciosos que llevaban ahí desde el principio.
+
+#### 1. Un solo motor de búsqueda: `hooks/lib-buscar.ps1`
+
+`find-symbol.ps1`, `search-code.ps1` y `security-scan.ps1` recorrían el árbol cada uno por su
+cuenta con `Get-ChildItem` + `Get-Content` + `-match`: un objeto por línea y una recompilación del
+regex por comparación. Medido sobre 3200 ficheros `.cs` de 65 líneas, buscando un símbolo:
+
+| | ms |
+|---|---|
+| `Get-ChildItem` + `Get-Content` + `-match` | 6650 |
+| `EnumerateFiles` + `ReadAllLines` + regex compilado | 2836 |
+| `EnumerateFiles` + `ReadAllText` + `Matches` | 2969 |
+| **`Select-String` multi-patrón** | **1480** |
+
+Suelo: 121 ms enumerar + 468 ms leer los 3200 ficheros. Gana `Select-String` porque el bucle de
+líneas y el motor de regex viven dentro del cmdlet, en C#.
+
+⛔ **No se usa ripgrep**, aunque el análisis inicial lo daba por hecho con una medida de 0,22 s.
+Esa medida era inalcanzable: `rg` está disponible dentro de la herramienta Bash del agente, pero
+como **función del shell**, no como `rg.exe` en el PATH. Los hooks PowerShell —que es como Claude
+Code ejecuta esto— no lo alcanzan; se comprobó recorriendo el PATH y buscando el binario en el
+árbol. Un camino "usa rg si está" habría sido código muerto que ninguna prueba cubre.
+
+End-to-end sobre 3200 ficheros: **7785 ms → 2291 ms (3,4×)**.
+
+#### 2. `batch_find_symbols` no batcheaba nada
+
+Era un bucle que lanzaba un proceso PowerShell **por símbolo**, y cada uno recorría el scope
+entero de nuevo. `find-symbol.ps1` acepta ahora `-Symbols "A,B,C"` y resuelve los N en una pasada;
+la tool baja al hook una sola vez. El truncado `max_per_symbol` se queda en Python, que es donde
+se sabe cuánto contexto cabe.
+
+Con 10 símbolos sobre 3200 ficheros: **74 471 ms → 13 657 ms (5,5×)**.
+
+#### 3. Dos bugs que el recorrido viejo escondía
+
+Los dos estaban solo en `find-symbol.ps1` y ninguno daba error: devolvían un resultado plausible.
+
+**Una sola coincidencia se contaba como cuatro.** `Sort-Object -Unique` con un único elemento
+devuelve el objeto, no un array de uno, y `.Count` sobre un hashtable cuenta sus **claves**
+(`file`, `line`, `content`, `match`). Así que `find_symbol` respondía `found: 4` y `matches` como
+objeto en vez de lista, y `batch_find_symbols` propagaba `count: 4`. Justo el caso más común en
+análisis de impacto: el símbolo que aparece una vez.
+
+**Un fichero de una sola línea no casaba nunca.** `Get-Content` sobre un fichero de una línea
+devuelve `String`, no `String[]`; el bucle indexaba `$lines[0]` y obtenía el primer **carácter**.
+Cualquier `.cs` de una línea se escaneaba letra a letra y se declaraba sin coincidencias.
+
+Los dos quedan fijados en `tests/Search.Tests.ps1`.
+
+#### 4. `security-scan.ps1` leía cada fichero una vez por regla
+
+Hasta 8 lecturas del mismo `.cs` para descartar casi todas. Ahora el árbol se enumera una vez y
+cada regla trabaja sobre el subconjunto de extensiones que le toca. ⚠️ Sigue haciendo **una
+búsqueda por patrón**, no una sola con todos: una línea que dispara dos reglas son dos hallazgos
+con `id` distinto, y el motor por defecto se queda con el primer patrón que casa. Hay un test que
+se pone en rojo si alguien lo "optimiza" a una sola llamada.
+
+Verificado con prueba diferencial contra la implementación anterior: salida **idéntica**.
+
+⚠️ **Cambio de comportamiento deliberado en `search_code`:** ahora excluye `bin\` y `obj\`. Antes
+no excluía nada —los otros dos hooks sí— y los `.cs` generados en `obj\` gastaban parte del
+presupuesto de 50 resultados con duplicados del código real.
+
+#### 5. El pipeline estaba escrito dos veces, y las copias ya divergían
+
+`commands/rs-enterprise-agent.md` repetía las etapas, los handoffs y el control de flujo de
+`SKILL.md`. Se escribió en 2.14.0 y no se volvió a tocar salvo para arreglar su frontmatter,
+mientras que la etapa `plan-check` entró en 2.18.0: durante diez versiones menores los dos
+documentos describían pipelines distintos **en el mismo contexto**, y el comando omitía
+precisamente la etapa que verifica que el código cubre el PLAN aprobado.
+
+El comando pasa a ser un wrapper fino que apunta a `SKILL.md`. Una definición, un dueño.
+
+En el mismo sitio, `SKILL.md` se contradecía: la red de seguridad de `db-modeler` se describía como
+"única corrección empírica permitida sobre `STAGES`" mientras el propio fichero define otras dos
+(`plan-check` y `documentar`). Ahora hay una sección **§ Redes de seguridad** que enumera las tres
+con su señal y su motivo, y dice explícitamente que añadir cualquier otra etapa no es una red de
+seguridad, es re-planificar.
+
+#### 6. Etapas que pueden solaparse
+
+Nueva sección **§ Etapas que pueden solaparse** en `SKILL.md`. El orden de `STAGES` es secuencial
+porque encadena el contrato, no por ceremonia: `db-modeler` ∥ `documentar` no se leen entre sí, y
+`plan-check` ∥ `validator` son independientes (uno mira cobertura del PLAN, el otro compila). Se
+lanzan en el mismo turno con varias llamadas Task. `build` no solapa con nada, y tras un ciclo de
+`fixer` se vuelve a serializar.
+
+## 3.13.0 — 2026-08-07
+
+### El plugin cobraba peaje en sitios donde no hacía trabajo
+
+Cinco derroches medidos con cronómetro sobre esta máquina, ninguno de ellos visible desde el
+código: los cinco son caminos que se recorren *antes* de decidir si hay algo que hacer. Ninguno
+cambia lo que el plugin decide — solo lo que cuesta llegar a la decisión.
+
+#### 1. `Get-Command` sobre un nombre inexistente: 1,7 s en cada Bash y cada Write
+
+`hooks/lib-pii.ps1` comprobaba con `Get-Command Get-RsModelPath -ErrorAction SilentlyContinue`
+si quien le dot-sourcea traía ya la resolución del modelo. Con un nombre que **todavía no
+existe** —el caso normal— Windows PowerShell 5.1 no se limita a mirar su tabla de comandos:
+recorre `PSModulePath` entero analizando módulos por si alguno lo exporta.
+
+Lo caro no es el fichero, es esa línea. Medido, tres ejecuciones cada uno:
+
+| | ms |
+|---|---|
+| `powershell -NoProfile exit 0` (suelo) | 228 |
+| dot-source de `lib-dbmodel.ps1` | 260 |
+| `Get-Command <inexistente> -EA SilentlyContinue` | **1763** |
+| `Test-Path Function:\<inexistente>` | 291 |
+
+Y se pagaba en **cada llamada a Bash, Write y Edit**, porque las dos guardas `PreToolUse`
+dot-sourcean `lib-pii.ps1` antes de mirar siquiera si el workspace tiene la protección activa —
+también fuera de un workspace uCollect/RS, donde la guarda no llega a hacer nada.
+
+Ahora la comprobación va por el proveedor `Function:`, que resuelve por la cadena de scopes
+igual que la invocación. Las guardas completas, extremo a extremo:
+
+| guarda | antes | ahora |
+|---|---|---|
+| `pii-guard-bash.ps1` | 2021 ms | **477 ms** |
+| `pii-guard-write.ps1` | 1932 ms | **487 ms** |
+
+En una sesión de 150 operaciones de fichero son unos **4 minutos** que antes se iban en un
+escaneo de módulos. `tests/PiiGuard.Tests.ps1` sigue en verde sin tocar (450 aserciones).
+
+#### 2. El runner del `Stop` hook parseaba el transcript entero en cada turno
+
+`runner/runner.ps1` corre al final de **cada** turno, y solo tres agentes (`rs-editor-build`,
+`rs-instalador`, `rs-actualizador`) llegan a emitir el contrato `TYPE:`/`COMMAND:` que busca.
+Para quedarse con el último mensaje leía el transcript completo —una línea JSON por mensaje,
+creciendo toda la sesión— y hacía `ConvertFrom-Json` de cada una.
+
+Ahora lee la cola (`-Tail 400`) y la recorre hacia atrás, cortando en el primer `assistant`;
+si en esas líneas no hubiera ninguno, **cae a la lectura completa de antes**, así que el camino
+rápido no puede perder nada. Se devuelve el texto del último `assistant` aunque venga vacío, sin
+seguir buscando hacia atrás: un texto anterior puede llevar un `COMMAND:` ya ejecutado en un
+turno previo, y reejecutarlo sería lanzar un build a espaldas del usuario.
+
+| transcript | antes | ahora |
+|---|---|---|
+| 1 500 líneas (0,7 MB) | 588 ms | 488 ms |
+| 15 000 líneas (7,9 MB) | 1709 ms | **478 ms** |
+
+Verificado con una prueba diferencial contra la versión anterior sobre cuatro transcripts
+(normal, `assistant` fuera de la cola → fallback, contrato `TYPE:`/`COMMAND:`, y uno largo):
+salida **idéntica byte a byte** en los cuatro.
+
+#### 3. Diez comandos de solo lectura dejan de cargar la skill entera
+
+`skills/rs-enterprise-agent/SKILL.md` son ~7k tokens. Un `/rs-stats` los cargaba para acabar
+despachando a un subagente Haiku que lee un JSON. Esos comandos ya llevaban inline lo único que
+necesitan (`workspace` = cwd, y la regla de `plugin_root` glosada en la propia frase); la skill
+no aportaba nada.
+
+Dejan de invocarla: `rs-stats`, `rs-dashboard`, `rs-help`, `rs-deps`, `rs-env`, `rs-schema`,
+`rs-word`, `rs-comparar-modelo`, `rs-comparar-entornos`, `rs-historial`. Cada uno declara ahora
+`⛔ Self-contained — do NOT invoke the skill` y trae la regla de `plugin_root` escrita entera en
+vez de citada.
+
+**Fuera del lote a propósito**, porque el contexto de la skill sale más barato que un fallo:
+los que escriben o tienen gate (`rs-init`, `rs-pii`, `rs-cifrar`, `rs-erd`, `rs-sync-indexes`),
+los que resuelven una `.sln` (~25 comandos: la resolución de solución vive en la skill y sacarla
+a un dueño compartido es un cambio de diseño aparte), y los que enrutan a otra skill.
+
+`hooks/skill-trigger.ps1` deja de disparar por `^/rs-` y se queda solo con la `.sln` explícita.
+Ese disparo era redundante —cuando hay comando, Claude Code ya carga `commands/rs-<x>.md`, que
+dice a qué subagente despachar— y desde este cambio además **contradecía** al comando: inyectaba
+"OBLIGATORIO invocar la skill" justo encima de un fichero que declara lo contrario. Los comandos
+que sí necesitan la skill la piden en su propio texto.
+
+#### 4. Las 48 tools MCP respondían con JSON indentado
+
+La salida de una tool no la lee una persona, la lee el modelo: la indentación son tokens que no
+dicen nada. Medido sobre un resultado típico de `find_symbol` (40 coincidencias con ruta
+absoluta): **7901 caracteres con `indent=2` contra 6213 compactos, un 21% menos**, en cada
+respuesta de cada etapa del pipeline.
+
+Las 53 llamadas `json.dumps(..., indent=2)` del server pasan a `separators=(",", ":")` vía la
+constante `_JSON_SEP`. ⛔ No aplica a lo que se escribe en disco: el `model.json` lo sigue
+formateando `scripts/_modeljson.py` (§7.1 de `docs/plugin-architecture.md`) y la caché de
+`_load_model` ya iba sin indentar. `tests/test_mcp.py` en verde (61) y la suite Python completa
+también (311).
+
+#### 5. `agents/rs-instalador.md` no tenía frontmatter válido
+
+Era el único `.md` con BOM UTF-8 de los ~100 de `agents/`, `commands/`, `skills/` y
+`references/`. Los tres bytes antes del `---` impedían parsear el frontmatter, así que el agente
+perdía su `description` (peor selección) y su allowlist `tools:` — y se exponía con **todas** las
+tools en vez de con las 7 que declara.
+
+⚠️ Esto **no** contradice la convención de `hooks/README.md` § Convención de codificación: el
+BOM es obligatorio en los `.ps1` (sin él, 5.1 no parsea el fichero) y solo en ellos.
+`tests/Encoding.Tests.ps1` filtra `*.ps1, *.psm1`, así que ni antes cubría este caso ni ahora
+entra en conflicto.
+
+## 3.12.0 — 2026-08-07
+
+### "No lo veo" no es "no existe", y el modelo se escribe de una sola forma
+
+Cinco defectos del modelado de BD detectados en una sesión real sobre una instalación de cliente
+(Oracle 19c, cuenta de solo-consulta que **no** es dueña del esquema). Comparten raíz: el plugin
+concluía la ausencia de lo que no podía ver, y escribía el `model.json` en dos formatos que
+destrozaban el diff del control de versiones.
+
+#### 1. Un único escritor canónico del `model.json`
+
+Había **cinco** puntos de escritura y todos lo rompían, de dos maneras distintas:
+
+- Los scripts Python (`model-objects.py`, `analyze-dalc.py`) serializaban con
+  `ensure_ascii=False` y sin BOM. Medido: BOM ausente y 12 bytes no-ASCII.
+- Los hooks PowerShell (`sync-from-db.ps1`, `sync-indexes.ps1`, `sync-model-tables.ps1`) usaban
+  `ConvertTo-Json`. El de PS 5.1 no indenta con dos espacios por nivel: **alinea cada valor a la
+  columna de la clave padre**. El fichero pasaba de 1,1 MB a 3,5 MB (x3,2) y cambiaba el sangrado
+  de todas las líneas, así que el diff quedaba inservible **aunque el BOM y los CRLF fueran
+  correctos**. Es el peor de los dos porque el JSON es válido y el contenido idéntico: solo se ve
+  al abrir el diff, cuando ya está subido.
+
+Ahora hay uno solo. **`scripts/_modeljson.py`** impone el formato canónico del repositorio
+—`indent=2`, `separators=(',', ': ')`, `ensure_ascii=True`, CRLF y UTF-8 **con** BOM—, escribe de
+forma atómica y **verifica lo escrito antes de sustituir el modelo bueno**: BOM presente, cero LF
+sueltos, cero bytes no-ASCII, reparseo correcto y comparación con el objeto que se quería
+escribir. Si algo no cuadra, el modelo anterior no se toca y la escritura falla.
+
+**`hooks/lib-modeljson.ps1`** (`Save-RsModelJson`) **no serializa**: transporta la estructura con
+`ConvertTo-Json -Compress` —donde el bug de indentación ni llega a manifestarse— y delega en el
+escritor de Python. Reimplementar el formato en PowerShell habría dejado dos escritores otra vez,
+que es el camino que ya recorrió el mapeo de tipos antes de `scripts/_dbtypes.py`. Verificado:
+un modelo escrito por Python, leído y reescrito por PowerShell, sale **byte a byte idéntico**.
+
+⛔ `pk` sigue siendo **ordinal** (1, 2, 3…) y todo-o-nada, según manda
+`scripts/_dbmodel.py::pk_columns`. No se ha tocado.
+
+#### 2. Ceguera por permisos tratada como ausencia — el fallo más caro
+
+Una cuenta que no es dueña del esquema ve por GRANT per-object, y **Oracle no permite distinguir
+"no existe" de "no lo veo"**: ORA-00942 es deliberadamente ambiguo y `ALL_TABLES`, `ALL_OBJECTS` y
+`ALL_SOURCE` están todas filtradas por privilegio. Lo medido:
+
+- `sync_from_db` daba 323 tablas; tras conceder los GRANT que faltaban, 329. Seis tablas reales
+  figuraban como inexistentes y estuvieron a punto de borrarse del modelo.
+- Peor: `sync-indexes.ps1` recorría **todas** las tablas del modelo y les reescribía `indexes` con
+  lo que hubiera en la lectura — que para una tabla sin GRANT está vacío. Esas seis tablas se
+  quedaron con **0 índices**: el modelo salía de la sincronización peor de como entró, en silencio.
+- El PL/SQL exige GRANT **EXECUTE**, no SELECT. Con 0 grants EXECUTE, `ALL_OBJECTS` y `ALL_SOURCE`
+  devuelven cero procedimientos y cero paquetes **sin error**. Tras conceder 13, aparecieron 12
+  procedimientos y 1 paquete.
+
+La regla nueva es que **si no se puede distinguir, no se concluye**:
+
+- Una tabla que no sale en la lectura **se conserva entera** —columnas, relaciones e índices— y se
+  marca `visible: false` + `visible_check` con la fecha. La marca desaparece sola cuando vuelve a
+  verse. `sync-indexes.ps1` solo toca las tablas que la lectura ve.
+- **`hooks/lib-dbvisibilidad.ps1`** + **`hooks/db-visibilidad.ps1`** diagnostican lo que sí es
+  distinguible: si la cuenta es dueña, qué GRANTs tiene por privilegio y cuántos objetos de cada
+  tipo ve el diccionario. `0 EXECUTE` explica un 0 de procedimientos sin ninguna ambigüedad.
+- **Bloque de cobertura automático** (`_cobertura` en el modelo y en el log): conteo real por tipo
+  frente a lo capturado, con las exclusiones deliberadas declaradas aparte para que no cuenten
+  como hueco. Sustituye a escribirlo a mano.
+- **exit 2 = parcial** cuando queda hueco. `_run_ps` lo propaga como `parcial: true` en el JSON;
+  no es un fallo, es "el modelo está incompleto" — que no es lo mismo que "esos objetos no están".
+
+El hook existe además de la librería para que los scripts Python usen **la misma**
+implementación por subproceso (cacheada en `RS_DB_VISIBILIDAD_JSON`), en vez de reescribir las
+consultas por su cuenta.
+
+#### 3. El instalador entregaba sin PL/SQL, en silencio
+
+`scripts/installer-objects.py` lee de `ALL_SOURCE`. Con la cuenta sin EXECUTE, `/rs-instalador` y
+`/rs-actualizador` generaban el paquete con los ficheros de procedimientos **vacíos** y lo daban
+por bueno: el cliente recibía una instalación limpia sin nada de lógica de servidor y el fallo
+aparecía en producción.
+
+Ahora es **error duro** (exit 1), comprobado **antes** de extraer para no gastar seis sesiones de
+BD en un paquete que no se va a poder entregar. El mensaje da las tres salidas en orden: conceder
+los GRANT, repetir con `--conexion <dueño>`, o confirmar con `--sin-plsql` que el esquema de
+verdad no tiene PL/SQL. `hooks/installer-scripts.ps1` lo propaga y lo nombra en el resumen.
+
+Además, un tipo de objeto vacío ya no se reporta como "no se encontró ninguno" cuando la cuenta no
+es dueña, sino como "ninguno **visible para esta cuenta**".
+
+#### 4. Se puede elegir la conexión: `-Conexion <id>`
+
+`read_db_config` y `_read_password` usaban siempre `conexiones[0]`. Leer como dueño —única forma
+de ver los sinónimos **privados**, que ningún GRANT expone: 1 visible de 7— obligaba a **editar a
+mano el fichero de credenciales**, que es estrictamente peor: es persistente, es invisible en
+todas las salidas, y arrastra consigo la política PII (el `model_path` se resuelve por conexión).
+
+`-Conexion <id>` / `--conexion <id>` / `conexion=` llega a `sync-from-db`, `sync-indexes`,
+`sync-model-tables`, `sync-model-objects`, `compare-model`, `get-config`, `installer-scripts`,
+`installer-objects.py`, `installer-inserts.py`, `model-objects.py` y a las tools MCP
+`sync_from_db`, `sync_indexes`, `sync_model_tables`, `compare_model` y `compare_model_tables`
+—mismo contrato que ya tenía `db_query`—, con tres guardarraíles en `Select-RsConexion`
+(`hooks/lib-dbconfig.ps1`), que es el único sitio que resuelve el id:
+
+1. Sin `-Conexion`, **siempre** `conexiones[0]`. No se infiere, no se prueba otra si la primera
+   falla, no se "elige la mejor". Esa elección la hizo una persona al escribir el fichero.
+2. Un id que no existe **corta** con la lista de válidas. ⛔ Nunca cae a `conexiones[0]`:
+   seleccionar en silencio una conexión distinta de la pedida es como se acaba leyendo —o
+   escribiendo— contra el entorno equivocado.
+3. La conexión usada **se publica** en la salida de todo hook y script que la acepte. Sin eso, una
+   lectura hecha con una cuenta privilegiada es indistinguible de una hecha con la de consulta.
+
+#### 5. El conteo de secuencias ahora se explica solo
+
+17 secuencias reportadas frente a 18 en `ALL_OBJECTS`, sin forma de saber por qué. Tres causas
+posibles y ninguna descartable sin la BD delante, así que se han cerrado las tres y el script pasa
+a **nombrar la razón** en vez de dejar el descuadre:
+
+- **Concatenación con NULL**: un solo atributo nulo (`MIN_VALUE`, `MAX_VALUE`, `LAST_NUMBER`,
+  `CACHE_SIZE`…) anulaba la cadena `||` entera, la fila salía NULL, el marcador nunca se emitía y
+  la secuencia desaparecía del paquete sin error y sin rastro. Todo va ahora envuelto en `NVL`.
+- **Recycle bin**: `ALL_OBJECTS` cuenta los `BIN$…`; ahora se excluyen explícitamente.
+- **Columnas IDENTITY**: el filtro `ISEQ$$` sale de la `WHERE` y pasa a Python, así que el número
+  de bloques leídos es el del diccionario y la diferencia es atribuible.
+
+Las exclusiones se **declaran** (`excluido` en el contrato de los extractores) en vez de
+descartarse en silencio: si no, una exclusión legítima se cuenta como pérdida y el aviso de
+cobertura se vuelve permanente — y un aviso permanente es un aviso que nadie vuelve a mirar.
+
+#### Al actualizar
+
+La primera sincronización reescribe el `model.json` entero al formato canónico. Es un commit
+grande, **una sola vez**; a partir de ahí el diff vuelve a ser línea a línea. Conviene aislarlo en
+su propio commit.
+
+#### Tests
+
+Los tres fallos de formato y los dos de cobertura son **silenciosos** —el JSON sigue siendo
+válido, el conteo sigue saliendo—, así que la única defensa es probarlos:
+
+- **`tests/test_modeljson.py`** (18 casos): el formato exacto (BOM, CRLF, `ensure_ascii`, dos
+  espacios, sin espacios finales), la **idempotencia** —reescribir no cambia ni un byte, y el
+  orden de las claves se respeta—, que la verificación rechaza de verdad cada uno de los cuatro
+  síntomas, y que un fallo de escritura **deja intacto el modelo anterior**.
+- **`tests/test_dbobjetos.py`** (+10 casos): la cobertura con las cifras reales medidas —329 vs
+  323 tablas, 18 vs 17 secuencias con 1 excluida, 12 procedimientos invisibles con `EXECUTE 0`—,
+  que una exclusión declarada no cuenta como hueco, y que siendo dueño el descuadre **no** se
+  atribuye a permisos (mandar a alguien a pedir GRANTs que ya tiene es peor que callar).
+
+Verificado además a mano el camino PowerShell→Python: un modelo escrito por `_modeljson.py`,
+leído y reescrito con `Save-RsModelJson`, sale **byte a byte idéntico**. Suite completa en verde
+(311 Python, 609 Pester).
+
+#### Ficheros
+
+- **Nuevos**: `scripts/_modeljson.py`, `hooks/lib-modeljson.ps1`, `hooks/lib-dbvisibilidad.ps1`,
+  `hooks/db-visibilidad.ps1`, `tests/test_modeljson.py`.
+- **Modificados**: `hooks/lib-dbconfig.ps1` (`Select-RsConexion`), `hooks/sync-from-db.ps1`,
+  `hooks/sync-indexes.ps1`, `hooks/sync-model-tables.ps1`, `hooks/sync-model-objects.ps1`,
+  `hooks/compare-model.ps1`, `hooks/get-config.ps1`, `hooks/installer-scripts.ps1`,
+  `hooks/db-query.ps1` (tenía su propia copia de la resolución de conexión; pasa a usar
+  `Select-RsConexion` como el resto),
+  `scripts/_dbobjetos.py` (`cobertura`, `formato_cobertura`), `scripts/model-objects.py`,
+  `scripts/analyze-dalc.py`, `scripts/installer-objects.py`, `scripts/installer-inserts.py`,
+  `mcp/rs-workspace-server.py`, `tests/test_dbobjetos.py`, `references/{hooks,mcp,json-schema,bd}.md`,
+  `docs/plugin-architecture.md`, `README.md`, `agents/rs-editor-db-modeler.md`,
+  `agents/rs-instalador.md`, `agents/rs-actualizador.md`.
+
+## 3.11.1 — 2026-08-07
+
+### La política PII es de `db_query`, y en ningún sitio estaba escrito
+
+Pregunta razonable que no tenía respuesta en la documentación: con `mode=enforce`, ¿se están
+enmascarando los nombres de tablas, columnas y vistas al actualizar el modelo o al mirar la
+estructura de la BD?
+
+**No.** `db_query` es la única tool que pasa por `mask_resultset`. Las que mantienen el modelo y
+leen estructura —`sync_from_db`, `sync_indexes`, `compare_model`, `analyze_dalc`,
+`generate_sql`, `generate_migration`, `export_dmd`, `render_erd`— van a su hook con conexión
+directa y no importan `pii_*`; `get_table_schema`, `search_model` y `get_model_index` leen el
+`model.json` y ni tocan la BD. Los metadatos salen siempre en claro. (`sync-from-db.ps1`
+menciona `pii`, pero solo para **conservar** las marcas `pii`/`safe` del modelo al
+re-sincronizar.)
+
+#### La parte contraintuitiva sí es real
+
+Si el catálogo del sistema se interroga **con `db_query`** en vez de con las tools de modelo,
+los nombres **sí** vuelven enmascarados: `ALL_TAB_COLUMNS`, `INFORMATION_SCHEMA.COLUMNS` o
+`USER_OBJECTS` no están en el modelo, así que `clasificar()` da `NO_RESUELTA/sin_definicion` y
+`resolver_no_resuelta()` ve texto en vez de números → `MASCARA/valores_no_numericos`. Los
+patrones ni llegan a intervenir: la lista base es española (`NOMBRE*`, `TELEFON*`…) y
+`TABLE_NAME`/`COLUMN_NAME` no casan — el fallback por forma de valor los tapa igual.
+
+Es la regla general aplicada a un caso donde sobra. Se documenta y **no** se abre una excepción
+de catálogo: cada excepción es un camino más por el que un `SELECT` puede salir sin filtrar, y
+el rodeo es barato —para leer estructura ya están las tools de modelo—. Si aun así hace falta
+cruzar estructura por SQL, la salida es preguntar por números: nombres dentro del `SELECT`,
+recuentos o códigos de vuelta, que salen en claro por `valores_numericos`. Con dos bordes que
+muerden: un entero de **9+ dígitos sin decimales** se enmascara (tiene forma de identificador,
+`pii_policy.py:187`) y una columna que salga **entera vacía**, también.
+
+#### Dónde queda escrito
+
+- `docs/proteccion-pii-consultas-bd.md` — **§4.5 nueva**, "Qué camino pasa por el filtro": qué
+  lo atraviesa, qué no y por qué (los metadatos no son datos de personas), la consecuencia
+  contraintuitiva y el rodeo numérico. Más una precisión en §5.1, que decía "consultas
+  realizadas a través de la herramienta" sin acotar que es *solo* ese camino.
+- `references/bd.md` — la versión operativa para los agentes, con los nombres de tool concretos
+  y la cadena de clasificación que produce el enmascarado.
+
+#### Y una viñeta del README que llevaba desde la 3.4.0 diciendo lo contrario
+
+El resumen de «Qué NO protege» seguía afirmando que las guardas *«viven en la configuración
+personal de cada desarrollador y no viajan con el repositorio»*. Eso dejó de ser cierto en la
+3.4.0 —desde entonces las declara el propio plugin— y el §5.2e del documento ya lo recogía como
+resuelto; la viñeta del README se quedó atrás. Corregida: conserva la historia (por qué era
+grave: rutas absolutas que cada actualización dejaba colgando, guardas que fallaban abiertas y
+sin señal) y describe la dependencia que sí queda —sin plugin no hay guardas, y tras instalar o
+actualizar hay que reiniciar—.
+
+Sin cambios de código: la política se comporta como está diseñada.
+
+Ficheros: `docs/proteccion-pii-consultas-bd.md`, `references/bd.md`, `README.md`.
+
+## 3.11.0 — 2026-08-07
+
+### El marketplace deja de publicar un solo plugin: entra `rs-validador`
+
+Hasta ahora `marketplace.json` declaraba un único plugin con `source: "./"` — el repo *era* el
+plugin. A partir de esta versión el marketplace publica **dos**, y el repo gana una carpeta
+`plugins/` para los que no son la raíz.
+
+El primero en entrar es **`rs-validador` 1.0.0**: desarrollo, mantenimiento y documentación de la
+herramienta de validación de ficheros (Python/FastAPI + HTML/JS) con la que se definen las
+estructuras de entrada, se valida lo que manda el cliente y se generan los scripts SQL de
+configuración de uCollect. Su changelog propio está en `plugins/rs-validador/CHANGELOG.md`.
+
+#### Por qué un plugin aparte y no unas skills más aquí
+
+`rs-enterprise-agent` gira entero alrededor de una `.sln`: resolución de solución, `get_scope`,
+`compile_check`, DALCs, modelo BD del workspace. Nada de eso aplica a una app Python sin solución ni
+compilador. Mezclarlos habría metido triggers de una herramienta en el descriptor de la otra y atado
+sus versiones. Compartiendo marketplace se instalan y se actualizan por separado:
+
+```
+/plugin install rs-validador@rs-enterprise-agent
+```
+
+#### Lo que esto cambia en el propio repo
+
+- `marketplace.json` pasa a tener dos entradas; la del plugin raíz mantiene `source: "./"` y la
+  nueva apunta a `./plugins/rs-validador`. La descripción del marketplace ya no describe solo al
+  agente C#.
+- `docs/plugin-architecture.md` documenta la carpeta `plugins/`, el marketplace multi-plugin y un
+  patrón de extensión nuevo (§9.5: cómo se añade un plugin adicional), con su fila en la checklist
+  de sincronización del §10.
+
+No cambia nada del pipeline, de los agentes ni de las tools MCP de `rs-enterprise-agent`.
+
+Ficheros: `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `README.md`,
+`docs/plugin-architecture.md`, y el árbol nuevo `plugins/rs-validador/`.
 
 ## 3.10.1 — 2026-08-07
 

@@ -54,10 +54,31 @@ Reglas de merge:
 
 ## Sincronizar desde BD
 
-Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db(workspace)` → sincroniza tablas y columnas, devuelve `{success, table_count, motor, schema, model_path}`
-Fallback: `hooks\sync-from-db.ps1 "<workspace>" "<proyecto>"`
+Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db(workspace[, conexion])` → sincroniza tablas y columnas, devuelve `{success, parcial, conexion, table_count, tablas_leidas, no_visibles[], cobertura, motor, schema, model_path}`
+Fallback: `hooks\sync-from-db.ps1 "<workspace>" "<proyecto>" [-Conexion <id>]`
 
 Usa `mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config(workspace)`. Actualiza tablas y columnas. No toca relaciones.
+
+### ⛔ Leer SIEMPRE `cobertura` y `parcial` antes de concluir nada
+
+Oracle **no permite distinguir "no existe" de "no lo veo"**: una cuenta que no es dueña del
+esquema ve por GRANT per-object, y `ALL_TABLES`/`ALL_OBJECTS`/`ALL_SOURCE` están filtradas por
+privilegio. Por eso:
+
+- `parcial: true` significa **modelo incompleto**, nunca "esos objetos ya no existen". Nada se
+  ha borrado: las tablas no vistas se conservan enteras y salen en `no_visibles[]` con
+  `visible: false` en el modelo.
+- **Nunca proponer borrar** una tabla, columna o índice porque no salga en la lectura. Con
+  `cobertura.es_dueno: false` y hueco, la causa probable es un GRANT que falta.
+- `cobertura.grants.EXECUTE == 0` explica un 0 de procedimientos y paquetes **sin ambigüedad**:
+  el PL/SQL exige EXECUTE, no SELECT.
+- **Reportar el hueco al usuario** con las cifras (`real` vs `capturado` por sección) y las dos
+  salidas: conceder los GRANT que falten, o repetir con `conexion=<id de la conexión dueña>`.
+
+`conexion` / `-Conexion` selecciona por id de `.rs-databases.json`. ⛔ Nunca sugerir editar a
+mano el fichero de credenciales para leer con otra cuenta: eso es persistente, no queda
+registrado en ninguna salida y arrastra consigo la política PII (el modelo se resuelve por
+conexión).
 
 ## Inferir relaciones desde DALCs
 
@@ -105,11 +126,16 @@ cae al camino de descarga → ahí sí, pedirle que copie el fichero a `BD/<proy
 
 ## Sincronizar índices desde BD
 
-Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes(workspace)` (si disponible) → devuelve `{success, index_count, table_count}`
-Fallback: `hooks\sync-indexes.ps1 "<workspace>" "<proyecto>"`
+Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes(workspace[, conexion])` (si disponible) → devuelve `{success, parcial, index_count, table_count, tablas_intactas, cobertura}`
+Fallback: `hooks\sync-indexes.ps1 "<workspace>" "<proyecto>" [-Conexion <id>]`
 
 Solo Oracle. Reemplaza índices `source="db"` en el modelo; preserva `source="manual"`.
 Frases que activan este modo: `"sincroniza índices"`, `"actualiza índices"`, `/rs-sync-indexes`.
+
+⛔ Solo toca las tablas que la lectura ve. `tablas_intactas` son las que conservan los índices
+que ya tenían — porque no se vieron, o porque no tienen ninguno. Aplica aquí lo mismo que en
+`sync_from_db`: leer `cobertura`, y **nunca** interpretar un índice ausente como un índice
+borrado en la BD.
 
 ## Generar SQL DDL
 

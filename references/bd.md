@@ -11,6 +11,34 @@
 
 ---
 
+# 👁️ "No lo veo" NO es "no existe" (CRÍTICO)
+
+La cuenta de consulta de un proyecto **no suele ser la dueña del esquema**: ve por GRANT
+per-object. Y Oracle **no da forma de distinguir las dos cosas** — ORA-00942 es deliberadamente
+ambiguo, y `ALL_TABLES`, `ALL_OBJECTS`, `ALL_SOURCE`, `ALL_INDEXES` y `ALL_SEQUENCES` están
+**todas** filtradas por privilegio. Un objeto sin GRANT no aparece en ningún sitio y no se
+distingue de uno borrado.
+
+- ⛔ **Nunca concluir que un objeto desapareció** porque una consulta no lo devolvió. La lectura
+  honesta es "esta cuenta no lo ve".
+- ⛔ **Nunca borrar ni degradar** una tabla, columna o índice del modelo por esa razón. Los hooks
+  ya no lo hacen: conservan la tabla entera y la marcan `visible: false`.
+- **Antes de decidir nada sobre el modelo, mirar `cobertura`** (la devuelven `sync_from_db`,
+  `sync_indexes` y `sync_model_objects`; queda en `_cobertura` del modelo). Con
+  `es_dueno: false` y hueco, la causa probable es un GRANT que falta.
+- **El PL/SQL exige `GRANT EXECUTE`, no `SELECT`.** Con cero grants EXECUTE, `ALL_OBJECTS` y
+  `ALL_SOURCE` devuelven **cero** procedimientos y paquetes **sin error**. Un "no hay
+  procedimientos" con `EXECUTE: 0` en `cobertura.grants` no es un hecho, es una ceguera.
+- **Los sinónimos PRIVADOS no los expone ningún GRANT**: solo se ven leyendo como dueño del
+  esquema.
+
+Para leer con otra cuenta, `conexion=<id>` en las tools y `-Conexion <id>` en los hooks —resuelve
+contra `conexiones[]` de `.rs-databases.json`—. ⛔ **No** editar a mano el fichero de credenciales
+para poner otra conexión la primera: eso es persistente, no queda registrado en ninguna salida y
+arrastra consigo la política PII (el modelo se resuelve **por conexión**).
+
+---
+
 # 🔒 Datos personales en los resultados de `db_query`
 
 `db_query` aplica la política de protección de datos personales del workspace y devuelve
@@ -30,6 +58,62 @@ nunca ignorarlo en silencio.** Tabla completa de campos y de qué decir en cada 
 ⛔ Un valor `pii:xxxxxxxx` es un pseudónimo: no reproducirlo como si fuera el dato, y **no
 rodear el filtro** (misma columna con otra expresión, `sqlplus`/`sqlcmd` directos). Si un dato
 se necesita en claro, declarar la columna como segura en el modelo BD (`/rs-pii`).
+
+## ✅ Los pseudónimos SÍ se pueden cruzar entre tablas
+
+Enmascarado **no** significa inservible. El pseudónimo es determinista:
+`HMAC(clave, NOMBRE_COLUMNA + valor)`. **El mismo valor devuelve siempre el mismo
+`pii:xxxxxxxx`, en cualquier consulta y en cualquier tabla.** Es una propiedad de diseño, no un
+accidente: sirve justamente para poder trabajar sin ver el dato.
+
+Con eso se puede, sin desenmascarar nada:
+
+- **Unir filas de la misma persona entre tablas** — si `pii:7e04dd51a6c2` sale en `TABLA_A.DNI`
+  y en `TABLA_B.DNI`, es la misma persona. Un cruce válido para investigar una incidencia.
+- **Contar distintos** (`COUNT(DISTINCT ...)` sobre el pseudónimo), detectar duplicados,
+  verificar integridad referencial, comprobar si un alta llegó a las N tablas que debía.
+- **Comparar entre entornos o entre consultas** dentro de la misma máquina.
+
+⚠️ **La condición es el nombre de la columna de salida, no el de la tabla.** El dominio del HMAC
+es el nombre con el que la columna **vuelve en el resultset**. `TABLA_A.DNI` ↔ `TABLA_B.DNI`
+cruzan. `TABLA_A.DNI` ↔ `TABLA_B.NIF` **no** cruzan, aunque contengan el mismo dato — se alinean
+con un alias: `SELECT NIF AS DNI ...`. Cuidado con el reverso: dos columnas con el mismo nombre y
+significados distintos comparten dominio, así que un pseudónimo repetido entre ellas solo dice
+"mismo texto", no "misma entidad".
+
+⚠️ El cruce es por **coincidencia exacta** del valor normalizado (solo se colapsan los espacios).
+Distinto casing, un acento de más o un formato distinto → pseudónimos distintos. Que dos no
+cuadren **no** prueba que sean personas distintas.
+
+⛔ Con `transform: "suppress"` (literal `[PII]`) no hay correlación posible: ahí sí se pierde.
+⛔ La clave vive en el perfil local (`%LOCALAPPDATA%`). Un `pii:xxxxxxxx` **no es comparable entre
+máquinas ni entre usuarios**: no vale como identificador estable en un ticket, un commit, un
+informe ni una tabla de resultados que vaya a leer otra persona.
+
+## La política es de `db_query`, no del plugin entero
+
+`db_query` es la **única** tool que enmascara. Las que mantienen el modelo y leen estructura
+—`sync_from_db`, `sync_indexes`, `compare_model`, `analyze_dalc`, `generate_sql`,
+`generate_migration`, `export_dmd`, `render_erd`— van a su hook con conexión directa y no
+importan `pii_*`; `get_table_schema`, `search_model` y `get_model_index` leen el
+`model.json` y ni tocan la BD. Nombres de tabla, columna, vista, índice y objeto salen
+**siempre en claro**, también con `mode=enforce`. (`sync-from-db.ps1` menciona `pii` solo para
+**conservar** las marcas `pii`/`safe` que ya tenga el modelo al re-sincronizar.)
+
+⚠️ **El catálogo del sistema consultado con `db_query` sí sale enmascarado.** `ALL_TAB_COLUMNS`,
+`INFORMATION_SCHEMA.COLUMNS`, `USER_OBJECTS`… no están en el modelo → `clasificar()` devuelve
+`NO_RESUELTA/sin_definicion` → `resolver_no_resuelta()` ve texto, no números, y devuelve
+`MASCARA/valores_no_numericos`. Los nombres vuelven como `pii:xxxxxxxx`. Los patrones ni
+intervienen: la lista base es española (`NOMBRE*`, `TELEFON*`…) y `TABLE_NAME`/`COLUMN_NAME` no
+casan — pero el fallback por forma de valor los tapa igual.
+
+Para leer estructura, usar las tools de modelo, no `db_query`. Si aun así hace falta un cruce
+por SQL: **nombres en el `SELECT`, números de vuelta** (recuentos o códigos), que salen en claro
+por `valores_numericos`. Dos bordes: un entero de **9+ dígitos sin decimales** se enmascara
+(forma de identificador) y una columna que salga **entera vacía**, también.
+
+⛔ No abrir excepciones de catálogo en `pii_sqlscope`/`pii_policy` sin decisión explícita: cada
+una es un camino más por el que un `SELECT` puede salir sin filtrar.
 
 ---
 

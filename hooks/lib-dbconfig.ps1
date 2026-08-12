@@ -80,6 +80,30 @@ function Read-RsDatabases {
     return @{ ok = $true; error = ""; proyecto = $proyecto; conexiones = $conexiones; path = $path }
 }
 
+function Select-RsConexion {
+    <# Elige una conexion de las que devuelve Read-RsDatabases. Unico sitio que resuelve el
+       parametro -Conexion de los hooks, para que los tres guardarraises se cumplan igual en
+       todos:
+
+         1. Sin -Conexion se usa SIEMPRE la principal (conexiones[0]). No se infiere ninguna
+            otra, no se prueba una segunda si la primera falla, y no se "elige la mejor". Esa
+            eleccion la hizo una persona al escribir el fichero.
+         2. Un id que no existe devuelve $null -> el llamante corta con la lista de validas.
+            ⛔ Nunca cae a conexiones[0]: seleccionar en silencio una conexion DISTINTA de la
+            pedida es como se acaba leyendo (o escribiendo) contra el entorno equivocado.
+         3. El llamante publica el id elegido en su salida. Sin eso, una lectura hecha con una
+            conexion privilegiada es indistinguible de una hecha con la de consulta.
+
+       La comparacion del id no distingue mayusculas: los ids del fichero los escribe una
+       persona y "PROD" y "prod" son la misma conexion para cualquiera que los lea. #>
+    param(
+        [Parameter(Mandatory=$true)]$Config,
+        [AllowEmptyString()][string]$Id = ""
+    )
+    if (-not $Id) { return $Config.conexiones[0] }
+    return ($Config.conexiones | Where-Object { "$($_.id)" -eq $Id } | Select-Object -First 1)
+}
+
 function Get-RsModelPath {
     <# Ruta del modelo BD de UNA conexion. Unico sitio que resuelve el campo "model".
 

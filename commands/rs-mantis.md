@@ -5,6 +5,9 @@ argument-hint: "[1234 | crear | proyectos | init]"
 
 Invoke the `rs-mantis` skill.
 
+This is the **explicit** Mantis door — it skips detection. `/rs-tarea` reaches the same skill by
+autodetecting the workspace's ticket system (`docs\.mantis-dev-config.json` → Mantis).
+
 Usage: /rs-mantis [1234 | crear | proyectos | init]
 Examples:
 - /rs-mantis              → elige proyecto de la lista curada y lista sus issues abiertas

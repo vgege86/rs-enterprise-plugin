@@ -1,4 +1,4 @@
-﻿---
+---
 name: rs-instalador
 description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1 con backup, Ejecutar-Scripts.ps1, rutas.json, readme.txt). Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
 model: opus
@@ -163,6 +163,13 @@ tablas concretas. ⛔ Con `-Tablas` el maestro `Inserts\_run_all.sql` **no** se 
 cargando solo ese subconjunto); el propio script lo avisa. La primera generación de una entrega va
 siempre completa, sin `-Solo`.
 
+**Elegir la conexión de lectura (etapa 5):** `-Conexion <id>` de `.rs-databases.json`. Sin él, la
+principal. Hace falta cuando la cuenta principal no es dueña del esquema: es la **única** forma
+de ver los sinónimos privados y todo el PL/SQL (ningún GRANT expone los sinónimos privados, y el
+PL/SQL exige GRANT EXECUTE, no SELECT). ⛔ **Nunca** editar a mano `.rs-databases.json` para
+conseguirlo: es persistente, no queda registrado en ninguna salida y cambia de paso la política
+PII, que se resuelve por conexión.
+
 Patrón de ejecución (Bash → PowerShell), usando el `plugin_root` recibido:
 
 ```powershell
@@ -214,16 +221,35 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
     el modelo no conoce suele significar que alguien lo creó a mano y nadie lo sabe. Si en vez
     de eso aparece `Modelo y BD coinciden`, decirlo también. Si el modelo no trae inventario no
     se imprime nada: sugerir `hooks\sync-model-objects.ps1`.
-  - **Reportar en el SUMMARY el conteo real por tipo** que imprime la etapa
-    (`---- Resumen objetos (conteo real en BD) ----`). Es lo único que distingue "el schema no
-    tiene vistas" de "la extracción de vistas falló".
+  - ⛔ **Cobertura — sin esto no se puede afirmar que el paquete está completo.** La etapa imprime
+    `---- Cobertura (conteo real en el diccionario vs capturado) ----`: la cuenta usada, si es
+    **dueña del esquema**, sus GRANTs por privilegio y, por tipo, `diccionario` vs `capturado` vs
+    `excluidas`. Existe porque Oracle **no permite distinguir "no existe" de "no lo veo"**: una
+    cuenta que no es dueña ve por GRANT per-object.
+    - Una línea `<< HUECO n` = ese tipo tiene objetos que el diccionario ve y la extracción no
+      capturó → **el paquete iría incompleto**. Reportarlo con las cifras y no dar la entrega por
+      buena.
+    - `Grants: ... EXECUTE 0` (o sin EXECUTE) sobre un esquema ajeno hace que la etapa **falle
+      con exit 1**, no que avise: funciones, procedimientos y paquetes saldrían vacíos sin error.
+      Las salidas, en orden: conceder los GRANT EXECUTE, repetir con
+      `-Conexion <id de la conexión dueña del esquema>`, o —solo si el esquema de verdad no tiene
+      PL/SQL— confirmarlo con `-SinPlsql`. ⛔ **Nunca proponer `-SinPlsql` para "desbloquear"**:
+      es una afirmación sobre el esquema, no un rodeo.
+    - Los **sinónimos privados** no los expone ningún GRANT: solo se ven leyendo como dueño. Si
+      el proyecto los usa, la entrega tiene que hacerse con `-Conexion <dueño>`.
+  - **Reportar en el SUMMARY el conteo por tipo** que imprime la etapa
+    (`---- Resumen objetos (conteo capturado) ----`), **junto al bloque de cobertura**. El conteo
+    solo distingue "el schema no tiene vistas" de "la extracción de vistas falló" si va
+    acompañado de la cobertura: sin ella, un 0 es ambiguo.
   - **Valores DEFAULT**: el log del DDL dice `N tablas | M índices | K defaults`. Si `K` es 0 y el
     proyecto tiene columnas con valor por defecto, **el modelo está desactualizado**, no la BD:
     el campo `default` de cada columna lo rellena `hooks\sync-from-db.ps1`, y un `model.json`
     sincronizado antes de eso no lo lleva. Resincronizar (`/rs-erd`) y repetir `-Solo ddl` antes de
     entregar; si no, en el cliente toda columna con DEFAULT queda a NULL y no salta ningún error.
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD, algún tipo de objeto
-    falló, o falta algún fichero de objetos → reportarlo como AVISO, no como éxito silencioso.
+    falló, falta algún fichero de objetos, o **hay hueco de cobertura** → reportarlo como AVISO,
+    no como éxito silencioso. exit 1 = **no entregable** (incluye el caso "esta cuenta no ve nada
+    del PL/SQL").
   - El log trae los tiempos (`~ sesión k/N: ... en X.Xs`, `Tiempo: X.Xs`, `OK — Scripts en ... (X.Xs)`):
     **inclúyelos en el SUMMARY**. Son la única forma de saber si esta etapa se está degradando, y
     de decidir si toca ajustar `parametricas.max_paralelo`.

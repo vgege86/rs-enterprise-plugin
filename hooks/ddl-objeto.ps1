@@ -31,6 +31,9 @@
 .PARAMETER Out
     Escribe el DDL en un fichero en vez de volcarlo por consola.
 
+.PARAMETER Conexion
+    Id de conexion de docs\.rs-databases.json. Sin ella, la principal.
+
 .EXAMPLE
     .\ddl-objeto.ps1 "C:\SVN\RS\<Proyecto>\trunk" P_ALTA_CLIENTE
 .EXAMPLE
@@ -41,7 +44,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Objeto,
     [string]$Proyecto = "",
     [string]$Seccion = "",
-    [string]$Out = ""
+    [string]$Out = "",
+    [string]$Conexion = ""
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -64,7 +68,8 @@ if (!(Test-Path $py)) {
 
 $argumentos = @($py, $Workspace, $Proyecto, $Objeto)
 if ($Seccion) { $argumentos += @('--seccion', $Seccion) }
-if ($Out)     { $argumentos += @('--out', $Out) }
+if ($Out)      { $argumentos += @('--out', $Out) }
+if ($Conexion) { $argumentos += @('--conexion', $Conexion) }
 
 # El DDL sale TAL CUAL por consola (o al fichero de -Out): es lo que se ha venido a leer.
 & python @argumentos
