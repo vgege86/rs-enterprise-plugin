@@ -375,6 +375,22 @@ el repositorio— sin renunciar a ella. Con eso, el actualizador ya pregunta por
 cambiaron en vez de depender de que alguien se acuerde, y el instalador avisa si el modelo y
 la BD han derivado.
 
+Desde la 3.11.0 el actualizador ya no solo pregunta: **escribe el script**. Con
+`hooks\actualizador-objetos.ps1 "<trunk>" "<destino>\scripts"` genera el `.sql` de todo lo que
+cambió desde la última entrega, con el mismo texto que emitiría el instalador y en orden de
+dependencias, listo para declarar en `scripts.json`. Dos cosas no las decide solo, a propósito:
+una **secuencia modificada no viaja** —su DDL reiniciaría el contador del cliente y empezaría a
+repartir IDs ya usados— y de lo **eliminado no emite ningún `DROP` activo**, que va comentado al
+final. Las dos salen listadas para que alguien decida.
+
+Y como el modelo guarda la ficha pero no el cuerpo, hay una forma de leerlo cuando hace falta:
+`hooks\ddl-objeto.ps1 "<trunk>" P_ALTA_CLIENTE` devuelve el DDL de ese objeto tal y como está
+**ahora** en la BD, y avisa si ya no coincide con la firma del modelo. Eso es lo que convierte el
+inventario en algo utilizable en desarrollo: `/rs-impacto` puede decir qué procedimientos tocan
+una tabla **y** leerlos antes de afirmar nada sobre ellos, sin abrir un cliente de BD. El ERD no
+puede hacerlo por su cuenta —es un HTML estático, sin credenciales ni conexión— así que en el
+panel de cada objeto muestra el comando exacto, con botón de copiar.
+
 ## Protección de datos personales en consultas a BD
 
 Los agentes consultan la BD con `db_query` (solo `SELECT`, nunca escritura). Hasta la 3.0.0 el resultado íntegro entraba en el contexto de la conversación —y de ahí a un proveedor externo— sin ningún filtro: nombres, DNI, teléfonos, cuentas y direcciones de personas en gestión de cobro. Ahora esos valores se sustituyen, **antes de salir de la herramienta**, por un seudónimo determinista (HMAC-SHA256 con una clave que vive en tu perfil local, fuera del repositorio):
@@ -446,7 +462,7 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 ### MCP Server
 
-Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **48 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
+Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **50 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
@@ -526,7 +542,7 @@ skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-
 agents/           51 subagentes: pipeline y modos directos
 commands/         49 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 48 tools
+mcp/              servidor MCP con 50 tools
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + agentic_manual
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)

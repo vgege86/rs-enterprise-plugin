@@ -1091,6 +1091,75 @@ def get_model_index(workspace: Workspace) -> str:
     }, ensure_ascii=False, indent=2)
 
 
+@mcp.tool(description="Objetos de BD del modelo (vistas, procedimientos, paquetes, funciones, triggers, sinonimos, secuencias). Sin `tabla`, devuelve el inventario por seccion. Con `tabla`, SOLO los objetos que la usan — es el analisis de impacto de una columna sin salir del modelo. Guarda ficha y firma, NUNCA el cuerpo: para el cuerpo hay que ir a la BD.")
+def get_db_objects(workspace: Workspace, tabla: str = "") -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    config = _get_config(workspace)
+    if "error" in config: return json.dumps(config, ensure_ascii=False)
+
+    model = _load_model(Path(config.get("model_path", "")))
+    if model is None:
+        return json.dumps({"error": "Modelo BD no encontrado"}, ensure_ascii=False)
+
+    objetos = model.get("objetos") or {}
+    if not objetos:
+        # Distinguir "no hay inventario" de "no hay objetos" importa: lo primero es que nadie
+        # ha ejecutado el sync, y quien pregunte debe saber que la respuesta vacia no significa
+        # que la BD no tenga vistas ni procedimientos.
+        return json.dumps({
+            "workspace": workspace,
+            "inventario": False,
+            "aviso": ("El modelo no tiene inventario de objetos. Se rellena con "
+                      "hooks\\sync-model-objects.ps1. Una respuesta vacia aqui NO significa "
+                      "que la BD no tenga vistas o procedimientos."),
+        }, ensure_ascii=False, indent=2)
+
+    # Las claves con '_' son metadatos del inventario (_firma, _nota), no objetos.
+    secciones = {k: v for k, v in objetos.items()
+                 if not k.startswith("_") and isinstance(v, dict)}
+
+    if not tabla:
+        return json.dumps({
+            "workspace": workspace,
+            "inventario": True,
+            "conteo": {k: len([n for n in v if not n.startswith("_")]) for k, v in secciones.items()},
+            "objetos": {k: sorted(n for n in v if not n.startswith("_")) for k, v in secciones.items()},
+        }, ensure_ascii=False, indent=2)
+
+    diana = tabla.strip().upper()
+    usan = {}
+    for sec, entradas in secciones.items():
+        hits = [n for n, d in entradas.items()
+                if not n.startswith("_") and isinstance(d, dict)
+                and diana in [t.upper() for t in (d.get("tablas_usadas") or [])]]
+        if hits:
+            usan[sec] = sorted(hits)
+
+    return json.dumps({
+        "workspace": workspace,
+        "inventario": True,
+        "tabla": diana,
+        "total": sum(len(v) for v in usan.values()),
+        "usan": usan,
+        "nota": ("`tablas_usadas` se deriva por coincidencia de texto con las tablas del modelo, "
+                 "no del diccionario de dependencias: un nombre dentro de un comentario cuenta "
+                 "igual. Falso positivo se descarta de un vistazo; falso negativo duele."),
+    }, ensure_ascii=False, indent=2)
+
+
+@mcp.tool(description="DDL de UN objeto de BD (vista, procedimiento, paquete, funcion, trigger, sinonimo, secuencia) leido de la BD viva. El modelo guarda ficha y firma, NUNCA el cuerpo: esta es la forma de leer el codigo que vive en la BD y que ningun Grep del repo puede encontrar. Avisa si la firma de la BD no coincide con la del modelo (alguien lo toco tras el ultimo sync). `seccion` acota la busqueda; sin ella se usa el inventario, y si el objeto no esta en el se barren los siete tipos (mas lento).")
+def get_object_ddl(workspace: Workspace, objeto: str, seccion: str = "") -> str:
+    if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
+    if not objeto.strip():
+        return json.dumps({"error": "Falta el nombre del objeto"}, ensure_ascii=False)
+    args = [workspace, objeto.strip()]
+    if seccion.strip():
+        args += ["-Seccion", seccion.strip().lower()]
+    # La salida es el DDL en crudo, no JSON: _run_ps lo devuelve bajo "raw", que es justo lo que
+    # hay que leer. Se conecta a la BD, asi que hereda el timeout holgado del resto.
+    return json.dumps(_run_ps("ddl-objeto.ps1", *args), ensure_ascii=False, indent=2)
+
+
 @mcp.tool(description="Busca keyword en nombres de tablas, columnas y descripciones del modelo BD. Alternativa a cargar model.json completo cuando se busca dónde vive un concepto. Devuelve tablas/columnas que hacen match. max_results limita tablas devueltas en contexto (default 100).")
 def search_model(workspace: Workspace, keyword: str, max_results: int = 100) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)

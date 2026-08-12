@@ -241,6 +241,15 @@ entregar código viejo— y contrasta lo extraído contra el inventario para rep
 firma se calcula sobre el mismo texto que emitiría el instalador, que es lo que hace que "la
 firma cambió" signifique "lo que se entregaría ha cambiado".
 
+El inventario dice **qué** hay y **si cambió**, no qué hace: el cuerpo no se guarda. Para leerlo
+durante el desarrollo está `hooks/ddl-objeto.ps1` (`scripts/object-ddl.py`, tool MCP
+`get_object_ddl`), que lo extrae de la BD viva objeto a objeto, avisa si la firma de la BD ya no
+coincide con la del modelo y **no lo guarda en ninguna parte**. Es lo que hace utilizable el
+inventario en `/rs-impacto`: `get_db_objects` dice qué procedimientos nombran una tabla y
+`get_object_ddl` permite leerlos antes de afirmar nada sobre ellos. El ERD no puede hacerlo por sí
+mismo —es un HTML estático sin credenciales ni conexión— así que muestra el comando exacto a
+ejecutar, con botón de copiar.
+
 `installer-scripts.ps1` acepta `-Solo`/`-Tablas` para regenerar solo una parte, y su inventario
 final nombra los seis ficheros de objetos uno a uno (`AUSENTE` + exit 2 al que falte): con un
 comodín, cero ficheros generados salían como un resumen en verde. El paquete se cierra con
@@ -258,6 +267,20 @@ completa (delega en `installer-agendaweb.ps1`) y las DLL recién compiladas de l
 —detectado por coincidencia de nombre con un `.exe` entregado—, `appsettings*.json` y los wildcards de
 `excluirEntrega`), pero **mantiene los `*.config` del binario** (`RSProcIN.exe.config`): llevan los
 binding redirects y separarlos de sus DLL reproduce el `FileLoadException`.
+
+Su delta es **por VCS**, y eso deja un agujero que la 3.11.0 cierra: un procedimiento, vista o
+trigger modificado **en la BD no está en el repo**, así que no aparecía en ningún delta y solo
+viajaba si alguien se acordaba de escribir su script a mano. `hooks/actualizador-objetos.ps1`
+(`scripts/delta-objects.py`) compara la BD contra el inventario `objetos` del `model.json` —la
+línea base es la última entrega— y **escribe el `.sql`** de lo que cambió, con el mismo texto que
+emitiría el instalador (`installer-objects.render_objeto`, el único maquetador de un objeto en un
+`.sql`) y en orden de dependencias. Dos reglas de seguridad que no son negociables: una
+**secuencia modificada NO viaja** —su DDL es `CREATE` (`DROP`+`CREATE` en SQL Server) y contra el
+cliente reiniciaría el contador en la posición de *nuestra* base de datos, repartiendo IDs ya
+usados— y de lo **eliminado no se emite ningún `DROP` activo**, que va comentado: un objeto que
+falta puede ser un borrado real o una extracción incompleta, y equivocarse borra código en
+producción. La línea base solo avanza cuando se pide (`-Sincronizar`), porque un delta generado y
+luego descartado dejaría el modelo diciendo que eso ya se entregó.
 
 Ambos modos comparten el **paquete de instalación en cliente** (`hooks/instalacion-paquete.ps1` +
 plantillas versionadas en `assets/instalacion/`: `Instalar.ps1` con backup ZIP previo,
@@ -342,7 +365,7 @@ que ramifica internamente según el motor (SVN/Git) — ya no hay subagentes `-s
 ## 6. MCP server `rs-workspace`
 
 `mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**48 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
+**50 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
 `hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
@@ -414,7 +437,7 @@ VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira
 | `references/dalc-patterns.md` | Patrones de código DALC, extracción de relaciones |
 | `references/dmd-format.md` | Formato Oracle Data Modeler `.dmd` |
 | `references/json-schema.md` | Esquema del `model.json` de BD, incluida la sección `objetos` (inventario: ficha + firma, no el cuerpo) |
-| `references/mcp.md` | Catálogo completo de las 48 tools MCP |
+| `references/mcp.md` | Catálogo completo de las 50 tools MCP |
 | `references/hooks.md` | Catálogo completo de hooks con parámetros (tabla de equivalencia MCP↔hook) |
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |

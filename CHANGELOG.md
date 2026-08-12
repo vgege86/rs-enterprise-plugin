@@ -1,5 +1,102 @@
 # RS Enterprise Agent — Changelog
 
+## 3.11.0 — 2026-08-12
+
+### El actualizador ya no solo detecta los objetos de BD que cambiaron: escribe su script
+
+La 3.10.0 puso los objetos de BD en el modelo y con eso el actualizador **supo** qué había
+cambiado. Pero el script seguía escribiéndolo alguien a mano, que es exactamente el paso donde se
+olvidaba. Ahora lo genera:
+
+```
+.\hooks\actualizador-objetos.ps1 "<trunk>" "<destino>\scripts" [-DryRun]
+```
+
+Compara la BD contra el inventario `objetos` del `model.json` —la línea base es la última
+entrega— y escribe `90-ObjetosBD.sql` con lo nuevo, lo modificado y lo que cambió de estado, en
+orden de dependencias y con **el mismo texto que emitiría el instalador**. El prefijo cae en la
+franja 90-98: después de los scripts de las tareas —un procedimiento nuevo puede leer una columna
+que crea uno de ellos— y antes del `99-RVERSIONES`, que cierra la entrega.
+
+`-DryRun` lista sin escribir, y `/rs-actualizador` lo usa así: presenta la lista, **pide
+confirmación** y solo entonces genera. La línea base solo avanza cuando se pide
+(`-Sincronizar`): un delta generado y luego descartado no puede dejar el modelo diciendo que eso
+ya se entregó.
+
+#### Dos cosas que NO decide solo, y no por prudencia decorativa
+
+- ⛔ **Una secuencia modificada no viaja.** Su DDL es `CREATE` —y en SQL Server el bloque trae un
+  `DROP` delante—, así que contra un cliente que ya la tiene o falla (ORA-00955) o la recrea en la
+  posición de *nuestra* base de datos y empieza a repartir IDs ya usados. Una secuencia nueva sí
+  viaja; una que cambió de `INCREMENT BY`/`CACHE`/`CYCLE` sale listada aparte para resolverla con
+  un `ALTER` a mano.
+- ⛔ **De lo eliminado no se emite ningún `DROP` activo.** Un objeto que falta puede ser un
+  borrado real o una extracción incompleta, y desde aquí las dos cosas se parecen mucho; la
+  diferencia es que equivocarse borra código en producción. Los `DROP` van **comentados** al final
+  del fichero, para descomentar lo que uno sepa que se borró de verdad.
+
+Y una sección cuya extracción falla queda **fuera** del delta, no vacía: vacía, el diff la habría
+leído como "se ha eliminado todo".
+
+### La firma de las secuencias cambiaba sola
+
+El DDL de una secuencia lleva su posición actual (`START WITH LAST_NUMBER` en Oracle,
+`START WITH current_value` en SQL Server), y esa posición avanza **cada vez que alguien consume un
+valor**. Firmando el texto tal cual, toda secuencia salía como "modificada" en cada
+sincronización. Como ruido en el diff ya era malo; con el generador de scripts encima habría
+significado proponer reentregar todas las secuencias en cada entrega — justo lo único que una
+secuencia no admite. Se descuenta antes de firmar (`_dbobjetos.firma_objeto`), así que un cambio
+real sí se detecta y el mero avance del contador no.
+
+⚠️ Efecto de una vez al actualizar: la primera sincronización tras instalar la 3.11.0 marcará las
+secuencias como modificadas, porque su firma se calcula distinto. A partir de ahí, estables.
+
+### Y todo paquete salía como "firma distinta" en cada instalador
+
+El contraste de deriva de `installer-objects.py` construía su inventario **por su cuenta**, y al
+plegar los paquetes la especificación y el cuerpo se pisaban entre sí bajo la misma clave —son dos
+entradas de `ALL_SOURCE` y una sola ficha en el modelo—, así que su firma nunca coincidía con la
+del sync. Una alarma que salta siempre es una alarma que nadie lee. El constructor pasa a vivir en
+`_dbobjetos.construir` y lo usan los dos: si el contraste construyera el inventario a su manera,
+compararía dos cosas que no se construyen igual.
+
+### Leer el cuerpo de un objeto sin abrir un cliente de BD
+
+El modelo guarda la ficha y la firma, **nunca el cuerpo** —el instalador tiene que seguir
+extrayendo de la BD viva o un modelo desactualizado entregaría código viejo—, y eso dejaba al
+desarrollo con el inventario pero sin el código:
+
+```
+.\hooks\ddl-objeto.ps1 "<trunk>" P_ALTA_CLIENTE
+```
+
+Lo lee de la BD viva, con los mismos extractores y el mismo maquetado que el instalador (así que
+es literalmente lo que viajaría al cliente), dice si la firma de la BD ya **no** coincide con la
+del modelo —alguien lo tocó tras el último sync— y **no lo guarda en ninguna parte**.
+
+Va también como tool MCP `get_object_ddl`, y ahí está lo que de verdad cambia el día a día:
+`/rs-impacto` ya sabía, desde la 3.10.0, qué procedimientos nombran una tabla; ahora puede
+**leerlos** antes de afirmar nada sobre ellos. `tablas_usadas` se deriva por coincidencia de
+texto, así que descartar un falso positivo exigía justamente lo que no había.
+
+En el ERD, el panel de cada objeto muestra ese comando con botón de copiar. No lo ejecuta: el ERD
+es un HTML estático y no tiene —ni debe tener— credenciales ni conexión a la BD.
+
+### Un solo maquetador de objetos
+
+`installer-objects.render_objeto` pasa a ser el único sitio donde se decide cómo se escribe un
+objeto en un `.sql`, y lo usan los seis extractores de cada motor, el generador del delta y el
+lector de DDL. Si cada uno lo maquetara por su cuenta, un script del actualizador podría quedarse
+sin el `/` que cierra un bloque PL/SQL — y eso falla en el cliente, no aquí.
+
+Ficheros: `scripts/delta-objects.py` y `scripts/object-ddl.py` (nuevos),
+`hooks/actualizador-objetos.ps1` y `hooks/ddl-objeto.ps1` (nuevos), `scripts/_dbobjetos.py`,
+`scripts/installer-objects.py`, `scripts/model-objects.py`, `scripts/erd-template.html`,
+`mcp/rs-workspace-server.py`, `agents/rs-actualizador.md`, `agents/rs-impacto.md`,
+`agents/rs-validacion-bd.md`, `tests/test_delta_objetos.py` (nuevo, 31 casos), `README.md`,
+`docs/plugin-architecture.md`, `references/hooks.md`, `references/mcp.md`, `hooks/README.md`.
+
+
 ## 3.10.1 — 2026-08-07
 
 ### El README y el doc de arquitectura no contaban lo de la 3.10.0, y el catálogo llevaba mal la cuenta

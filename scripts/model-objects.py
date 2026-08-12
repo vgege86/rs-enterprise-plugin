@@ -38,14 +38,23 @@ _io = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_io)
 
 
-def extraer(cfg: dict, max_paralelo: int) -> tuple:
+def extraer(cfg: dict, max_paralelo: int, solo=None) -> tuple:
     """Lanza los extractores y devuelve ({etapa: resultado}, [errores]).
 
     En paralelo por el mismo motivo que en el instalador: son independientes y el reloj se lo
     lleva el login, no la consulta. Un tipo que falla NO tumba a los demás — se reporta y el
     inventario sale sin esa sección, que es más útil que no tener inventario.
+
+    `solo` limita las etapas a las secciones indicadas (nombres de `_dbobjetos.SECCIONES`), para
+    quien solo quiere el DDL de un objeto y no va a pagar seis sesiones por él. `paquetes` sale
+    de la misma etapa que `procedimientos`.
     """
     etapas = _io.etapas_por_motor(cfg)
+    if solo:
+        quiero = {("procedimientos" if s == "paquetes" else s) for s in solo}
+        etapas = [e for e in etapas if obj.ETAPA_A_SECCION.get(e[1]) in quiero]
+        if not etapas:
+            return {}, []
     workers = max(1, min(len(etapas), max_paralelo))
     salidas, errores = {}, []
 
@@ -70,42 +79,9 @@ def extraer(cfg: dict, max_paralelo: int) -> tuple:
     return salidas, errores
 
 
-def construir(salidas: dict, tablas_conocidas) -> dict:
-    """Convierte lo extraído en la sección `objetos` del modelo."""
-    inv = obj.inventario_vacio()
-
-    for etapa, seccion in obj.ETAPA_A_SECCION.items():
-        res = salidas.get(etapa)
-        if not res:
-            continue
-        deshabilitados = set(res.get("disabled") or [])
-        for nombre, cuerpo in (res.get("bloques") or {}).items():
-            destino, limpio = seccion, nombre
-            # Oracle mezcla PROCEDURE / PACKAGE / PACKAGE BODY en la misma etapa y antepone el
-            # tipo al nombre; en SQL Server no hay paquetes y el nombre llega ya limpio.
-            if seccion == "procedimientos":
-                destino, limpio = obj.clasificar_plsql(nombre)
-            estado = "DISABLED" if nombre in deshabilitados else "VALID"
-            ficha = obj.ficha(cuerpo, tablas_conocidas, estado)
-            if destino == "paquetes":
-                # Especificación y cuerpo son dos objetos en ALL_SOURCE y una sola cosa para
-                # quien desarrolla: se funden en una ficha, firmando los textos concatenados.
-                previa = inv[destino].get(limpio)
-                acumulado = obj.normalizar(cuerpo)
-                if previa:
-                    acumulado = previa.get("_cuerpo", "") + "\n" + acumulado
-                    ficha["lineas"] += previa.get("lineas", 0)
-                    ficha["tablas_usadas"] = sorted(set(previa.get("tablas_usadas", []))
-                                                    | set(ficha["tablas_usadas"]))
-                ficha["firma"] = obj.firma(acumulado)
-                ficha["_cuerpo"] = acumulado
-            inv[destino][limpio] = ficha
-
-    # `_cuerpo` es un acumulador interno para fundir especificación y cuerpo del package;
-    # no tiene por qué acabar en el modelo.
-    for d in inv["paquetes"].values():
-        d.pop("_cuerpo", None)
-    return inv
+# El constructor del inventario vive en `_dbobjetos.py`: lo comparte con el contraste de deriva
+# del instalador, que antes plegaba los paquetes por su cuenta y los daba todos por modificados.
+construir = obj.construir
 
 
 def main():

@@ -55,6 +55,14 @@ _TIPOS_PLSQL = ("PACKAGE BODY", "PACKAGE", "PROCEDURE", "FUNCTION", "TYPE BODY",
 FIRMA_ALGORITMO = "sha256-16"
 _FIRMA_HEX = 16
 
+# ⛔ El DDL de una secuencia lleva su posición actual (`START WITH LAST_NUMBER` en Oracle,
+# `START WITH current_value` en SQL Server), y esa posición avanza cada vez que alguien consume
+# un valor. Firmando el texto tal cual, TODA secuencia salía como "modificada" en cada
+# sincronización: el diff se llenaba de ruido y —peor— el delta del actualizador habría propuesto
+# reentregar todas las secuencias en cada entrega. Se descuenta antes de firmar, así que un cambio
+# real (INCREMENT BY, CACHE, CYCLE) sí se detecta y el mero avance del contador no.
+_START_WITH = re.compile(r"\bSTART\s+WITH\s+[-+]?\d+", re.IGNORECASE)
+
 
 def normalizar(texto: str) -> str:
     """Texto comparable entre extracciones.
@@ -78,6 +86,20 @@ def firma(texto: str) -> str:
     es distinguir dos versiones del mismo procedimiento. Y mantiene el `model.json` legible.
     """
     return hashlib.sha256(normalizar(texto).encode("utf-8")).hexdigest()[:_FIRMA_HEX]
+
+
+def firma_objeto(cuerpo: str, seccion: str = "") -> str:
+    """Firma con la volatilidad propia de la sección ya descontada.
+
+    Es la que hay que usar siempre que se firme un objeto del inventario; `firma()` a secas es
+    el cálculo puro y solo vale cuando ya se sabe que el texto es estable.
+
+    Hoy solo las secuencias son volátiles (ver `_START_WITH`). Si mañana aparece otro tipo cuyo
+    DDL arrastre estado de ejecución, el descuento va aquí y no en cada llamante.
+    """
+    if seccion == "secuencias":
+        cuerpo = _START_WITH.sub("START WITH <posicion>", cuerpo or "")
+    return firma(cuerpo)
 
 
 def clasificar_plsql(nombre: str) -> tuple:
@@ -118,12 +140,13 @@ def tablas_usadas(cuerpo: str, tablas_conocidas) -> list:
     return sorted(set(encontradas))
 
 
-def ficha(cuerpo: str, tablas_conocidas=(), estado: str = "VALID", extra: dict = None) -> dict:
+def ficha(cuerpo: str, tablas_conocidas=(), estado: str = "VALID", extra: dict = None,
+          seccion: str = "") -> dict:
     """La entrada que va al modelo para un objeto."""
     cuerpo_n = normalizar(cuerpo)
     d = {
         "estado": estado,
-        "firma": firma(cuerpo),
+        "firma": firma_objeto(cuerpo, seccion),
         "lineas": len(cuerpo_n.split("\n")) if cuerpo_n else 0,
         "tablas_usadas": tablas_usadas(cuerpo_n, tablas_conocidas),
         "source": "db",
@@ -139,6 +162,52 @@ def inventario_vacio() -> dict:
                       "no el cuerpo: el instalador sigue extrayendo de la BD viva, y la firma "
                       "sirve para detectar qué cambió desde la última entrega."),
             **{s: {} for s in SECCIONES}}
+
+
+def construir(salidas: dict, tablas_conocidas=()) -> dict:
+    """Convierte lo extraído —{etapa: resultado de un extractor}— en el inventario del modelo.
+
+    ⛔ Vive aquí, y no en `model-objects.py`, porque hay DOS consumidores: el sync del modelo y
+    el contraste de deriva de `installer-objects.py`. Mientras estuvo solo en el sync, el
+    contraste plegaba los paquetes a su manera —la especificación y el cuerpo son dos entradas
+    de ALL_SOURCE y una sola ficha en el modelo— y se pisaban entre sí, así que TODO paquete
+    salía como "firma distinta" en cada instalador. Una alarma que salta siempre es una alarma
+    que nadie lee.
+    """
+    inv = inventario_vacio()
+
+    for etapa, seccion in ETAPA_A_SECCION.items():
+        res = salidas.get(etapa)
+        if not res:
+            continue
+        deshabilitados = set(res.get("disabled") or [])
+        for nombre, cuerpo in (res.get("bloques") or {}).items():
+            destino, limpio = seccion, nombre
+            # Oracle mezcla PROCEDURE / PACKAGE / PACKAGE BODY en la misma etapa y antepone el
+            # tipo al nombre; en SQL Server no hay paquetes y el nombre llega ya limpio.
+            if seccion == "procedimientos":
+                destino, limpio = clasificar_plsql(nombre)
+            estado = "DISABLED" if nombre in deshabilitados else "VALID"
+            f = ficha(cuerpo, tablas_conocidas, estado, seccion=destino)
+            if destino == "paquetes":
+                # Especificación y cuerpo son dos objetos en ALL_SOURCE y una sola cosa para
+                # quien desarrolla: se funden en una ficha, firmando los textos concatenados.
+                previa = inv[destino].get(limpio)
+                acumulado = normalizar(cuerpo)
+                if previa:
+                    acumulado = previa.get("_cuerpo", "") + "\n" + acumulado
+                    f["lineas"] += previa.get("lineas", 0)
+                    f["tablas_usadas"] = sorted(set(previa.get("tablas_usadas", []))
+                                                | set(f["tablas_usadas"]))
+                f["firma"] = firma_objeto(acumulado, destino)
+                f["_cuerpo"] = acumulado
+            inv[destino][limpio] = f
+
+    # `_cuerpo` es un acumulador interno para fundir especificación y cuerpo del package;
+    # no tiene por qué acabar en el modelo.
+    for d in inv["paquetes"].values():
+        d.pop("_cuerpo", None)
+    return inv
 
 
 def comparar(viejo: dict, nuevo: dict) -> dict:
@@ -167,6 +236,42 @@ def comparar(viejo: dict, nuevo: dict) -> dict:
             res[sec] = {"nuevos": nuevos, "eliminados": eliminados,
                         "modificados": modificados, "estado_cambiado": estado}
     return res
+
+
+def para_entregar(cambios: dict) -> tuple:
+    """De un `comparar()`, qué tiene que viajar en la entrega y qué NO puede viajar solo.
+
+    Devuelve `(entregables, retenidos)`, ambos {sección: [nombre, ...]} y recorridos en orden de
+    dependencias (`SECCIONES`), que es el orden en que hay que ejecutarlos.
+
+    Entra lo `nuevo`, lo `modificado` y lo de `estado_cambiado` —este último porque el cuerpo es
+    el mismo pero el `ALTER TRIGGER ... DISABLE` que lo acompaña no, y sin reemitirlo el cliente
+    se queda con el estado antiguo.
+
+    ⛔ SALVO LAS SECUENCIAS MODIFICADAS. El DDL de una secuencia es `CREATE`, no `CREATE OR
+    REPLACE`: entregarla contra una secuencia que ya existe en el cliente o falla (Oracle,
+    ORA-00955) o la borra y la recrea (SQL Server, que emite DROP + CREATE) **reiniciando el
+    contador a la posición de NUESTRA base de datos**. Eso repartiría IDs ya usados en el
+    cliente. Una secuencia nueva sí viaja; una que cambió de INCREMENT/CACHE/CYCLE sale como
+    retenida para que se resuelva a mano con un ALTER, que es lo que corresponde.
+
+    Lo `eliminado` no aparece en ninguna de las dos: ver `delta-objects.py`, se emite comentado.
+    """
+    entregables, retenidos = {}, {}
+    for sec in SECCIONES:
+        c = (cambios or {}).get(sec)
+        if not c:
+            continue
+        vivos = list(c.get("nuevos") or [])
+        if sec == "secuencias":
+            frenados = sorted(set(c.get("modificados") or []) | set(c.get("estado_cambiado") or []))
+            if frenados:
+                retenidos[sec] = frenados
+        else:
+            vivos += list(c.get("modificados") or []) + list(c.get("estado_cambiado") or [])
+        if vivos:
+            entregables[sec] = sorted(set(vivos))
+    return entregables, retenidos
 
 
 def total(inventario: dict) -> int:

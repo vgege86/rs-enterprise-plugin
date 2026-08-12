@@ -202,14 +202,15 @@ def strip_schema(texto: str, schema: str) -> tuple:
     return texto, n
 
 
-def cab(titulo: str, proyecto: str, motor: str, extra: list = None) -> list:
+def cab(titulo: str, proyecto: str, motor: str, extra: list = None,
+        contexto: str = "instalación limpia") -> list:
     origen = ("Extraído de la BD viva (diccionario ALL_*), SIN schema."
               if motor == "ORACLE" else
               "Extraído de la BD viva (catálogo sys.*), con su schema (dbo) — en SQL Server el"
               " schema del objeto es estable y lo que se selecciona es la base de datos.")
     l = [
         "-- ============================================================",
-        f"-- {titulo} — instalación limpia de {proyecto}",
+        f"-- {titulo} — {contexto} de {proyecto}",
         f"-- Motor: {motor} | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"-- {origen}",
     ]
@@ -229,6 +230,41 @@ def cab(titulo: str, proyecto: str, motor: str, extra: list = None) -> list:
             "",
         ]
     return l
+
+
+# ---------------------------------------------------------------- render de un objeto
+# Etiqueta del comentario que precede a cada objeto en el .sql. Las secciones que no están
+# (funciones, procedimientos, paquetes) ya llevan el tipo dentro del propio nombre —Oracle lo
+# antepone en ALL_SOURCE— y repetirlo daría "-- Procedimiento PROCEDURE X".
+_ETIQUETA = {"secuencias": "Secuencia", "vistas": "Vista", "triggers": "Trigger"}
+_PLSQL = ("funciones", "procedimientos", "paquetes", "triggers")
+
+
+def render_objeto(seccion: str, nombre: str, cuerpo: str, motor: str, disabled: bool = False) -> list:
+    """Las líneas .sql de UN objeto: comentario, cuerpo y el terminador que le corresponda.
+
+    Es el ÚNICO sitio donde se decide cómo se escribe un objeto en un .sql. Lo usan los
+    extractores de aquí (instalación limpia) y `delta-objects.py` (entrega de lo que cambió):
+    si cada uno lo maquetara por su cuenta, un script del actualizador podría quedarse sin el
+    '/' que cierra un bloque PL/SQL y fallar solo en el cliente.
+
+    El '/' es de sqlplus: en SQL Server los cuerpos ya vienen con sus propios GO desde el
+    catálogo, y el `DISABLE TRIGGER` también (lo emite `ss_triggers` dentro del bloque).
+    """
+    lines = []
+    if seccion != "sinonimos":
+        etq = _ETIQUETA.get(seccion)
+        lines.append(f"-- {etq} {nombre}" if etq else f"-- {nombre}")
+    lines.append((cuerpo or "").rstrip())
+    if motor == "ORACLE":
+        if seccion in _PLSQL:
+            lines.append("/")
+        # El estado real en origen se preserva: un trigger DISABLED que se instale
+        # habilitado cambia el comportamiento de la aplicación en el cliente.
+        if seccion == "triggers" and disabled:
+            lines.append(f"ALTER TRIGGER {nombre} DISABLE;")
+    lines.append("")
+    return lines
 
 
 # ---------------------------------------------------------------- contrato de los extractores
@@ -275,9 +311,7 @@ def gen_secuencias(cfg: dict) -> tuple:
             continue
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
-        lines.append(f"-- Secuencia {nombre}")
-        lines.extend(buf)
-        lines.append("")
+        lines.extend(render_objeto("secuencias", nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, bloques=cuerpos)
 
 
@@ -310,14 +344,12 @@ END;
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
         cuerpos[nombre] = txt.strip()
-        lines.append(f"-- Vista {nombre}")
-        lines.append(txt)
-        lines.append("")
+        lines.extend(render_objeto("vistas", nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, nstrip, bloques=cuerpos)
 
 
 # ---------------------------------------------------------------- PL/SQL (ALL_SOURCE)
-def gen_source(cfg: dict, tipos: list) -> tuple:
+def gen_source(cfg: dict, tipos: list, seccion: str = "procedimientos") -> tuple:
     """FUNCTION / PROCEDURE / PACKAGE / PACKAGE BODY desde ALL_SOURCE (TEXT es VARCHAR2)."""
     S = cfg["schema"]
     in_tipos = ", ".join(f"'{t}'" for t in tipos)
@@ -336,10 +368,7 @@ def gen_source(cfg: dict, tipos: list) -> tuple:
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
         cuerpos[nombre] = txt.strip()
-        lines.append(f"-- {nombre}")
-        lines.append(txt.rstrip())
-        lines.append("/")
-        lines.append("")
+        lines.extend(render_objeto(seccion, nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, nstrip, bloques=cuerpos)
 
 
@@ -371,15 +400,10 @@ END;
         txt, k = strip_schema("\n".join(buf), S)
         nstrip += k
         cuerpos[nombre] = txt.strip()
-        lines.append(f"-- Trigger {nombre}")
-        lines.append(txt.rstrip())
-        lines.append("/")
-        # El estado real en origen se preserva: un trigger DISABLED que se instale
-        # habilitado cambia el comportamiento de la aplicación en el cliente.
-        if status.strip().upper() == "DISABLED":
+        off = status.strip().upper() == "DISABLED"
+        if off:
             disabled.append(nombre)
-            lines.append(f"ALTER TRIGGER {nombre} DISABLE;")
-        lines.append("")
+        lines.extend(render_objeto("triggers", nombre, cuerpos[nombre], cfg["motor"], off))
     return _resultado(lines, nombres, nstrip, disabled, cuerpos)
 
 
@@ -403,8 +427,7 @@ def gen_sinonimos(cfg: dict) -> tuple:
         nombres.append(nombre)
         txt, _ = strip_schema("\n".join(buf), S)
         cuerpos[nombre] = txt.strip()
-        lines.append(txt)
-        lines.append("")
+        lines.extend(render_objeto("sinonimos", nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, bloques=cuerpos)
 
 
@@ -427,7 +450,7 @@ def _ss_drop(alias_schema: str, alias_obj: str, palabra: str) -> str:
             f" + ''') IS NOT NULL DROP {palabra} ' + " + _ss_nombre(alias_schema, alias_obj) + " + ';'")
 
 
-def ss_modulos(cfg: dict, tipos: list, palabra_drop: str) -> tuple:
+def ss_modulos(cfg: dict, tipos: list, palabra_drop: str, seccion: str = "procedimientos") -> tuple:
     """Vistas / funciones / procedimientos: todo sale de sys.sql_modules."""
     in_tipos = ", ".join(f"'{t}'" for t in tipos)
     sql = f"""SELECT '{OBJ_MARK}' + s.name + '.' + o.name + CHAR(10)
@@ -446,9 +469,7 @@ ORDER BY s.name, o.name;"""
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
-        lines.append(f"-- {nombre}")
-        lines.append("\n".join(buf).rstrip())
-        lines.append("")
+        lines.extend(render_objeto(seccion, nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, bloques=cuerpos)
 
 
@@ -477,9 +498,7 @@ ORDER BY s.name, q.name;"""
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
-        lines.append(f"-- Secuencia {nombre}")
-        lines.extend(buf)
-        lines.append("")
+        lines.extend(render_objeto("secuencias", nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, bloques=cuerpos)
 
 
@@ -510,11 +529,10 @@ ORDER BY s.name, tr.name;"""
         nombre, _, status = cabecera.partition("|")
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
-        if status.strip().upper() == "DISABLED":
+        off = status.strip().upper() == "DISABLED"
+        if off:
             disabled.append(nombre)
-        lines.append(f"-- Trigger {nombre}")
-        lines.append("\n".join(buf).rstrip())
-        lines.append("")
+        lines.extend(render_objeto("triggers", nombre, cuerpos[nombre], cfg["motor"], off))
     return _resultado(lines, nombres, disabled=disabled, bloques=cuerpos)
 
 
@@ -532,8 +550,7 @@ ORDER BY s.name, sy.name;"""
     for nombre, buf in parse_blocks(out):
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()
-        lines.extend(buf)
-        lines.append("")
+        lines.extend(render_objeto("sinonimos", nombre, cuerpos[nombre], cfg["motor"]))
     return _resultado(lines, nombres, bloques=cuerpos)
 
 
@@ -545,17 +562,17 @@ def etapas_por_motor(cfg: dict) -> list:
         return [
             ("01", "Secuencias",     "SECUENCIAS",     lambda: gen_secuencias(cfg)),
             ("02", "Vistas",         "VISTAS",         lambda: gen_vistas(cfg)),
-            ("03", "Funciones",      "FUNCIONES",      lambda: gen_source(cfg, ["FUNCTION"])),
-            ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: gen_source(cfg, ["PROCEDURE", "PACKAGE", "PACKAGE BODY"])),
+            ("03", "Funciones",      "FUNCIONES",      lambda: gen_source(cfg, ["FUNCTION"], "funciones")),
+            ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: gen_source(cfg, ["PROCEDURE", "PACKAGE", "PACKAGE BODY"], "procedimientos")),
             ("05", "Triggers",       "TRIGGERS",       lambda: gen_triggers(cfg)),
             ("06", "Sinonimos",      "SINÓNIMOS",      lambda: gen_sinonimos(cfg)),
         ]
     return [
         ("01", "Secuencias",     "SECUENCIAS",     lambda: ss_secuencias(cfg)),
-        ("02", "Vistas",         "VISTAS",         lambda: ss_modulos(cfg, ["V"], "VIEW")),
+        ("02", "Vistas",         "VISTAS",         lambda: ss_modulos(cfg, ["V"], "VIEW", "vistas")),
         # FN escalar, IF inline-table, TF table-valued, FS/FT ensambladas (CLR)
-        ("03", "Funciones",      "FUNCIONES",      lambda: ss_modulos(cfg, ["FN", "IF", "TF", "FS", "FT"], "FUNCTION")),
-        ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: ss_modulos(cfg, ["P", "PC"], "PROCEDURE")),
+        ("03", "Funciones",      "FUNCIONES",      lambda: ss_modulos(cfg, ["FN", "IF", "TF", "FS", "FT"], "FUNCTION", "funciones")),
+        ("04", "Procedimientos", "PROCEDIMIENTOS", lambda: ss_modulos(cfg, ["P", "PC"], "PROCEDURE", "procedimientos")),
         ("05", "Triggers",       "TRIGGERS",       lambda: ss_triggers(cfg)),
         ("06", "Sinonimos",      "SINÓNIMOS",      lambda: ss_sinonimos(cfg)),
     ]
@@ -703,21 +720,18 @@ def main():
     # correcto— pero las dos hay que verlas antes de entregar.
     inventario_modelo = model.get("objetos") or {}
     if inventario_modelo:
-        actual = _inv.inventario_vacio()
         # ⛔ `salidas` va indexada por el NUMERO de etapa ("01".."06"), no por el nombre de
         # fichero. Indexarla por el nombre devolvia siempre None y el contraste habria dado
         # todo el inventario por eliminado, que es justo la alarma falsa que nadie vuelve a mirar.
+        # Se reindexa por fichero porque es lo que espera el constructor compartido, el MISMO
+        # que usa el sync del modelo: si el contraste construyera el inventario por su cuenta,
+        # compararia dos cosas que no se construyen igual.
+        por_fichero = {}
         for num, fichero, _t, _fn in etapas:
             res = (salidas.get(num) or (None, None, 0))[0]
-            if not res:
-                continue
-            seccion = _inv.ETAPA_A_SECCION.get(fichero)
-            if not seccion:
-                continue
-            for nombre, cuerpo in (res.get("bloques") or {}).items():
-                destino, limpio = (_inv.clasificar_plsql(nombre)
-                                   if seccion == "procedimientos" else (seccion, nombre))
-                actual[destino][limpio] = {"firma": _inv.firma(cuerpo), "estado": "VALID"}
+            if res:
+                por_fichero[fichero] = res
+        actual = _inv.construir(por_fichero)
 
         cambios = _inv.comparar(inventario_modelo, actual)
         if cambios:

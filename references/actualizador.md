@@ -180,6 +180,13 @@ orden es el declarado, no el alfabético. Lo generan **los dos** modos, por moti
 
 - **`/rs-actualizador`** lo escribe el agente: es quien tiene orden significativo y ya pregunta al
   usuario por las dependencias entre scripts.
+  - Uno de esos scripts no lo trae ninguna tarea: el de los **objetos de BD que cambiaron desde
+    la última entrega**, que genera `hooks\actualizador-objetos.ps1` comparando la BD contra el
+    inventario `objetos` del `model.json`. Sale con prefijo en la franja **90-98** —después de los
+    scripts de las tareas, porque un procedimiento nuevo puede leer una columna que crea uno de
+    ellos, y antes del `99-RVERSIONES`— y hay que **declararlo como cualquier otro**. ⛔ Una
+    secuencia modificada no viaja en él (su DDL reiniciaría el contador del cliente) y de lo
+    eliminado no emite `DROP` activo: las dos cosas salen listadas para que alguien decida.
 - **`/rs-instalador`** lo escribe `hooks\instalacion-paquete.ps1` a partir de lo que hay realmente
   en `Scripts\`. Su orden es estructural, pero eso no quiere decir que se pueda deducir: el
   descubrimiento por carpetas ordena **por nombre**, y con los ficheros de objetos en la carpeta eso

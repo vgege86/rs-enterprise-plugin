@@ -2,7 +2,7 @@
 name: rs-validacion-bd
 description: Valida código C# (DALC/clase) contra la BD real de una solución uCollect/RS — tipos, longitudes, nullabilidad y compatibilidad entre motores (SQL Server/Oracle). Usar para /rs-validar-bd — solo lectura, advisory, no ejecuta DDL/DML ni escribe código. Es la versión standalone de la validación BD que el pipeline hace dentro del planner.
 model: sonnet
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, Read, Grep
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_objects, mcp__plugin_rs-enterprise-agent_rs-workspace__get_object_ddl, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, Read, Grep
 ---
 
 > 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,

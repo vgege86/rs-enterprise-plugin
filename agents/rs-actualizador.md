@@ -210,23 +210,45 @@ Para cada ID de tarea del delta, descargar los adjuntos `.sql` a `<destino>\scri
 Renombrar con prefijo de orden: `01-<TAREA>-<nombre>.sql`, `02-...`. El orden importa; si hay
 dependencias entre scripts, preguntar el orden al usuario.
 
-**Antes de cerrar la lista, comprobar qué objetos de BD han cambiado.** El delta de esta entrega
-es por VCS, y un procedimiento, vista o trigger modificado **no está en el repo**: hasta ahora
-solo viajaba si alguien se acordaba de escribir su script a mano. Ejecutar vía runner:
+**Antes de cerrar la lista, generar el script de los objetos de BD que han cambiado.** El delta
+de esta entrega es por VCS, y un procedimiento, vista o trigger modificado **no está en el
+repo**: solo viajaba si alguien se acordaba de escribir su script a mano. Ejecutar vía runner:
 
 ```
-.\hooks\sync-model-objects.ps1 "<workspace>" -DryRun
+.\hooks\actualizador-objetos.ps1 "<workspace>" "<destino>\scripts" -DryRun
 ```
 
-Compara la BD contra el inventario del `model.json` y lista, por sección, lo `nuevo`,
-`eliminado`, `modificado` (firma distinta) y `estado_cambiado` (p.ej. un trigger que pasó a
-DISABLED — la firma no lo ve porque el cuerpo es el mismo). Todo lo que salga ahí y no esté ya
-cubierto por un script de la entrega hay que **preguntárselo al usuario**: o entra como script,
-o se decide explícitamente que no entra. ⛔ No decidirlo por cuenta propia: un objeto que cambió
-en desarrollo y no viaja deja al cliente con una versión que ya no existe en ningún sitio.
+Compara la BD contra el inventario del `model.json` —la línea base es la última entrega— y lista
+por sección lo `nuevo`, `modificado` (firma distinta), `estado_cambiado` (p.ej. un trigger que
+pasó a DISABLED: la firma no lo ve porque el cuerpo es el mismo) y `eliminado`, diciendo además
+qué entraría en el script.
 
-Si el modelo no trae inventario todavía, el `-DryRun` lo dice; entonces esta comprobación no
-está disponible y hay que decirlo en el SUMMARY en vez de darla por hecha.
+1. **Presentar esa lista al usuario y pedir confirmación.** ⛔ No decidirlo por cuenta propia en
+   ninguno de los dos sentidos: un objeto que cambió en desarrollo y no viaja deja al cliente con
+   una versión que ya no existe en ningún sitio, y uno que viaja sin que nadie lo haya pedido
+   mete en la entrega un cambio a medio terminar.
+2. Confirmado el alcance, repetir **sin** `-DryRun`. Escribe `<destino>\scripts\90-ObjetosBD.sql`
+   (el primer hueco libre de la franja 90-98: después de los scripts de las tareas, antes del
+   `99-RVERSIONES`) con el mismo texto que entregaría el instalador, en orden de dependencias.
+3. **Declararlo en `scripts.json`** como cualquier otro script de la entrega.
+
+Dos cosas que el hook **no** hace solo, y hay que trasladar al usuario y al `readme.txt`:
+
+- **Una secuencia modificada no viaja.** Su DDL es `CREATE` (en SQL Server, `DROP` + `CREATE`):
+  contra el cliente, o falla, o reinicia el contador en la posición de *nuestra* base de datos y
+  empieza a repartir IDs ya usados. Sale listada aparte, para resolverla con un `ALTER` a mano.
+- **De lo eliminado no se emite ningún `DROP` activo**: va comentado al final del fichero. Un
+  objeto que falta puede ser un borrado real o una extracción incompleta, y equivocarse borra
+  código en producción.
+
+Si el modelo no trae inventario todavía no hay línea base y el hook lo dice en vez de inventarla:
+entonces esta comprobación **no está disponible** y hay que decirlo en el SUMMARY, no darla por
+hecha. Se arregla con `.\hooks\sync-model-objects.ps1 "<workspace>"`, teniendo en cuenta que esa
+primera sincronización fija la base y lo que ya estuviera en la BD no saldrá como cambio.
+
+⛔ **Cuando la entrega esté cerrada**, resincronizar la línea base con
+`.\hooks\sync-model-objects.ps1 "<workspace>"` (o generar el script con `-Sincronizar`). Si no,
+el siguiente actualizador vuelve a proponer exactamente lo mismo.
 
 Después escribir `<destino>\scripts\scripts.json` declarando ese orden explícitamente — formato en
 `assets\instalacion\scripts.json.tpl`. Cuando existe, **manda sobre el descubrimiento alfabético**

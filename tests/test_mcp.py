@@ -541,3 +541,73 @@ def test_db_query_error_a_mitad_de_volcado_no_filtra_las_filas(monkeypatch, tmp_
     assert out["rows"] == []
     assert "12345678Z" not in out["error"]
     assert "87654321X" not in out["error"]
+
+
+# --- get_db_objects / get_object_ddl: el inventario de objetos de BD ------------------------
+#
+# get_db_objects es logica pura sobre el modelo (no toca BD), asi que se prueba entera. Lo que
+# se vigila es la distincion entre "no hay inventario" y "no hay objetos": confundirlas hace que
+# un analisis de impacto informe "ninguna vista usa esta tabla" cuando lo cierto es que nadie ha
+# ejecutado el sync todavia, y eso se lee como luz verde para cambiar la columna.
+
+def _modelo_con_objetos(tmp_path, monkeypatch, objetos):
+    import json as _json
+    ruta = tmp_path / "MIPROYECTO-model.json"
+    ruta.write_text(_json.dumps({"tables": {}, "objetos": objetos}), encoding="utf-8")
+    monkeypatch.setattr(srv, "_check_workspace", lambda ws: None)
+    monkeypatch.setattr(srv, "_get_config", lambda ws: {"model_path": str(ruta)})
+    return str(tmp_path)
+
+
+_INVENTARIO = {
+    "_firma": "sha256-16",
+    "_nota": "metadato, no es un objeto",
+    "vistas": {"V_CLI": {"firma": "a" * 16, "estado": "VALID", "tablas_usadas": ["RCLIENTES"]}},
+    "procedimientos": {"P_ALTA": {"firma": "b" * 16, "estado": "VALID",
+                                  "tablas_usadas": ["RCLIENTES", "RPEDIDOS"]}},
+    "secuencias": {}, "funciones": {}, "paquetes": {}, "triggers": {}, "sinonimos": {},
+}
+
+
+def test_get_db_objects_sin_inventario_lo_dice_en_vez_de_devolver_vacio(tmp_path, monkeypatch):
+    ws = _modelo_con_objetos(tmp_path, monkeypatch, {})
+    r = json.loads(srv.get_db_objects(ws))
+    assert r["inventario"] is False
+    assert "sync-model-objects" in r["aviso"]
+
+
+def test_get_db_objects_no_confunde_los_metadatos_con_objetos(tmp_path, monkeypatch):
+    # _firma y _nota son metadatos del inventario: contarlos inflaria el conteo por seccion.
+    ws = _modelo_con_objetos(tmp_path, monkeypatch, _INVENTARIO)
+    r = json.loads(srv.get_db_objects(ws))
+    assert "_firma" not in r["objetos"] and "_nota" not in r["objetos"]
+    assert r["conteo"]["vistas"] == 1
+
+
+def test_get_db_objects_con_tabla_devuelve_solo_quien_la_usa(tmp_path, monkeypatch):
+    ws = _modelo_con_objetos(tmp_path, monkeypatch, _INVENTARIO)
+    r = json.loads(srv.get_db_objects(ws, tabla="rpedidos"))     # sin distinguir mayusculas
+    assert r["total"] == 1
+    assert r["usan"] == {"procedimientos": ["P_ALTA"]}
+
+
+def test_get_db_objects_tabla_que_no_usa_nadie(tmp_path, monkeypatch):
+    ws = _modelo_con_objetos(tmp_path, monkeypatch, _INVENTARIO)
+    assert json.loads(srv.get_db_objects(ws, tabla="RNADIE"))["total"] == 0
+
+
+def test_get_object_ddl_exige_el_nombre(tmp_path, monkeypatch):
+    # Sin nombre, el hook barreria los siete tipos de la BD para nada.
+    monkeypatch.setattr(srv, "_check_workspace", lambda ws: None)
+    assert "error" in json.loads(srv.get_object_ddl(str(tmp_path), "   "))
+
+
+def test_get_object_ddl_pasa_la_seccion_al_hook(tmp_path, monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(srv, "_check_workspace", lambda ws: None)
+    monkeypatch.setattr(srv, "_run_ps", lambda script, *a, **k: llamadas.append((script, a)) or {"raw": "ddl"})
+    srv.get_object_ddl(str(tmp_path), " P_Alta ", seccion=" Procedimientos ")
+    script, args = llamadas[0]
+    assert script == "ddl-objeto.ps1"
+    assert args[1] == "P_Alta"                       # recortado, sin tocar mayusculas
+    assert args[2:] == ("-Seccion", "procedimientos")

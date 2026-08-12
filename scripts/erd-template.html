@@ -2027,7 +2027,32 @@ function openObjetoPanel(sec, nombre) {
     <div style="font-size:10px;color:#6c7086;line-height:1.5;margin-top:6px">
       Derivado por coincidencia de texto con las tablas del modelo, no del diccionario de
       dependencias: un nombre dentro de un comentario cuenta igual.
-    </div>`;
+    </div>
+    <label style="margin-top:12px">Cuerpo</label>
+    <div style="font-size:10px;color:#6c7086;line-height:1.5">
+      El modelo guarda la ficha y la firma, nunca el cuerpo — y este HTML no habla con la BD.
+      Para leer el DDL de verdad, desde el trunk:
+    </div>
+    <div id="ddl-cmd-${sec}-${cssId(nombre)}"
+         style="font-family:monospace;font-size:10px;color:#cdd6f4;background:#181825;border-radius:4px;padding:6px;margin-top:4px;word-break:break-all">${cmdDdlObjeto(sec, nombre)}</div>
+    <button style="width:100%;margin-top:4px;font-size:11px"
+            onclick="copiarTexto(cmdDdlObjeto('${sec}','${nombre.replace(/'/g, "\\'")}'), 'Comando copiado')">Copiar comando</button>`;
+}
+
+// El ERD es un fichero estatico: no tiene —ni debe tener— credenciales ni conexion a la BD. Lo
+// que puede hacer es decir exactamente que ejecutar para obtener el cuerpo, que es lo que
+// convierte el inventario en algo util durante el desarrollo.
+function cmdDdlObjeto(sec, nombre) {
+  return `.\\hooks\\ddl-objeto.ps1 "<trunk>" ${nombre} -Seccion ${sec}`;
+}
+
+function cssId(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
+
+function copiarTexto(txt, msg) {
+  navigator.clipboard.writeText(txt).then(
+    () => showToast(msg || 'Copiado', 'ok', 2000),
+    () => { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); showToast(msg || 'Copiado', 'ok', 2000); }
+  );
 }
 
 function focusTable(t) {

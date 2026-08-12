@@ -2,7 +2,7 @@
 name: rs-impacto
 description: Analista de impacto de un cambio propuesto (tabla/columna/método/clase) en una solución uCollect/RS. Usar para /rs-impacto — análisis puro de lectura.
 model: sonnet
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, Read, Grep, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_objects, mcp__plugin_rs-enterprise-agent_rs-workspace__get_object_ddl, Read, Grep, Glob
 ---
 
 # Rol
@@ -37,7 +37,20 @@ El elemento a analizar (tabla / columna / método / clase / constante) viene en 
 1. `mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope(sln_path)` → scope_dirs.
    `mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol(nombre, scope_dirs)` → referencias directas (fallback adicional: Grep manual limitado a scope_dirs).
 2. Identificar tipo de elemento:
-   - tabla BD → buscar en DALCs y queries SQL embebidas
+   - tabla BD → buscar en DALCs y queries SQL embebidas **y además**
+     `get_db_objects(workspace, tabla=<TABLA>)`: devuelve las vistas, procedimientos,
+     paquetes, funciones y triggers que la usan. ⛔ Sin esto el mapa de impacto se queda en el
+     código C# e ignora la mitad de lo que toca la tabla: la lógica que vive DENTRO de la BD
+     no está en ningún `.cs` y no la encuentra ningún Grep.
+     - Si responde `inventario: false`, el modelo no tiene inventario todavía. **Decirlo en el
+       informe**: significa que la parte de BD del impacto no se ha podido analizar, no que no
+       haya nada. Se rellena con `hooks\sync-model-objects.ps1`.
+     - `tablas_usadas` se deriva por coincidencia de texto, así que un objeto puede salir por
+       nombrar la tabla en un comentario. Para descartarlo —o para valorar de verdad el impacto
+       sobre él— hay que leer el cuerpo, y el modelo no lo guarda:
+       `get_object_ddl(workspace, objeto=<NOMBRE>, seccion=<sec>)` lo lee de la BD viva. ⛔ No
+       afirmar qué hace un procedimiento sin haberlo leído: la ficha dice cuántas líneas tiene y
+       qué tablas nombra, no qué hace con ellas.
    - columna BD → buscar en queries + mapeo de tipos en código
    - método/clase C# → buscar llamadas y herencias
 3. Buscar todas las referencias dentro del scope:
