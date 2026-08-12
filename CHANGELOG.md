@@ -1,5 +1,58 @@
 # RS Enterprise Agent — Changelog
 
+## 3.24.0 — 2026-08-12
+
+### Instalar el plugin sin Python dejaba un plugin que parecía instalado
+
+Una instalación nueva se saltó el paso 1 del README —`pip install "mcp>=1.2.0,<2"`— y nadie se
+enteró hasta que las herramientas no respondieron. No es un descuido raro: es el único paso manual,
+va **antes** de los dos comandos que sí parecen "la instalación", y saltárselo **no produce ningún
+error**. Los comandos `/rs-*` siguen apareciendo, los hooks siguen corriendo y los agentes siguen
+despachando; lo único que no está es el servidor MCP, porque `.mcp.json` lo arranca con `python
+mcp/rs-workspace-server.py` y ni el plugin ni Claude Code instalan Python ni el paquete.
+
+`/rs-env` no podía cubrirlo: se sirve de `check_env`, que es justo una tool MCP. La herramienta que
+debía dar el diagnóstico era la primera en no existir.
+
+Ahora lo comprueba **`scripts/check-requisitos.ps1`**, PowerShell puro, registrado en `SessionStart`
+junto a `cleanup-preplugin.ps1`. Verifica lo único que el plugin no puede instalar por sí mismo:
+`python` en el PATH, versión ≥3.11, y el paquete `mcp` con `mcp.server.fastmcp` —el import real del
+servidor, que es mejor criterio que el número de versión porque la línea 2.x eliminó ese submódulo—.
+Cuando falta algo lo dice al arrancar la sesión, con el comando exacto de arreglo y la advertencia de
+que el plugin queda a medias mientras tanto.
+
+Distingue **cuatro** causas, porque el arreglo de cada una es distinto: no hay Python; el paquete
+falta; el paquete es 2.x; y —la que se lleva el rato de diagnóstico— Python está instalado pero
+`python` no lo resuelve en el PATH. En Windows esa última tiene trampa propia: sin Python, `python`
+**no falta** del PATH, resuelve al marcador de la Microsoft Store (`...\WindowsApps\python.exe`), que
+no ejecuta nada y abre la tienda. Un `where python` con respuesta no prueba nada, así que el script
+lo detecta aparte (ruta + tamaño + `--version`) y, si el lanzador `py -3` sí funciona, lo dice: está
+instalado, falta el PATH.
+
+⛔ No instala nada por su cuenta ni bloquea la sesión — sale por 0 siempre. La reparación
+(`-Reparar`, `pip install "mcp>=1.2.0,<2"` con el pip de ese mismo Python) muta la máquina del
+usuario, así que la pide él: la ofrece `/rs-env` y espera confirmación explícita.
+
+Coste de arranque: ninguno en el caso normal. El resultado se marca en
+`~/.claude/.rs-requisitos-ok` con la **versión del plugin** dentro, así que una sesión con todo en
+orden no llega a spawnear Python, y cada actualización rehace la comprobación una vez. En el camino
+malo se retira el marcador, para que el aviso vuelva en la siguiente sesión hasta que se arregle.
+
+### `/rs-env` empieza por ahí
+
+`rs-validar-entorno` gana un **paso 0**: ejecuta el script vía Bash —sin pasar por el MCP, que es lo
+que está muerto— antes de intentar `check_env`. Fila nueva `Requisitos MCP` en la tabla, con
+severidad FAIL y `❌ BLOQUEANTE`; y si el resto de la tabla sale del fallback por hooks, se dice, en
+vez de presentar como OK filas que no se han podido comprobar. `commands/rs-env.md` pasa ahora
+`plugin_root` (antes solo `workspace`), que es lo que permite localizar el script.
+
+**Ficheros**: `scripts/check-requisitos.ps1` (nuevo), `.claude-plugin/plugin.json` (hook
+`SessionStart` + versión), `.claude-plugin/marketplace.json`, `agents/rs-validar-entorno.md`,
+`commands/rs-env.md`, `README.md`, `docs/plugin-architecture.md`, `docs/manual-usuario/01-como-funciona-el-plugin.md`,
+`references/hooks.md`, `references/troubleshooting.md`, `hooks/README.md`.
+
+---
+
 ## 3.23.1 — 2026-08-12
 
 ### El manual de usuario en Word se quedó en la 3.1.0 porque no tenía fuente

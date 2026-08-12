@@ -7,9 +7,11 @@ Scripts PowerShell ejecutados por el agente vía MCP o directamente como fallbac
 `mcp/rs-workspace-server.py` expone todos los hooks como tools MCP.
 Registrado automáticamente por el plugin vía `.mcp.json` (raíz del repo) → ver README.md raíz.
 
-## Registro hook Stop (build/publish) y UserPromptSubmit (skill-trigger)
+## Registro hook SessionStart (arranque), Stop (build/publish) y UserPromptSubmit (skill-trigger)
 
-Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (raíz del repo), usando `${CLAUDE_PLUGIN_ROOT}` — no requiere configuración manual. Referencia de la forma que toma cada entrada:
+Registrados automáticamente por el plugin vía `.claude-plugin/plugin.json` (raíz del repo), usando `${CLAUDE_PLUGIN_ROOT}` — no requiere configuración manual.
+
+En `SessionStart` corren dos scripts de `scripts/`, ambos con `-Quiet` (callan si no hay nada que decir): `cleanup-preplugin.ps1` (restos de la instalación manual pre-plugin) y `check-requisitos.ps1` (Python + paquete `mcp`, sin los cuales el servidor MCP no arranca). Referencia de la forma que toma cada entrada:
 
 ```json
 {
@@ -250,6 +252,11 @@ Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
 
 ## Requisitos
 
+Los comprueba `scripts/check-requisitos.ps1` en cada `SessionStart` (solo Python y el paquete `mcp`,
+que es lo que impide arrancar al servidor MCP) y `/rs-env` el resto.
+
+- Python 3.11+ con `mcp>=1.2.0,<2` en el Python que resuelve `python` en el PATH — sin él no hay
+  servidor MCP y el plugin queda a medias, en silencio
 - PowerShell 5.1+
 - dotnet CLI en PATH (para compile-check y test-runner-check en soluciones SDK-style)
 - Visual Studio o Build Tools (msbuild.exe + vstest.console.exe, localizados por vswhere) para las soluciones .NET Framework — sin ellos, esos dos hooks fallan **cerrado** con `builder_error`/`runner_error` en vez de dar un falso "no compila"

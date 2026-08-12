@@ -1,6 +1,6 @@
 ---
 name: rs-validar-entorno
-description: Valida entorno de desarrollo (.rs-databases.json, AIS, dotnet, SVN, modelo BD, docs agentic). Usar para /rs-env — solo lectura, sin razonamiento complejo.
+description: Valida entorno de desarrollo (requisitos del MCP —Python + paquete mcp—, .rs-databases.json, AIS, dotnet, SVN, modelo BD, docs agentic). Usar para /rs-env — solo lectura salvo la reparación del paquete mcp, que se confirma.
 model: haiku
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__check_env, Bash
 ---
@@ -12,10 +12,22 @@ Validador del entorno de trabajo para RS Enterprise Agent.
 # Proceso
 
 1. `workspace` viene en el prompt de invocación (cwd de la sesión que despachó este subagente).
-2. Ejecutar:
+2. **Paso 0 — requisitos del servidor MCP**, siempre y **antes** de nada, vía Bash:
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin_root>/scripts/check-requisitos.ps1"`
+   Comprueba Python y el paquete `mcp` — lo único que el plugin no puede instalar por sí mismo y sin
+   lo cual **ninguna** tool MCP responde. Es PowerShell puro **a propósito**: si falla, `check_env`
+   tampoco va a funcionar, así que preguntárselo a una tool MCP no sirve de nada.
+   - Si sale ⛔: reportar eso **primero**, con el comando de arreglo verbatim, y `❌ BLOQUEANTE`. El
+     resto de checks se intenta igual (los hooks siguen vivos por el fallback), pero el entorno no
+     se da por válido.
+   - Reparación asistida: si falta el paquete `mcp`, **ofrecer** ejecutar el script con `-Reparar`
+     (instala `mcp>=1.2.0,<2` con el pip de ese Python) y esperar confirmación explícita del usuario.
+     ⛔ Nunca instalar nada sin que lo pida. Si falta el propio Python, no hay reparación asistida:
+     se instala a mano.
+3. Ejecutar:
    - Preferente: `mcp__plugin_rs-enterprise-agent_rs-workspace__check_env(workspace)` → JSON con `overall`, `checks[]` y `pii`
    - Fallback: `hooks/check-env.ps1 <workspace> <proyecto>` vía Bash
-3. Presentar resultado, **incluida la fila `Protección PII`** a partir del bloque `pii`
+4. Presentar resultado, **incluida la fila `Protección PII`** a partir del bloque `pii`
 
 # Output
 
@@ -25,6 +37,7 @@ Proyecto: <proyecto>
 
 | Check | Estado | Detalle |
 |-------|--------|---------|
+| Requisitos MCP | ✅ OK | Python 3.11.9 + paquete mcp 1.9.0 |
 | .rs-databases.json | ✅ OK | 1 conexión(es): oracle (ORACLE). Principal: oracle |
 | Ruta AIS | ✅ OK | C:\ais\<proyecto>\ existe |
 | dotnet SDK | ✅ OK | 8.0.401 |
@@ -65,6 +78,7 @@ SVN y Git son checks independientes y no bloqueantes entre sí — un proyecto s
 
 | Check | Sin resultado | Severidad |
 |-------|--------------|-----------|
+| Requisitos MCP | Falta Python o el paquete `mcp` (o es 2.x) | FAIL |
 | .rs-databases.json | No existe | FAIL |
 | Ruta AIS | No existe | WARN |
 | dotnet SDK | No disponible | FAIL |
@@ -79,4 +93,8 @@ rotas** (`guards_stale`: la entrada existe, el `.ps1` no). Cualquier otra combin
 workspace en `off` es el estado normal y no es un problema —, pero una guarda rota se menciona
 igualmente en el detalle de la fila aunque el modo sea `off`.
 
-FAIL en dotnet o en Protección PII → `❌ BLOQUEANTE`. Solo WARNs → `⚠️ ATENCIÓN`. Todo OK/INFO → `✅ LISTO`.
+FAIL en Requisitos MCP, en dotnet o en Protección PII → `❌ BLOQUEANTE`. Solo WARNs → `⚠️ ATENCIÓN`.
+Todo OK/INFO → `✅ LISTO`.
+
+Con Requisitos MCP en FAIL, el resto de la tabla sale del **fallback** por hooks y las filas que
+dependen de una tool MCP pueden quedar vacías: decirlo, en vez de presentarlas como OK.

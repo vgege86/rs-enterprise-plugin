@@ -6,6 +6,35 @@
 
 ---
 
+## Ninguna tool MCP responde tras instalar el plugin (Python / paquete `mcp`)
+
+Síntoma: los comandos `/rs-*` existen y despachan, los hooks corren, pero cualquier tool
+`mcp__plugin_rs-enterprise-agent_rs-workspace__*` falla o no aparece. `/rs-help` no abre nada.
+
+Causa: `.mcp.json` arranca el servidor con `python <plugin>/mcp/rs-workspace-server.py`. Ni el
+plugin ni Claude Code instalan Python ni el paquete `mcp` — es el paso 1 del README, manual y previo.
+Saltárselo no da ningún error visible: el plugin **parece** instalado.
+
+Diagnóstico (desde 3.24.0 sale solo al arrancar la sesión, y a demanda con `/rs-env`):
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin_root>\scripts\check-requisitos.ps1"
+```
+
+Cuatro causas, con arreglo distinto cada una:
+
+| Lo que dice | Arreglo |
+|---|---|
+| `no hay ningún 'python' en el PATH` | Instalar Python 3.11+ marcando *Add python.exe to PATH* |
+| `resuelve al marcador de la Microsoft Store` | Ídem: ese `...\WindowsApps\python.exe` existe pero no ejecuta nada — abre la tienda. ⚠️ Por eso `where python` responder **no** prueba que haya Python |
+| `Python está instalado pero 'python' no lo resuelve en el PATH` | Añadir su carpeta al PATH del usuario. `.mcp.json` invoca literalmente `python`: el lanzador `py` no vale |
+| `el paquete 'mcp' no está instalado` / `no expone mcp.server.fastmcp` | `pip install "mcp>=1.2.0,<2"` **en ese mismo Python**. El tope `<2` es obligatorio: `mcp` 2.0.0 eliminó ese submódulo. `/rs-env` lo ofrece e instala previa confirmación (`-Reparar`) |
+
+Después, **reiniciar Claude Code**: los servidores MCP se resuelven al arrancar. Comprobación:
+`/rs-help` responde.
+
+---
+
 ## Build falla
 
 Causas:

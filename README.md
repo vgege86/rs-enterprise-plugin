@@ -57,6 +57,16 @@ no arranca y las tools no responden.
 > ⛔ Tiene que quedar en **el mismo Python que resuelve `python` en el PATH** — `.mcp.json` invoca
 > literalmente `python`. Con varios Python o un venv de por medio, comprobar con
 > `python -c "import mcp; print(mcp.__file__)"`.
+>
+> ⚠️ En Windows, **sin Python instalado `python` no falta del PATH**: resuelve al marcador de la
+> Microsoft Store (`...\WindowsApps\python.exe`), que no ejecuta nada y abre la tienda. Un `where
+> python` con respuesta no significa que haya Python.
+
+Si este paso se salta, **el plugin no avisa por sí solo al usarlo**: los comandos siguen
+despachando y los hooks siguen vivos, pero ninguna herramienta MCP responde. Desde la 3.24.0 hay red
+de seguridad: al arrancar cada sesión el plugin comprueba Python y el paquete `mcp`, y si falta algo
+lo dice con el comando exacto de arreglo. `/rs-env` repite la comprobación a demanda y ofrece
+instalar el paquete previa confirmación.
 
 **2. El plugin**, publicado como marketplace Git:
 
@@ -321,7 +331,7 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | Comando | Qué hace |
 |---------|----------|
 | `/rs-init` 🔷 | Bootstrap de un workspace nuevo: crea `.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje de docs y el primer `model.json`. ⛔ Nunca sobrescribe. |
-| `/rs-env [workspace]` ⚡ | Valida `.rs-databases.json`, ruta AIS, dotnet, SVN/Git, modelo BD y docs agentic. |
+| `/rs-env [workspace]` ⚡ | Valida los **requisitos del servidor MCP** (Python en el PATH + paquete `mcp` de la línea 1.x) y después `.rs-databases.json`, ruta AIS, dotnet, SVN/Git, modelo BD y docs agentic. Los requisitos se comprueban con PowerShell puro, sin pasar por el MCP — que es justo lo que está muerto cuando faltan —, y si falta el paquete `mcp` ofrece instalarlo previa confirmación. |
 | `/rs-pii [status\|bootstrap\|audit\|enforce\|off]` 🔷 | Protección de datos personales en consultas a BD: estado (`status`), inventario de columnas afectadas (`bootstrap`), y cambio de modo (`audit`/`enforce`/`off`). `enforce` registra las guardas `PreToolUse` en la configuración personal de Claude Code, previa confirmación. Ver `docs/proteccion-pii-consultas-bd.md`. |
 | `/rs-stats [solution]` ⚡ | Estadísticas de `history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días. |
 | `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
@@ -575,7 +585,7 @@ Oracle no permite distinguir un objeto inexistente de uno sin permiso. Por eso:
 
 | Componente | Para qué |
 |------------|----------|
-| Python 3.11+ + `pip install "mcp>=1.2.0,<2"` | MCP server. El paquete **no se instala solo** y sin él `rs-workspace` no arranca; el tope `<2` es obligatorio (`mcp` 2.0.0 eliminó `mcp.server.fastmcp`). Debe quedar en el Python que resuelve `python` en el PATH |
+| Python 3.11+ + `pip install "mcp>=1.2.0,<2"` | MCP server. El paquete **no se instala solo** y sin él `rs-workspace` no arranca; el tope `<2` es obligatorio (`mcp` 2.0.0 eliminó `mcp.server.fastmcp`). Debe quedar en el Python que resuelve `python` en el PATH — ⚠️ ojo con el marcador de la Microsoft Store, que responde a `where python` sin ser Python. Lo comprueba el plugin en cada arranque de sesión y `/rs-env` a demanda |
 | .NET SDK | Compilar y testear las soluciones SDK-style (.NET moderno) |
 | PowerShell 7+ | Hooks |
 | Visual Studio o Build Tools | Compilar y testear las soluciones .NET Framework (web, batch, COM) y los builds Online. Se localiza con vswhere: `msbuild.exe` y `vstest.console.exe`. El plugin elige compilador y runner **solo**, leyendo los `.csproj` de cada solución; si falta el que hace falta, avisa de que la compilación no se ha verificado en vez de dar un falso "no compila" |

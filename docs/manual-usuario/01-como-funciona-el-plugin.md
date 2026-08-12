@@ -44,6 +44,16 @@ virtual de por medio, conviene comprobarlo:
 python -c "import mcp; print(mcp.__file__)"
 ```
 
+⚠️ En Windows hay una trampa: **sin Python instalado, `python` no falta del PATH**. Resuelve al
+marcador de la Microsoft Store (`...\WindowsApps\python.exe`), que no ejecuta nada y abre la tienda.
+Que `where python` responda algo no significa que haya Python.
+
+Si este paso se salta, el plugin **no se queja al usarlo**: los comandos siguen despachando y el
+resto de la maquinaria sigue viva, pero ninguna herramienta responde. Por eso, desde la versión
+3.24.0, el plugin comprueba Python y el paquete `mcp` **al arrancar cada sesión** y avisa con el
+comando exacto de arreglo cuando falta alguno. `/rs-env` repite esa comprobación cuando se quiera y,
+si lo que falta es el paquete, ofrece instalarlo — pidiendo confirmación antes de tocar nada.
+
 ### El plugin
 
 Se publica como marketplace Git:
@@ -508,7 +518,7 @@ permite distinguir un objeto inexistente de uno sin permiso. Por eso:
 
 | Componente | Para qué |
 |---|---|
-| Python 3.11 o superior, con el paquete `mcp` en el rango `>=1.2.0,<2` | Servidor MCP. El paquete **no se instala solo** y sin él el servidor no arranca. El tope de versión es obligatorio. Tiene que quedar en el Python que resuelve `python` en el PATH |
+| Python 3.11 o superior, con el paquete `mcp` en el rango `>=1.2.0,<2` | Servidor MCP. El paquete **no se instala solo** y sin él el servidor no arranca. El tope de versión es obligatorio. Tiene que quedar en el Python que resuelve `python` en el PATH. Es el único requisito que el plugin comprueba por su cuenta al arrancar cada sesión, porque es el que deja el resto sin servicio |
 | SDK de .NET | Compilar y testear las soluciones de .NET moderno |
 | PowerShell 7 o superior | Scripts del plugin |
 | Visual Studio o las Build Tools | Compilar y testear las soluciones de .NET Framework (web, batch, COM) y los builds de Online. El plugin localiza el compilador y el ejecutor de tests por su cuenta, leyendo los proyectos de cada solución; si falta el que hace falta, avisa de que la compilación no se ha verificado en lugar de dar un falso "no compila" |
@@ -524,8 +534,10 @@ andamiaje de documentación y el primer modelo; después, `/rs-env` valida que t
 
 - **Los comandos `/rs-*` no aparecen.** Falta reiniciar Claude Code tras instalar o actualizar el
   plugin.
-- **Las herramientas no responden y `/rs-help` falla.** Es el paquete `mcp` de Python: o no está
-  instalado, o está en un Python distinto del que resuelve `python` en el PATH, o es una versión 2.x.
+- **Las herramientas no responden y `/rs-help` falla.** Es Python: o no está instalado (y `python`
+  resuelve al marcador de la Microsoft Store, que no ejecuta nada), o el paquete `mcp` no está, o
+  está en un Python distinto del que resuelve `python` en el PATH, o es una versión 2.x. El aviso de
+  arranque de la sesión y `/rs-env` dicen cuál de los cuatro es, con el comando de arreglo.
 - **`/plugin marketplace update` no trae los cambios.** El plugin se ejecuta desde la copia cacheada
   en el perfil del usuario; después de actualizar hay que reiniciar.
 - **La compilación no se verifica.** Falta el compilador o el ejecutor de tests que exige el tipo de

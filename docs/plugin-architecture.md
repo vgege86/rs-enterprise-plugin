@@ -44,6 +44,7 @@ runner/
 references/              conocimiento de dominio, cargado bajo demanda
 docs/                    esta doc + design specs
 scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd, install, etc.)
+                         y los dos hooks de arranque: cleanup-preplugin.ps1 y check-requisitos.ps1
 tests/                   suite Pester (*.Tests.ps1) + pytest (test_*.py) de hooks y scripts
   fixtures/              entradas de ejemplo para los tests (recortadas y anonimizadas)
 assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
@@ -485,6 +486,14 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 **Infraestructura** (registrados en `plugin.json`, los ejecuta Claude Code, no los agentes):
 - `scripts/cleanup-preplugin.ps1` — evento `SessionStart`: retira restos de la instalación manual
   pre-plugin que sombrean al plugin (mueve a backup, no borra). Ver CHANGELOG 2.11.0/2.14.0.
+- `scripts/check-requisitos.ps1` — evento `SessionStart`: comprueba lo que el plugin **no puede
+  instalar por sí mismo** y sin lo cual el servidor MCP no arranca — `python` en el PATH (≥3.11, y
+  no el marcador de la Microsoft Store) y el paquete `mcp` de la línea 1.x. Sin esto el fallo es
+  silencioso: hooks y agentes siguen vivos y el plugin parece instalado. PowerShell puro **por
+  necesidad**: `check_env` es una tool MCP, así que no puede diagnosticar su propia ausencia.
+  Marcador `~/.claude/.rs-requisitos-ok` con la versión del plugin dentro — un arranque normal no
+  spawnea Python, y cada actualización rehace la comprobación una vez. `-Reparar` instala el
+  paquete, y solo lo invoca `rs-validar-entorno` tras confirmación del usuario. Ver CHANGELOG 3.24.0.
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
   para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS. Fail-fast si
   `cwd` es inaccesible (unidad de red caída) para no bloquear el evento.
@@ -493,7 +502,7 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
   despachar) y contradecía a los comandos autosuficientes de §5.1, que declaran justo lo
   contrario. Los comandos que necesitan la skill la piden en su propio texto.
 
-⚠️ Los 3 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
+⚠️ Los 4 hooks de infra se invocan con `powershell -NoProfile` — sin él, `-File` carga el perfil
 de usuario en cada arranque y sobre `cwd` en red supera el timeout (`output discarded`). Ver
 CHANGELOG 2.15.9.
 - `runner/runner.ps1` — evento `Stop`: ejecuta los builds encolados (batch-build / online-publish / service-build / copy-ais).
