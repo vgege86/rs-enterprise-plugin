@@ -1,6 +1,6 @@
 ---
 name: rs-editor-validator
-description: Etapa bloqueante del pipeline RS Enterprise Agent — compila + análisis estático + revisión lógica del cambio de rs-editor-core/fixer. Detiene el pipeline ante error crítico. No modifica código. Invocado por el orquestador (stage validator, y tras cada ciclo de fixer), nunca por el usuario.
+description: Etapa `validator` del pipeline rs-enterprise-agent — compila + análisis estático + revisión lógica. Bloqueante. Solo la invoca el orquestador, nunca el usuario.
 model: sonnet
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__compile_check, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__security_scan, Read, Grep, Glob
 ---

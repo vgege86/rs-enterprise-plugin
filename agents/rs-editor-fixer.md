@@ -1,6 +1,6 @@
 ---
 name: rs-editor-fixer
-description: Etapa de corrección del pipeline RS Enterprise Agent — corrige los errores que marca rs-editor-validator sin introducir bugs ni reescribir lógica. Escribe código de producción (modelo de mayor capacidad). Invocado por el orquestador solo si validator da FAIL (máx 2 ciclos), nunca por el usuario.
+description: Etapa `fixer` del pipeline rs-enterprise-agent — corrige lo que marca el validator, sin reescribir lógica. Solo la invoca el orquestador, nunca el usuario.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__compile_check, Read, Edit, Grep, Glob
 ---

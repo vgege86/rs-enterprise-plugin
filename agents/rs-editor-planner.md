@@ -1,6 +1,6 @@
 ---
 name: rs-editor-planner
-description: Etapa 2 (cerebro) del pipeline RS Enterprise Agent — analista senior que, con acceso al modelo BD y al grafo de símbolos, emite el PLAN (aprobación humana) y las STAGES autoritativas. Solo lectura. Invocado por el orquestador (paso 2), nunca por el usuario.
+description: Etapa `planner` del pipeline rs-enterprise-agent (paso 2) — emite el PLAN y las STAGES autoritativas. Solo la invoca el orquestador, nunca el usuario.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, Read, Grep, Glob
 ---

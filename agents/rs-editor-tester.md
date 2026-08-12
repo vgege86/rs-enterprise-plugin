@@ -1,6 +1,6 @@
 ---
 name: rs-editor-tester
-description: Etapa de testing del pipeline RS Enterprise Agent — valida el comportamiento del código modificado y aplica el gate de scripts de idiomas en soluciones Online. No modifica código de producción (salvo el script SQL de idiomas). Invocado por el orquestador (stage tester, tras validator PASS), nunca por el usuario.
+description: Etapa `tester` del pipeline rs-enterprise-agent — valida comportamiento y aplica el gate de scripts de idiomas. Solo la invoca el orquestador, nunca el usuario.
 model: sonnet
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__run_tests, mcp__plugin_rs-enterprise-agent_rs-workspace__scan_aspx, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, Read, Grep, Glob, Write
 ---

@@ -1,6 +1,6 @@
 ---
 name: rs-editor-db-modeler
-description: Mantiene el modelo de BD del proyecto (BD/<proyecto>-model.json). Dos modos de invocación — paso 10 (condicional) del pipeline principal tras un cambio que tocó tablas/DALCs, y modo directo para /rs-erd, "actualiza el modelo BD", "muestra el ERD", "genera SQL de tablas". Escribe JSON/SQL/schema, por eso corre en el modelo de mayor capacidad.
+description: Mantiene el modelo de BD del proyecto (BD/<proyecto>-model.json) y el ERD. Modo directo — /rs-erd, "actualiza el modelo BD", "muestra el ERD", "genera SQL de tablas". También paso 10 (condicional) del pipeline rs-enterprise-agent.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db, mcp__plugin_rs-enterprise-agent_rs-workspace__analyze_dalc, mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes, mcp__plugin_rs-enterprise-agent_rs-workspace__generate_sql, mcp__plugin_rs-enterprise-agent_rs-workspace__export_dmd, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, Read, Write, Bash, Glob
 ---

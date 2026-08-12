@@ -19,7 +19,7 @@ proyecto). **No contiene secretos** (aun así, recomendado añadirlo al ignore d
 ```json
 {
   "projectKey": "PROJ",
-  "jiraUser": "victor.garcia@ubimia.com",
+  "jiraUser": "desarrollador@empresa.com",
   "cloudId": "opcional-uuid-del-site",
   "statusMap": {
     "inProgress": "En Proceso",
@@ -70,14 +70,52 @@ llame al alta (p. ej. `/rs-log-errores` añade `log-<firma>`), sin duplicados.
 última tarea del usuario). Por defecto es `true`, así que un config **sin** `defaults` se comporta
 exactamente como antes de 3.18.0.
 
+### Réplica de la última tarea — qué se copia y qué no
+
+Origen: `searchJiraIssuesUsingJql(cloudId, "project = <projectKey> AND assignee = <me> ORDER BY
+created DESC")` → `getJiraIssue` del primer resultado. Se copian a `additional_fields` los campos
+**no vacíos**, con estas listas:
+
+- **Copiar si informado**: `priority`, `components`, `labels`, `versions`, `fixVersions`, `duedate`,
+  `environment` y cualquier `customfield_*` con valor no vacío.
+- **⛔ Nunca copiar (blocklist)**: `summary`, `description`, `reporter`, `creator`, `created`,
+  `updated`, `status`, `resolution`, `comment`, `attachment`, `worklog`, `votes`, `watches`,
+  `timetracking`, `progress`, `aggregateprogress`, `subtasks`, `issuelinks`, `key`, `project`,
+  `lastViewed`, `workratio`.
+- `issuetype` **no** se replica: lo fija el usuario al crear.
+- Se añade siempre `assignee = { accountId: <me> }`.
+
+Manejo de error de `createJiraIssue`: si Jira devuelve `field is required` / `is invalid` /
+`cannot be set` → mostrar el error tal cual, quitar o preguntar el campo señalado y reintentar.
+**Máx 3 intentos**; después, parar. Rovo no expone `createmeta`, así que el error de Jira es la
+única red de seguridad: no crear a ciegas.
+
+## MCP `rs-workspace` y el FP de CrowdStrike
+
+⛔ **Nunca llamar a `ping` (ni a ninguna tool `rs-workspace`) en el arranque de la skill.** Bajo
+CrowdStrike el proceso `python.exe` del MCP queda bloqueado y la llamada **no responde hasta el
+timeout de 1800s** (FP conocido, `docs/crowdstrike-fp-justification.md`) — congela el turno entero.
+El modelo no puede "detectar" ese cuelgue: una tool call bloqueante simplemente espera. Por eso al
+arranque solo se comprueba **presencia en el registro de tools**, nunca se ejecuta.
+
+La verificación **viva** se difiere al primer uso real de `rs-workspace`, que puede ser:
+- `jira_download` — si el usuario acepta la oferta de descarga de adjuntos (Fase 1) o lanza
+  `/rs-tarea descargar`.
+- `jira_attach` / `log_execution` — Fase 4, si no hubo descarga antes.
+
+Criterio único ante un cuelgue: si la llamada **no responde en segundos**, el proceso está bloqueado
+por el EDR → reportar cierre **parcial** indicando la causa y qué quedó sin hacer, en vez de colgar
+el turno. Lo ya ejecutado (commit, transiciones) permanece válido. ⛔ No añadir un `ping` previo
+"para comprobar": la propia llamada real es la verificación.
+
 ## Credenciales para adjuntar — `~/.claude/rs-jira-credentials.json`
 
 **Fuera de cualquier repo/workspace.** Solo se necesitan en la Fase 4 si hay `.sql` que adjuntar.
 
 ```json
 {
-  "baseUrl": "https://ubimia.atlassian.net",
-  "email": "victor.garcia@ubimia.com",
+  "baseUrl": "https://<tu-site>.atlassian.net",
+  "email": "desarrollador@empresa.com",
   "token": "<Jira API token>"
 }
 ```
@@ -102,6 +140,16 @@ escribiendo los bytes en `-Out`. Expuesto como tool `jira_download(issue_key, fi
 - **Triggers**: (a) oferta en Fase 1 si la issue trae adjuntos; (b) subrutina `/rs-tarea descargar <KEY>`.
 - ⛔ El token nunca se imprime; en fallo (credenciales/404/HTTP no-2xx) devuelve `success:false` sin
   escribir fichero parcial.
+
+### Procedimiento de la subrutina `/rs-tarea descargar <KEY>`
+
+1. `getJiraIssue(cloudId, KEY)` → listar `fields.attachment[]` como `id — filename (size)`,
+   numerados. Sin adjuntos → informar y parar.
+2. El usuario elige uno, varios o "todos".
+3. Por cada elegido: `out = docs/<filename>` (colisión → sufijo `_2`, `_3`, …) →
+   `jira_download(issue_key=KEY, file_id=<id>, out=<out>)`. Si `success:false` (credenciales/404) →
+   mostrar `error` y seguir con el resto de ficheros.
+4. Reportar los ficheros descargados con su ruta en `docs/`.
 
 ## Herramientas usadas
 

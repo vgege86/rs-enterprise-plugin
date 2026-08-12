@@ -1,6 +1,6 @@
 ---
 name: rs-editor-plan-check
-description: Etapa del pipeline RS Enterprise Agent — verifica que el código de rs-editor-core cubre TODOS los ítems del PLAN antes del validator. Bloqueante — si falta uno, vuelve a core. No modifica código. Invocado por el orquestador (stage plan-check, tras core, antes de validator), nunca por el usuario.
+description: Etapa `plan-check` del pipeline rs-enterprise-agent — verifica que el código cubre todos los ítems del PLAN. Bloqueante. Solo la invoca el orquestador, nunca el usuario.
 model: sonnet
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, Read, Grep, Glob
 ---

@@ -1,5 +1,156 @@
 # RS Enterprise Agent — Changelog
 
+## 3.23.0 — 2026-08-12
+
+### La regla de "sin nombres de cliente" ya no depende de que alguien se acuerde
+
+La 3.22.2 limpió tres identificadores reales de `references/jira.md`. Lo que no arregló es el
+motivo por el que llegaron ahí: `docs/plugin-architecture.md` §10 prohíbe los nombres de cliente
+desde hace versiones, pero una regla que solo vive en un documento se salta sin enterarse. Ahora hay
+una guarda que la ejecuta.
+
+`hooks/cliente-guard-write.ps1`, `PreToolUse` sobre `Write`/`Edit`, junto a la guarda de PII.
+
+#### Solo dentro del repo del plugin
+
+Sube desde la ruta destino buscando un `.claude-plugin/plugin.json` con
+`"name": "rs-enterprise-agent"`. Fuera de ahí sale por 0 sin mirar nada.
+
+⛔ Esto no es una excepción cómoda, es la condición para que la guarda sobreviva: en el workspace
+del cliente los nombres propios son **legítimos y necesarios** —lo dice la propia regla del §10— y
+una guarda que bloquease ahí sería un estorbo diario. Las guardas que estorban se acaban apagando, y
+entonces no protegen nada.
+
+#### Dos capas, y solo una bloquea
+
+| Capa | Origen | Falsos positivos | Acción |
+|---|---|---|---|
+| 1 | lista declarada en `~/.claude/rs-clientes.json` | ninguno | **bloquea** (exit 2) |
+| 2 | heurística estructural | algunos | **avisa** |
+
+La capa 1 casa `nombres`, `dominios` y `esquemas`, insensible a mayúsculas, **en el contenido y en
+la ruta** —un `informe-<cliente>.md` es tan fuga como el texto de dentro—. Los tokens de menos de 3
+caracteres se ignoran: uno de dos letras casaría con medio repo y convertiría la guarda en un
+bloqueo permanente.
+
+La capa 2 mira formas, no nombres: rutas `X:\SVN|GIT\RS\<segmento>\` con un segmento que no sea del
+propio autor, `https://<algo>.atlassian.net` con un site concreto, `User Id=` y `"schema"` con valor
+real. Avisa por stdout y deja pasar. Bloquear aquí era la otra opción y se descartó por lo mismo que
+`pii-guard-write.ps1` exige letra de control válida al DNI en vez de conformarse con la forma.
+
+#### La lista no puede vivir aquí
+
+`~/.claude/rs-clientes.json`, fuera de cualquier repo, mismo criterio que
+`rs-jira-credentials.json`:
+
+```json
+{ "nombres": ["<cliente>"], "dominios": ["<dominio>"], "esquemas": ["RS<CLIENTE>"] }
+```
+
+Un fichero versionado con la lista de clientes **sería exactamente la fuga que la guarda persigue**.
+Sin ese fichero la capa 1 queda inactiva y no se bloquea nada: es una decisión consciente, no un
+fallo silencioso — hay que poblarlo una vez. Si el JSON está roto, avisa y deja pasar, pero lo dice;
+callarse haría desaparecer la protección sin que nadie lo notara.
+
+#### Independiente del modo PII
+
+No cuelga de `Get-RsPiiEstadoGuarda`. PII protege datos personales según lo que declare cada
+workspace; esto protege identidad de cliente en un único repo. Un `off` de PII no debe abrir este
+agujero — y de hecho es la razón por la que el correo de `references/jira.md` pasó sin más: en este
+repo la guarda de PII está inactiva.
+
+#### Lo que el test destapó
+
+La frontera de palabra incluía el guion (`[\w-]`), así que `informe-<cliente>.md` y
+`<cliente>-config.json` se colaban — dos de las formas más habituales en que el nombre acaba en el
+repo. Fuera de la clase, `<cliente>ter` sigue sin casar, que era lo que se quería evitar.
+
+`tests/ClienteGuard.Tests.ps1`: **22 tests, todos en verde**, con nombres inventados (un test que
+usara uno real sería la fuga que persigue). `tests/PiiGuard.Tests.ps1` (90) y
+`tests/Encoding.Tests.ps1` (409) siguen pasando.
+
+#### Lo que NO cubre
+
+El matcher es `Write|Edit`: un `echo ... > fichero` por Bash no pasa por aquí. Se ha dejado fuera a
+propósito —duplicar el hook para `Bash` multiplica los falsos positivos— y en este repo casi todo se
+escribe con Write/Edit. Fue así como entró la fuga de 3.22.2.
+
+## 3.22.2 — 2026-08-12
+
+### La regla de "sin nombres propios" no se aplicaba a sí misma
+
+`docs/plugin-architecture.md` §10 lleva tiempo diciendo que en este repo no van identificadores
+reales. Y en `references/jira.md`, en los dos bloques JSON de ejemplo, iban tres: un dominio
+Atlassian concreto y un email de usuario, repetido. Ese fichero **sí viaja** en el plugin instalado,
+así que el ejemplo que ve cualquiera que abra la reference llevaba datos de una organización real.
+
+Sustituidos por marcadores, sin cambiar la estructura de los JSON:
+
+| antes | ahora |
+|---|---|
+| `https://<org>.atlassian.net` | `https://<tu-site>.atlassian.net` |
+| email real (×2) | `desarrollador@empresa.com` |
+
+También se han limpiado los informes de trabajo bajo `.superpowers/sdd/`, que arrastraban un nombre
+de proyecto de cliente, su esquema Oracle, su usuario de conexión y una ruta de instalación (14
+ocurrencias → `<PROYECTO>`, `<ESQUEMA>`, `<USUARIO_CONEXION>`, `<workspace>`). ⚠️ Esa carpeta está en
+`.gitignore` desde siempre y **nunca se commiteó**: no llegó al repo remoto ni al plugin instalado.
+Se corrige igual porque estaba en el árbol de trabajo.
+
+⚠️ Lo que **no** se ha tocado: `vgege86` en las URLs del repo y en el ejemplo de `/rs-review`. Es la
+cuenta propietaria del plugin, no un cliente — es la fuente canónica y tiene que poder citarse.
+
+## 3.22.1 — 2026-08-12
+
+### El plugin cargaba de golpe lo que solo hacía falta en la fase 4
+
+Medición del arranque de `/rs-tarea` sobre 171 sesiones reales (`usage` del primer turno en los
+transcripts): **67 659 tokens**. El comando no tenía la culpa —el mismo día, un prompt normal
+`<Solucion>.sln - ...` costaba 68 572 y 68 847—, pero la traza sí enseñó dónde se iba lo que **sí**
+es nuestro:
+
+```
+[19] IN=67 659   baseline (system prompt + tools + frontmatter de plugins)
+[24] IN=68 119   (+  460)  config del gestor
+[30] IN=76 332   (+8 213)  ← skills/rs-jira/SKILL.md entero
+```
+
+Ese `SKILL.md` traía dentro cosas que ya estaban escritas en `references/jira.md` —la precedencia de
+campos al crear, la blocklist de la réplica, el procedimiento de descarga de adjuntos— y el aviso del
+FP de CrowdStrike repetido en cuatro sitios. Todo eso se leía **siempre**, incluso en la ruta más
+común, que es coger una issue existente y lanzar el pipeline sin crear nada ni descargar nada.
+
+Ahora el `SKILL.md` se queda con el procedimiento y los gates, y el detalle vive en la reference, que
+se lee **cuando la fase lo pide**:
+
+| fichero | antes | ahora |
+|---|---|---|
+| `skills/rs-jira/SKILL.md` | 4 958 tok | **3 301 tok** |
+| `skills/rs-mantis/SKILL.md` | 5 518 tok | **4 107 tok** |
+
+⛔ No se ha tocado ni un gate: siguen ahí las confirmaciones antes de cada escritura, la prohibición
+de analizar código en la Fase 2, el "preguntar siempre la `.sln`", el orden estricto de la Fase 4 de
+Mantis (confirmar estado **antes** de adjuntar) y la regla de no llamar nunca a `ping` al arranque.
+
+### Las etapas del pipeline se presentaban con un currículum
+
+Las ocho `rs-editor-*` no las elige nunca el usuario: las despacha el orquestador por nombre. Aun
+así, sus `description` explicaban en tres líneas por qué corren en el modelo que corren —información
+que ya está en el campo `model:` de al lado— y esas tres líneas viajan en el system prompt de **todas**
+las sesiones. Recortadas a una línea: qué etapa es y quién la invoca.
+
+`rs-editor-db-modeler` conserva sus triggers completos porque sí tiene modo directo (`/rs-erd`).
+
+### Cuánto se ahorra de verdad
+
+- **Baseline de toda sesión** (frontmatter de agentes + skills): **−336 tok**.
+- **Al lanzar `/rs-tarea`**: **−1 656 tok** en la ruta Jira, **−1 411 tok** en la ruta Mantis.
+
+Es poco comparado con los 67 659 del arranque, y conviene decirlo: de esos, ~52k son núcleo de
+Claude Code y schemas de tools built-in, y solo ~11,5k eran frontmatter de este plugin. Capar
+integraciones MCP no ayuda —van *deferred*, cuestan el nombre (~13 tok) y no el schema: las 87 de una
+sesión real suman 1 164 tok en total, de los cuales 870 son las 49 tools de este propio plugin.
+
 ## 3.22.0 — 2026-08-12
 
 ### El actualizador ya no solo detecta los objetos de BD que cambiaron: escribe su script

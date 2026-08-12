@@ -469,6 +469,19 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
 
 `hooks/*.ps1` — dos roles distintos:
 
+**Guardas** (`PreToolUse`, registradas en `plugin.json`; salida 2 = bloquear, 0 = permitir):
+- `hooks/pii-guard-bash.ps1` / `hooks/pii-guard-write.ps1` — datos personales. Siguen el modo PII
+  **del workspace del fichero**, no el de la sesión (§4, agente `rs-pii`).
+- `hooks/cliente-guard-write.ps1` — identidad de cliente **dentro del repo del plugin**. Hace
+  efectiva la regla del §10, que hasta 3.22.2 solo vivía en este documento y se saltó: hubo que
+  limpiar tres identificadores reales de `references/jira.md`, que viaja en el plugin instalado.
+  ⛔ Sale por 0 fuera del repo del plugin — en el workspace del cliente los nombres propios son
+  legítimos, y una guarda que estorbe a diario se acaba desactivando. Dos capas con severidad
+  distinta: la lista declarada en `~/.claude/rs-clientes.json` **bloquea** (cero falsos positivos,
+  la declaró el usuario); la heurística estructural (rutas de workspace de cliente, site Atlassian
+  concreto, `User Id=`, `"schema"`) solo **avisa**. No depende del modo PII: son ejes distintos y un
+  `off` de PII no debe abrir este agujero.
+
 **Infraestructura** (registrados en `plugin.json`, los ejecuta Claude Code, no los agentes):
 - `scripts/cleanup-preplugin.ps1` — evento `SessionStart`: retira restos de la instalación manual
   pre-plugin que sombrean al plugin (mueve a backup, no borra). Ver CHANGELOG 2.11.0/2.14.0.
@@ -549,6 +562,7 @@ tocarlas, se toca ahí, no en el hook que las consume:
 | "No lo veo" vs "no existe" | `hooks/lib-dbvisibilidad.ps1` (+ `db-visibilidad.ps1` para Python) | Decide si un cero significa "no hay" o "sin permiso". Divergir aquí es borrar tablas reales del modelo |
 | Elección de conexión | `Select-RsConexion` en `hooks/lib-dbconfig.ps1` | Sus tres guardarraíles (defecto fijo, id inexistente corta, id elegido publicado) solo valen si los cumplen todos los hooks igual |
 | Qué compilador construye una `.sln` | `Get-RsBuildToolchain` en `hooks/lib-msbuild.ps1` | Lo consumen `compile-check.ps1` y `test-runner-check.ps1`, y el pipeline se apoya en que compilar y testear vean la MISMA solución. Divergir da el caso peor: compila con MSBuild y luego intenta ejecutar tests con `dotnet test`, que sobre .NET Framework no ejecuta ninguno |
+| Qué cuenta como identificador de cliente | `hooks/cliente-guard-write.ps1` (lista en `~/.claude/rs-clientes.json`, **fuera del repo**) | La lista no puede vivir aquí: sería la propia fuga que la regla del §10 prohíbe. Duplicarla en un fichero versionado convierte la guarda en el agujero |
 
 ⛔ **La decisión de toolchain se lee de los `.csproj`, nunca de nombres.** Un plugin genérico no
 sabe cómo se llaman las soluciones ni los procesos de cada cliente, y una lista de nombres queda
@@ -576,7 +590,8 @@ confundirlas fue el bug que motivó la librería (CHANGELOG 3.21.0).
 | `references/gates.md` | Procedimiento completo de los gates del pipeline (aprobación del plan, checklist final, log) |
 | `references/testing.md` | Patrones de test RS/uCollect |
 | `references/troubleshooting.md` | Fallos comunes (p.ej. MSB4019) |
-| `references/jira.md` | Setup de la integración Jira (skill `rs-jira`): `.jira-dev-config.json`, credenciales, herramientas |
+| `references/jira.md` | Integración Jira (skill `rs-jira`): `.jira-dev-config.json`, credenciales, `defaults`, réplica de la última tarea y blocklist, subrutina de descarga, FP de CrowdStrike |
+| `references/mantis.md` | Integración MantisBT (skill `rs-mantis`): `.mantis-dev-config.json`, credenciales, catálogo de subcomandos de `mantis-cli.ps1` ↔ endpoints REST, protocolo `advance`, rate en PATCH |
 | `references/actualizador.md` | Entregas a cliente: tabla `RVERSIONES`, cálculo del delta, qué se empaqueta en instalador vs actualizador, exclusión de configuración, `rutas.json`, orden de instalación |
 | `references/batch-config.md` | Configuración centralizada de los batch .NET Framework (`Batch\App.Batch.config` + `Batch\Directory.Build.targets`): qué es fuente y qué artefacto, excepciones por proyecto, dependencias de ODP.NET, adopción en un workspace |
 
@@ -634,6 +649,31 @@ existan en *su* árbol (`${CLAUDE_PLUGIN_ROOT}` sigue sin expandirse en markdown
 ⚠️ El plugin raíz mantiene `source: "./"`, así que su copia instalada incluye también `plugins/`.
 Es peso muerto sin efecto funcional (§2): no se auto-descubre nada desde ahí.
 
+### 9.6 Presupuesto de contexto (qué se carga siempre y qué bajo demanda)
+
+Tres niveles, con coste muy distinto. Medido en 3.22.1 sobre sesiones reales:
+
+| Nivel | Qué es | Cuándo se carga | Coste actual |
+|---|---|---|---|
+| **Siempre** | `description`/`tools` del frontmatter de **todos** los agentes, comandos y skills | En el system prompt de cada sesión, se use el plugin o no | ~11,1k tok |
+| **Al invocar** | El cuerpo del `SKILL.md` o del `commands/*.md` que se lanza | Al escribir el comando | 3,3k–4,1k tok |
+| **Bajo demanda** | `references/*.md` | Solo cuando una fase manda leerla | 0 si no se toca |
+
+Reglas que salen de ahí:
+
+- **Frontmatter de agentes internos = una línea.** Los `rs-editor-*` los despacha el orquestador por
+  nombre, nunca el usuario: su `description` dice qué etapa es y quién la invoca, y nada más. El
+  porqué del tier de modelo ya está en el campo `model:`; el detalle de comportamiento va en el
+  cuerpo del agente, que solo se carga cuando se lanza. ⚠️ Un agente con **modo directo**
+  (`rs-editor-db-modeler` → `/rs-erd`) conserva sus triggers completos: ahí la descripción es lo que
+  hace que se le encuentre.
+- **`SKILL.md` = procedimiento y gates; reference = detalle.** Si un bloque solo hace falta en una
+  fase concreta o en una rama poco frecuente (alta de issue, descarga de adjuntos, catálogo de flags
+  de un hook), va a la reference y el `SKILL.md` deja el puntero con la sección exacta. ⛔ Los gates,
+  las confirmaciones y los ⛔ **no se mueven nunca**: si están en la reference, se pueden saltar.
+- **No duplicar entre `SKILL.md` y su reference.** Duplicar cuesta el doble y desincroniza; el
+  `SKILL.md` es el que apunta, la reference es la que manda.
+
 ---
 
 ## 10. Puntos de sincronización de documentación
@@ -649,6 +689,7 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Nueva skill | README · CHANGELOG · §2/§3 este doc |
 | **Nuevo plugin en el marketplace** | `marketplace.json` (entrada + descripción del marketplace) · README raíz (sección de instalación) · CHANGELOG raíz (alta) · §1/§2/§9.5 este doc · README y CHANGELOG **propios** del plugin nuevo |
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
+| Mover contenido `SKILL.md` ↔ reference | tabla §8 este doc (contenido de la reference) · §9.6 si cambia la convención · CHANGELOG con el antes/después en tokens |
 | **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
 
 ⛔ **Sin nombres de clientes, en ningún fichero del repo.** Ni en documentación, ni en el

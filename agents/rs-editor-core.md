@@ -1,6 +1,6 @@
 ---
 name: rs-editor-core
-description: Etapa central del pipeline RS Enterprise Agent — implementa el cambio C#/SQL. Escribe código de producción (por eso corre en el modelo de mayor capacidad). Invocado por el orquestador (paso 4), nunca por el usuario.
+description: Etapa `core` del pipeline rs-enterprise-agent (paso 4) — implementa el cambio C#/SQL. Solo la invoca el orquestador, nunca el usuario.
 model: opus
 tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, Read, Edit, Write, Grep, Glob
 ---
