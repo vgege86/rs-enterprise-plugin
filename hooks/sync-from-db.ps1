@@ -129,6 +129,28 @@ foreach ($tp in $model.tables.PSObject.Properties) {
     $tblIdx[$tName] = @{ obj = $t; cols = $colSet }
 }
 
+function Assert-RsLecturaBd {
+    <#  Aborta si la salida del cliente SQL trae diagnostico (ORA-/SP2-/PLS-/Msg).
+
+        Sin esto, una consulta que falla no se distingue de un esquema al que no se ve: las
+        filas simplemente no llegan, `$vistas` queda vacio y el resumen lo explica como
+        "N tablas no visibles en esta lectura, CONSERVADAS" con un hueco de cobertura
+        atribuido a los GRANT. Es un diagnostico plausible y equivocado, y ademas
+        tranquilizador: dice que no se ha borrado nada -que es cierto- y se calla que no se
+        ha leido nada. Paso de verdad: un ORA-00936 por un punto y coma dentro de un
+        comentario dejo el modelo intacto y el hook termino con exito.
+
+        Solo se miran lineas ANCLADAS al principio: 'ORA-' dentro de un dato no es un error.  #>
+    param([string]$Salida, [string]$Motor)
+    if (!(Test-Path $Salida)) { throw "$Motor - no se genero salida de la consulta ($Salida)." }
+    $diag = @(Get-Content $Salida -ErrorAction SilentlyContinue |
+              Where-Object { $_ -match '^\s*(?:ORA-\d{3,6}\b|SP2-\d{3,6}\b|PLS-\d{3,6}\b|Msg \d+\b|Sqlcmd:)' })
+    if ($diag.Count -gt 0) {
+        $detalle = ($diag | Select-Object -First 5) -join ' | '
+        throw "$Motor rechazo la consulta de estructura: $detalle. El modelo NO se ha tocado."
+    }
+}
+
 # --- Extraer esquema segun motor ---
 $tempSql = [System.IO.Path]::GetTempFileName() + ".sql"
 $tempOut = [System.IO.Path]::GetTempFileName() + ".csv"
@@ -144,8 +166,18 @@ SET COLSEP '|'
 CONNECT $user/$password@$dataSource
 SELECT t.TABLE_NAME,
        c.COLUMN_NAME,
+       -- El tamano NO es decorativo. RAW, VARCHAR2, NVARCHAR2, VARCHAR y UROWID sin
+       -- longitud son INVALIDOS en un CREATE TABLE (Oracle da ORA-00906) y CHAR/NCHAR sin
+       -- longitud son peor: valen, significan 1, y truncan datos sin un solo error. RAW se
+       -- quedo fuera de este CASE y el instalador emitio 15 columnas RAW peladas, DDL que
+       -- solo revienta en el servidor del cliente. Los tipos medidos en CARACTERES van por
+       -- CHAR_LENGTH. RAW se mide en BYTES y va por DATA_LENGTH, porque CHAR_LENGTH vale 0
+       -- para RAW y habria generado RAW(0), igual de invalido.
+       -- Ojo al escribir aqui: en SQL*Plus un punto y coma al final de una linea de
+       -- comentario TERMINA la sentencia y el SELECT sale cortado (ORA-00936).
        c.DATA_TYPE || CASE
-           WHEN c.DATA_TYPE IN ('VARCHAR2','NVARCHAR2','CHAR') THEN '(' || c.CHAR_LENGTH || ')'
+           WHEN c.DATA_TYPE IN ('VARCHAR2','NVARCHAR2','CHAR','NCHAR') THEN '(' || c.CHAR_LENGTH || ')'
+           WHEN c.DATA_TYPE IN ('RAW','VARCHAR','UROWID') THEN '(' || c.DATA_LENGTH || ')'
            WHEN c.DATA_TYPE = 'NUMBER' AND c.DATA_PRECISION IS NOT NULL THEN '(' || c.DATA_PRECISION || CASE WHEN c.DATA_SCALE > 0 THEN ',' || c.DATA_SCALE ELSE '' END || ')'
            ELSE ''
        END AS FULL_TYPE,
@@ -167,6 +199,7 @@ EXIT;
 "@ | Set-Content $tempSql -Encoding ASCII
 
     sqlplus -S /nolog "@$tempSql" > $tempOut 2>&1
+    Assert-RsLecturaBd -Salida $tempOut -Motor "ORACLE"
     $rows = Get-Content $tempOut | Where-Object { $_ -match '\|' }
 
     foreach ($row in $rows) {
@@ -210,8 +243,16 @@ SET NOCOUNT ON;
 SELECT
     t.TABLE_NAME,
     c.COLUMN_NAME,
+    -- Mismo criterio que en la rama Oracle. Dos agujeros aparte del de los tipos binarios:
+    -- CHARACTER_MAXIMUM_LENGTH vale -1 para los tipos (MAX), y sin tratarlo se emitia
+    -- 'nvarchar(-1)', que no compila; y binary/varbinary sin longitud son validos y
+    -- significan (1), es decir truncado silencioso a 1 byte.
     c.DATA_TYPE + CASE
-        WHEN c.DATA_TYPE IN ('varchar','nvarchar','char','nchar') AND c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL
+        WHEN c.DATA_TYPE IN ('varchar','nvarchar','char','nchar','binary','varbinary')
+             AND c.CHARACTER_MAXIMUM_LENGTH = -1
+            THEN '(MAX)'
+        WHEN c.DATA_TYPE IN ('varchar','nvarchar','char','nchar','binary','varbinary')
+             AND c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL
             THEN '(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS VARCHAR) + ')'
         WHEN c.DATA_TYPE IN ('decimal','numeric') AND c.NUMERIC_PRECISION IS NOT NULL
             THEN '(' + CAST(c.NUMERIC_PRECISION AS VARCHAR) + ',' + CAST(c.NUMERIC_SCALE AS VARCHAR) + ')'
@@ -245,6 +286,7 @@ ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
     } finally {
         Remove-Item Env:SQLCMDPASSWORD -ErrorAction SilentlyContinue
     }
+    Assert-RsLecturaBd -Salida $tempOut -Motor "SQLSERVER"
     $rows = Get-Content $tempOut | Where-Object { $_ -match '\|' }
 
     foreach ($row in $rows) {

@@ -12,6 +12,8 @@
       - precedencia de NLS_LANG      -> acentos corruptos SIN error de Oracle
       - '?' en WALLET_LOCATION       -> ArgumentException que abortaba el pre-vuelo entero
       - manifiesto incompleto        -> entrega a medias detectada antes de conectar
+      - 'autenticacion: wallet' declarado sin wallet en el servidor -> ORA-01017 y el
+        script no ofrecia nunca usuario/contrasena: moria con pistas de wallet
 
     Ejecutar: Invoke-Pester tests/EjecutarScripts.Tests.ps1
 #>
@@ -155,8 +157,83 @@ Describe "Get-RsModoAutenticacion: como se decide wallet vs usuario" {
         Get-RsModoAutenticacion -Declarado "" -UsuarioParam "" -UsuarioJson "RSUSER" | Should -BeExactly "usuario"
     }
 
-    It "sin declarar y sin usuario -> externa" {
-        Get-RsModoAutenticacion -Declarado "" -UsuarioParam "" -UsuarioJson "" | Should -BeExactly "externa"
+    It "sin declarar y sin usuario -> indeterminado, NO se asume wallet" {
+        # Cicatriz: antes devolvia "externa". Eso es afirmar que hay wallet sin haber mirado si
+        # existe -> el connect salia '/@alias', Oracle contestaba ORA-01017 y el script moria
+        # dando pistas de wallet sin haber ofrecido jamas usuario/contrasena.
+        Get-RsModoAutenticacion -Declarado "" -UsuarioParam "" -UsuarioJson "" | Should -BeExactly "indeterminado"
+    }
+}
+
+Describe "Test-RsWalletDisponible: la declaracion de rutas.json se contrasta con la maquina" {
+
+    It "wallet completo -> usable y comprobado" {
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $true -HayWalletLocation $true -HaySso $true
+        $r.usable     | Should -BeTrue
+        $r.comprobado | Should -BeTrue
+    }
+
+    It "TNS_ADMIN con sqlnet.ora pero sin WALLET_LOCATION -> NO usable, y consta" {
+        # Constancia de ausencia: se puede bloquear el /@alias y ofrecer usuario/contrasena.
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $true -HayWalletLocation $false -HaySso $false
+        $r.usable     | Should -BeFalse
+        $r.comprobado | Should -BeTrue
+        $r.motivo     | Should -Match 'WALLET_LOCATION'
+    }
+
+    It "TNS_ADMIN sin sqlnet.ora -> NO usable (sin sqlnet.ora no hay wallet posible)" {
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $false -HayWalletLocation $false -HaySso $false
+        $r.usable | Should -BeFalse
+    }
+
+    It "wallet declarado pero sin cwallet.sso -> NO usable (no es de auto-login)" {
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $true -HayWalletLocation $true -HaySso $false
+        $r.usable | Should -BeFalse
+        $r.motivo | Should -Match 'cwallet.sso'
+    }
+
+    It "carpeta de wallet inexistente -> NO usable" {
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $true -HayWalletLocation $true -HaySso $true -RutaExiste $false
+        $r.usable | Should -BeFalse
+    }
+
+    It "sin TNS_ADMIN no se bloquea nada: no comprobado, y decide el cliente Oracle" {
+        # Sin TNS_ADMIN el cliente Oracle puede tener su propia configuracion. Aqui NO hay
+        # constancia de ausencia, asi que bloquear romperia instalaciones que hoy funcionan:
+        # la red de seguridad es el reintento con usuario/contrasena al fallar la conexion.
+        $r = Test-RsWalletDisponible -HayTnsAdmin $false -HaySqlnet $false -HayWalletLocation $false -HaySso $false
+        $r.usable     | Should -BeTrue
+        $r.comprobado | Should -BeFalse
+    }
+
+    It "ruta no comprobable ('?' de ORACLE_HOME) -> no comprobado, no se bloquea" {
+        $r = Test-RsWalletDisponible -HayTnsAdmin $true -HaySqlnet $true -HayWalletLocation $true -HaySso $false -RutaComprobable $false
+        $r.usable     | Should -BeTrue
+        $r.comprobado | Should -BeFalse
+    }
+}
+
+Describe "Test-RsErrorCredenciales: que fallo merece reintento con usuario y contrasena" {
+
+    It "ORA-01017 es reintentable (en modo wallet significa 'el wallet no aporta credencial')" {
+        Test-RsErrorCredenciales -Salida "ORA-01017: invalid username/password; logon denied" | Should -BeTrue
+    }
+
+    It "ORA-12578 y ORA-28759 (wallet no abierto / no encontrado) son reintentables" {
+        Test-RsErrorCredenciales -Salida "ORA-12578: TNS:wallet open failed" | Should -BeTrue
+        Test-RsErrorCredenciales -Salida "ORA-28759: failure to open file"   | Should -BeTrue
+    }
+
+    It "el 'Login failed' de SQL Server es reintentable" {
+        Test-RsErrorCredenciales -Salida "Login failed for user 'DOMINIO\usuario'." | Should -BeTrue
+    }
+
+    It "ORA-12154 NO es reintentable: es resolucion de nombre, cambiar de modo no lo arregla" {
+        Test-RsErrorCredenciales -Salida "ORA-12154: TNS:could not resolve the connect identifier" | Should -BeFalse
+    }
+
+    It "ORA-12560 NO es reintentable: es protocolo" {
+        Test-RsErrorCredenciales -Salida "ORA-12560: TNS:protocol adapter error" | Should -BeFalse
     }
 }
 

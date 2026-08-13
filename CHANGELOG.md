@@ -1,5 +1,177 @@
 # RS Enterprise Agent — Changelog
 
+## 3.25.0 — 2026-08-13
+
+### El instalador declaraba wallet, el servidor no lo tenía, y el script moría sin ofrecer la otra vía
+
+En una instalación de cliente, `Ejecutar-Scripts.ps1` abortaba antes de tocar nada:
+
+```
+== Prueba de conexion ==
+  ERROR:
+  ORA-01017: invalid username/password; logon denied
+  SP2-0751: Unable to connect to Oracle.  Exiting SQL*Plus
+ERROR: no se ha podido conectar (exit 1).
+```
+
+y **nunca** pedía usuario ni contraseña. El `rutas.json` declaraba `autenticacion: "wallet"`, así que
+el script componía `sqlplus /@alias` y se quedaba ahí. Lo que hacía el fallo caro no era el error:
+era que el diagnóstico apuntaba en la dirección contraria. Las pistas que imprimía hablaban de que
+"el wallet no aporta credencial para ese alias" —un problema de configuración del wallet— cuando lo
+que pasaba es que en ese servidor **no había wallet ninguno**. Y el usuario de conexión estaba
+declarado en el mismo bloque `bd`, sin usarse.
+
+Peor: el pre-vuelo **ya lo sabía**. Comprobaba `sqlnet.ora`, `WALLET_LOCATION` y `cwallet.sso`, veía
+que no estaban, lo imprimía como AVISO y tiraba la evidencia. El único `Read-Host` de credenciales
+del script vivía dentro de la rama `usuario`, que en modo externo no se ejecuta jamás.
+
+La causa de fondo es de criterio, no de código: **lo que dice `rutas.json` es una declaración de
+quien preparó la entrega, no un hecho del servidor del cliente**, y se estaba tratando como un hecho.
+Había además un defecto latente por el mismo motivo: sin `autenticacion` **ni** `usuario`, la
+resolución devolvía `externa` —afirmar que hay wallet sin haber mirado— y un test lo fijaba como
+comportamiento esperado.
+
+Ahora la declaración se **contrasta** antes de conectar:
+
+- `Get-RsModoAutenticacion` devuelve `indeterminado` cuando no hay nada declarado, en vez de suponer
+  wallet. El modo se resuelve por la evidencia de la máquina y se deja **escrito** cuál se eligió.
+- `Test-RsWalletDisponible` (función pura) contrasta `TNS_ADMIN` → `sqlnet.ora` → `WALLET_LOCATION` →
+  carpeta → `cwallet.sso`. Distingue "consta que no hay" de "no se ha podido comprobar", y **solo
+  bloquea con constancia de ausencia**: donde no puede comprobar, no bloquea, para no romper
+  instalaciones que hoy funcionan.
+- `Request-RsCredenciales` pide **usuario y** contraseña, con el usuario de `rutas.json` como
+  sugerencia.
+- La prueba de conexión va en bucle acotado a 3 intentos. `Test-RsErrorCredenciales` decide qué
+  merece reintento: ORA-01017/12578/28759/01005 y `Login failed` sí; ORA-12154 y ORA-12560 **no**
+  —son resolución de nombre y protocolo, y cambiar de modo de autenticación no los arregla—.
+- Las pistas de error se separan por modo, y se avisa de la contradicción `wallet` + `usuario`.
+- Con `-SinConfirmar` **no** pregunta: sale con instrucciones (`-Usuario`/`-Password`) en vez de
+  intentar una conexión que consta que va a fallar.
+
+`RVERSIONES-oracle.sql` pasa de `USER_*` a `ALL_*` filtrando por
+`SYS_CONTEXT('USERENV','CURRENT_SCHEMA')`. `USER_*` mira el usuario **conectado** mientras
+`Ejecutar-Scripts.ps1` hace `ALTER SESSION SET CURRENT_SCHEMA`: con un usuario que no es el dueño, se
+comprobaba un esquema y se creaba en otro.
+
+### La utilidad de purga: fuera del paquete, y ahora con tests
+
+`assets\utilidades\Purgar-Esquema.ps1` vacía un esquema Oracle para poder relanzar una instalación
+limpia. Tres salvaguardas: lee `USER_*` —el diccionario del usuario conectado— y exige que USER,
+`CURRENT_SCHEMA` y el `schema` de `rutas.json` sean los tres el mismo; enseña el inventario con
+cuántas tablas **contienen datos**; y pide que se teclee el nombre del esquema. Más `-Simular`.
+
+⛔ Vive **deliberadamente fuera** del paquete del cliente (`C:\AIS\<Proyecto>\Utilidades\`). El
+`Instalador\` se copia al servidor del cliente y se queda ahí para siempre; una herramienta de
+vaciado conviviendo con `Instalar.ps1` anula la propiedad que hace seguro al instalador: que el
+CREATE pelado se **pare** ante un esquema no vacío. Ahora hay tres tests que fijan esa decisión, para
+que mover el fichero deje de ser un cambio silencioso.
+
+Revisión de esta versión sobre lo que llegó ya aplicado:
+
+- **Reintroducía el bug que se acababa de arreglar**: su resolución de modo devolvía `externa` sin
+  declaración ni usuario. Corregido igual que en `Ejecutar-Scripts.ps1` (`Get-RsModoAuthPurga` →
+  `indeterminado`, y entonces pide usuario).
+- El script no tenía **ningún** gancho de test. Se extraen las decisiones a funciones puras y se
+  añade `-DotSourceOnly`, el patrón que ya usa `Ejecutar-Scripts.ps1`.
+- El total de "objetos que se van a borrar" sumaba los índices y la papelera: anunciaba ~950 objetos
+  sobre un esquema de 300 tablas. Ahora cuenta solo los DROP explícitos y los índices se informan
+  aparte, porque casi todos respaldan una PK y caen con su tabla.
+- Un inventario que no devolvía **ninguna** fila se leía como "el esquema ya está vacío". Ahora eso
+  es un error duro: sin leer, no se purga.
+- `ConvertFrom-RsSecureString` libera el BSTR con `ZeroFreeBSTR` en vez de dejar la contraseña en
+  memoria no gestionada hasta que muere el proceso. Aplicado también a `Ejecutar-Scripts.ps1`.
+
+### El aviso de contradicción se adelanta a la generación del paquete
+
+`hooks\instalacion-paquete.ps1` copia el bloque `bd` **literal** de la config del proyecto al
+`rutas.json` que viaja al cliente. Una declaración incoherente no daba ningún error al generar: se
+descubría con alguien delante del servidor del cliente. `Test-RsAuthEntornoCoherente` la revisa ahora
+en la generación y avisa de tres casos: autenticación externa **y** `usuario` a la vez; wallet con
+una `conexion` que no es un alias de `tnsnames.ora` (el wallet indexa por el texto exacto → ORA-12154
+con pinta de fallo de red); y ni `autenticacion` ni `usuario`. No bloquea —`Ejecutar-Scripts.ps1` ya
+resuelve por evidencia—, pero deja de ser una sorpresa.
+
+### La copia que se ejecuta no era la que se editaba
+
+⛔ El plugin se ejecuta desde `~\.claude\plugins\cache\rs-enterprise-agent\rs-enterprise-agent\<version>\`,
+**no** desde el checkout de `marketplaces\`. Nada los mantiene sincronizados salvo
+`/plugin marketplace update`.
+
+Durante este arreglo se sincronizaron a mano, fichero a fichero. Se copiaron **nueve de diez**. El
+que se quedó atrás fue el de tests, así que el cache ejecutaba el código corregido contra la suite
+vieja — incluida la aserción que fijaba el bug recién arreglado. Todo daba verde y nada era cierto.
+
+`scripts\verificar-sync.ps1`, registrado en `SessionStart`, compara la copia en ejecución con la
+fuente: primero la `version` de `plugin.json`, y si coincide, fichero a fichero por SHA-256
+normalizando el fin de línea. Distingue los tres casos, que se arreglan distinto: contenido distinto,
+en la fuente y sin ejecutarse, y —el que más caro sale— **ejecutándose y ausente de la fuente**, es
+decir editado directamente en el cache y condenado a desaparecer en la siguiente actualización. No
+copia nada: sincronizar es de `/plugin marketplace update`. Sale por 0 con `-Quiet`; sin `-Quiet`
+devuelve 1, para encadenarlo. El paso 9 de `skills\rs-plugin-dev\SKILL.md` pasa a exigirlo, junto con
+la suite en verde.
+
+### Un `.ps1` del paquete del cliente perdió el BOM
+
+El arreglo en caliente reescribió `assets\instalacion\Ejecutar-Scripts.ps1` **sin** BOM UTF-8 (en
+`HEAD` lo tenía). No rompía hoy porque el fichero quedó todo en ASCII, pero es el artefacto que se
+ejecuta en el servidor del cliente con `powershell -File`: bajo Windows PowerShell 5.1, sin BOM el
+fichero se decodifica con la codepage ANSI y el primer acento que alguien añada al comentar lo deja
+sin parsear. `tests/Encoding.Tests.ps1` lo cazó — que es exactamente para lo que existe.
+
+### El DDL entregable salía sin tamaños, y el paquete chocaba consigo mismo
+
+Tres fallos del mismo lote, todos en el camino BD → modelo → `.sql` del cliente.
+
+**`RAW` sin longitud.** `hooks\sync-from-db.ps1` construía el tipo con un `CASE` que solo contemplaba
+`VARCHAR2`/`NVARCHAR2`/`CHAR`. `RAW` se quedaba fuera y el modelo guardaba `RAW` pelado; el instalador
+lo emitía tal cual y el `CREATE TABLE` daba **ORA-00906** en el servidor del cliente — 15 columnas en
+7 tablas. Ahora el `CASE` cubre también `NCHAR` (por `CHAR_LENGTH`) y `RAW`/`VARCHAR`/`UROWID` (por
+`DATA_LENGTH`: `CHAR_LENGTH` vale 0 para `RAW` y habría generado `RAW(0)`, igual de inválido). En la
+rama SQL Server, `binary`/`varbinary` y los tipos `(MAX)`.
+
+Y una red de seguridad, porque el modelo se puede editar a mano: `_dbtypes.falta_tamano()` clasifica
+los tipos que no pueden emitirse sin tamaño en **inválidos** (el motor rechaza el DDL: ruidoso pero
+honesto) y **silenciosos** —`CHAR`/`NCHAR`/`binary` sin longitud son válidos, significan `(1)` y
+truncan datos sin un solo error, que es el que hay que cazar aquí porque en el cliente ya no se caza—.
+`installer-ddl.py` acumula todas las columnas rotas, las lista juntas y **no escribe el fichero**:
+parar en la primera obligaría a N pasadas para descubrir N columnas malas. Un `.sql` inválido en la
+carpeta del instalador es peor que no tenerlo, porque viaja y se ejecuta a medias.
+
+**El paquete duplicaba su propia infraestructura.** `RVERSIONES`, `SEQ_RVERSIONES` e
+`IX_RVERSIONES_ENT_SOL` los crea `00-RVERSIONES.sql`, que va el primero del manifiesto. Pero existen
+también en la BD de desarrollo —es donde se registran las entregas—, así que el modelo los capturaba
+como tablas del proyecto y la extracción de objetos como secuencias del proyecto: sobre un esquema
+recién creado y **vacío**, el paquete creaba `SEQ_RVERSIONES` y acto seguido intentaba crearla otra
+vez → **ORA-00955**. El error se leía como "la BD del cliente ya tenía objetos" y era el paquete
+chocando consigo mismo. Se excluyen **declarándolo**, no en silencio, para que el contraste de
+cobertura no lo lea como pérdida de objetos.
+
+**Índices duplicados.** La lista de índices del modelo es aditiva (`source: manual` + `source: db`),
+así que el mismo índice salía dos veces. Se deduplican por nombre; si dos definiciones con el mismo
+nombre traen **columnas distintas** no se elige en silencio: se emite la primera y se avisa, porque
+eso no es un duplicado inocente sino que alguien declaró una cosa y la BD tiene otra.
+
+### Una lectura de BD que fallaba se reportaba como un problema de permisos
+
+`hooks\sync-from-db.ps1` no miraba la salida del cliente SQL. Cuando la consulta fallaba, las filas
+simplemente no llegaban, la lista de tablas vistas quedaba vacía y el resumen lo explicaba como
+"330 tablas no visibles en esta lectura, CONSERVADAS", con el hueco atribuido a los GRANT. Un
+diagnóstico plausible, equivocado y además tranquilizador: decía que no se había borrado nada —cierto—
+y se callaba que no se había **leído** nada. Pasó de verdad con un ORA-00936 por un punto y coma
+dentro de un comentario: el modelo quedó intacto y el hook terminó con éxito.
+
+`Assert-RsLecturaBd` aborta si la salida trae diagnóstico (`ORA-`/`SP2-`/`PLS-`/`Msg`/`Sqlcmd:`),
+anclado a principio de línea para que un `ORA-` dentro de un dato no cuente. La clase de fallo importa
+más que el caso: una lectura que no se comprueba no es una lectura.
+
+**Ficheros**: `assets\instalacion\Ejecutar-Scripts.ps1`, `assets\instalacion\RVERSIONES-oracle.sql`,
+`assets\utilidades\Purgar-Esquema.ps1` (nuevo), `scripts\verificar-sync.ps1` (nuevo),
+`hooks\instalacion-paquete.ps1`, `hooks\sync-from-db.ps1`, `scripts\_dbtypes.py`,
+`scripts\installer-ddl.py`, `scripts\installer-objects.py`, `agents\rs-instalador.md`,
+`references\actualizador.md`, `references\hooks.md`, `skills\rs-plugin-dev\SKILL.md`,
+`.claude-plugin\plugin.json`, `tests\EjecutarScripts.Tests.ps1`,
+`tests\PurgarEsquema.Tests.ps1` (nuevo). Suite: **846 pasan, 0 fallan** (783/1 antes).
+
 ## 3.24.0 — 2026-08-12
 
 ### Instalar el plugin sin Python dejaba un plugin que parecía instalado

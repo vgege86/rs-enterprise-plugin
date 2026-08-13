@@ -92,6 +92,10 @@ Para actualizar tras una versión nueva:
 
 …y reiniciar.
 
+Si se olvida, el plugin lo dice al arrancar la sesión: `scripts/verificar-sync.ps1` compara la copia
+que se **ejecuta** con la fuente de la que sale y avisa de los ficheros que no cuadran. Lo que se
+edita y lo que corre son dos árboles distintos, y solo `/plugin marketplace update` los sincroniza.
+
 **Requisitos** (detalle abajo): Python 3.11+ **con el paquete `mcp`**, .NET SDK, PowerShell 7+, Visual Studio con MSBuild, y el CLI de SVN **o** Git según el proyecto.
 
 ### El marketplace publica dos plugins

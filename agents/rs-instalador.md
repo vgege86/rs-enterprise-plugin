@@ -1,4 +1,4 @@
----
+﻿---
 name: rs-instalador
 description: Genera el instalador completo de cliente (instalación limpia) de una solución uCollect/RS en C:\AIS\<Proyecto>\Instalador — EXES batch, AgendaWeb, ServiceManager+Modulos, Scripts SQL y el paquete de instalación en cliente (Instalar.ps1 con backup, Ejecutar-Scripts.ps1, rutas.json, readme.txt). Usar para /rs-instalador — orquesta build masivo + deploy a carpeta, alto blast radius; gestiona el JSON de config por cliente y verifica evidencia real por etapa.
 model: opus
@@ -109,8 +109,14 @@ sale con `rutas.json` de plantilla y hay que rellenarlo a mano antes de entregar
 
 En el bloque `bd`, `autenticacion` decide cómo conecta `Ejecutar-Scripts.ps1` en el cliente:
 `wallet`/`externa`/`integrada` → autenticación externa (Oracle: `sqlplus /@alias`; SQL Server:
-`sqlcmd -E`), `usuario` → usuario y contraseña. Si se omite, se deduce de si hay `usuario`, así que
-los JSON de proyecto anteriores siguen valiendo. ⛔ Con wallet, `conexion` es el **alias exacto** de
+`sqlcmd -E`), `usuario` → usuario y contraseña. Si se omite y hay `usuario`, se deduce `usuario`, así que
+los JSON de proyecto anteriores siguen valiendo; si se omite y **tampoco** hay `usuario`, el modo no
+se asume: lo resuelve el cliente contrastando la máquina (`TNS_ADMIN`/`sqlnet.ora`/`cwallet.sso`).
+⚠️ Declarar `wallet` es una **afirmación sobre el servidor del cliente**, no un ajuste: si ahí no
+hay wallet, `Ejecutar-Scripts.ps1` lo detecta antes de conectar y ofrece usuario/contraseña en vez
+de intentar `/@alias` — pero el `rutas.json` sigue estando mal y hay que corregirlo. Declarar
+`wallet` **y** `usuario` a la vez es contradictorio: el usuario no se envía, solo se usa como
+sugerencia si hay que caer a contraseña. ⛔ Con wallet, `conexion` es el **alias exacto** de
 `tnsnames.ora`, nunca un descriptor ni `host:puerto/servicio`: el wallet indexa la credencial por el
 texto del alias y el troceo por `/` y `@` produce un ORA-12154 que parece de red y no lo es —
 `Ejecutar-Scripts.ps1` lo rechaza antes de conectar. `tnsAdmin` es la carpeta del wallet y `schema`

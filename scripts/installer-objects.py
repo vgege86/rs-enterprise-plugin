@@ -99,6 +99,18 @@ IDENTITY_SEQ_RE = re.compile(r"^ISEQ\$\$", re.IGNORECASE)
 # explícitamente el contraste con el diccionario los lee como objetos perdidos.
 RECYCLE_RE = re.compile(r"^BIN\$", re.IGNORECASE)
 
+# Infraestructura del PAQUETE, no del proyecto: la tabla RVERSIONES, su secuencia y su índice
+# los crea 00-RVERSIONES.sql, que va el PRIMERO del manifiesto y está guardado con
+# IF NOT EXISTS. Pero esos objetos existen también en la BD de desarrollo —es donde se
+# registran las entregas—, así que la extracción los capturaba como objetos del proyecto y el
+# paquete los traía DOS veces: sobre un esquema vacío y recién creado, 00-RVERSIONES.sql creaba
+# SEQ_RVERSIONES y acto seguido 01-Secuencias.sql intentaba crearla otra vez -> ORA-00955. El
+# error parecía "la BD del cliente ya tenía objetos" y era el paquete chocando consigo mismo.
+# Se excluyen DECLARÁNDOLO (no en silencio), para que el contraste de cobertura no lo lea como
+# una pérdida de objetos.
+INFRA_PAQUETE_RE = re.compile(r"^(RVERSIONES|SEQ_RVERSIONES|IX_RVERSIONES_ENT_SOL|PK_RVERSIONES)$",
+                              re.IGNORECASE)
+
 # (número, fichero, título) de las seis etapas. Idénticos en los dos motores por diseño — ver
 # etapas_por_motor —, así que viven aquí para que el contraste de cobertura pueda resolver la
 # sección del modelo sin necesitar la config de BD.
@@ -375,6 +387,9 @@ def gen_secuencias(cfg: dict) -> tuple:
             continue
         if RECYCLE_RE.match(nombre):
             excluidas.append((nombre, "recycle bin"))
+            continue
+        if INFRA_PAQUETE_RE.match(nombre):
+            excluidas.append((nombre, "infraestructura del paquete (la crea 00-RVERSIONES.sql)"))
             continue
         nombres.append(nombre)
         cuerpos[nombre] = "\n".join(buf).strip()

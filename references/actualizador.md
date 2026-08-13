@@ -1,4 +1,4 @@
-# Entregas a cliente: instalador y actualizador
+﻿# Entregas a cliente: instalador y actualizador
 
 Convenciones comunes a los dos modos de entrega:
 
@@ -150,7 +150,14 @@ SQL Server: `SQLCMDPASSWORD`), donde quedarían visibles en la lista de procesos
 |-------|--------|------------|
 | `wallet` \| `externa` \| `integrada` | `sqlplus /@<alias>` (autenticación externa) | `sqlcmd -E` |
 | `usuario` | `/nolog` + `CONNECT` | `sqlcmd -U` + `SQLCMDPASSWORD` |
-| *(ausente)* | se deduce de si hay `usuario` — los `rutas.json` ya entregados siguen valiendo | ídem |
+| *(ausente)* | con `usuario` → `usuario` (los `rutas.json` ya entregados siguen valiendo); **sin** `usuario` → se resuelve por la evidencia de la máquina, nunca se asume wallet | ídem |
+
+⛔ `autenticacion: wallet` es una **afirmación sobre el servidor del cliente**, no un ajuste local.
+`Ejecutar-Scripts.ps1` la contrasta antes de conectar (`TNS_ADMIN` → `sqlnet.ora` → `WALLET_LOCATION`
+→ `cwallet.sso`): si consta que no hay wallet **no** intenta `/@alias` —daría un ORA-01017 que se lee
+como "credenciales del wallet mal" cuando lo que falta es el wallet— y ofrece usuario/contraseña. Si
+el fallo llega igualmente (ORA-01017/12578/28759 o `Login failed`), reintenta pidiéndolas, hasta 3
+intentos; con `-SinConfirmar` no pregunta y sale indicando `-Usuario`/`-Password`.
 
 ⛔ Con wallet, `conexion` es el **alias exacto** de `tnsnames.ora`, nunca un descriptor
 `(DESCRIPTION=...)` ni un EZConnect `host:puerto/servicio`: el wallet indexa la credencial por el

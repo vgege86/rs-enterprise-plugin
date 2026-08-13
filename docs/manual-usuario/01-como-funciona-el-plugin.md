@@ -345,6 +345,25 @@ XML de cada proceso batch, ni los ficheros de ajustes. Los parámetros nuevos se
 para que se apliquen a mano. Los ficheros de configuración **del binario** sí viajan, porque llevan
 las redirecciones de ensamblado.
 
+**Cómo conecta el script de scripts en el servidor del cliente.** El fichero de rutas puede declarar
+que ese entorno usa cartera de credenciales (wallet) o usuario y contraseña. Esa declaración es lo
+que escribió quien preparó la entrega, **no un hecho del servidor**, así que el script la contrasta
+con la máquina antes de conectar: si consta que ahí no hay cartera, no lo intenta —daría un error de
+credenciales que parece de la cartera cuando lo que falta es la cartera entera— y ofrece usuario y
+contraseña, que siempre está disponible. Si la conexión falla por credencial, vuelve a pedirlas hasta
+tres veces. En ejecución desatendida no pregunta: termina indicando qué parámetros pasar. Y si el
+fichero de rutas no declara nada, el modo **no se supone**: se resuelve por lo que hay en la máquina
+y se deja escrito cuál se eligió.
+
+**Vaciar un esquema para reinstalar de cero** es una herramienta aparte, en la carpeta de utilidades
+del proyecto, y ⛔ **no** forma parte de lo que se copia al servidor del cliente. Es deliberado: el
+instalador crea los objetos sin comprobar si existen y se para al primer choque, que es su forma de
+decir "este esquema no está vacío, para". Una herramienta de vaciado guardada junto al instalador
+convertiría esa parada en un trámite. La utilidad exige además que el usuario conectado sea el dueño
+del esquema, enseña cuántas tablas contienen datos antes de tocar nada, pide que se teclee el nombre
+del esquema para confirmar, y tiene un modo de simulación que genera el script de borrado sin
+ejecutarlo.
+
 Instalación en el servidor del cliente, para ambos paquetes:
 
 - **Ejecutar los scripts.** El script de scripts los lanza en orden, se detiene al primer fallo y
@@ -539,6 +558,8 @@ andamiaje de documentación y el primer modelo; después, `/rs-env` valida que t
   está en un Python distinto del que resuelve `python` en el PATH, o es una versión 2.x. El aviso de
   arranque de la sesión y `/rs-env` dicen cuál de los cuatro es, con el comando de arreglo.
 - **`/plugin marketplace update` no trae los cambios.** El plugin se ejecuta desde la copia cacheada
-  en el perfil del usuario; después de actualizar hay que reiniciar.
+  en el perfil del usuario; después de actualizar hay que reiniciar. Desde la 3.25.0 no hace falta
+  sospecharlo: al arrancar la sesión el plugin compara la copia que ejecuta con la fuente de la que
+  sale, y si no cuadran lo dice, con la lista de ficheros afectados y el comando de arreglo.
 - **La compilación no se verifica.** Falta el compilador o el ejecutor de tests que exige el tipo de
   solución. El plugin lo dice explícitamente en lugar de reportar un fallo de compilación falso.

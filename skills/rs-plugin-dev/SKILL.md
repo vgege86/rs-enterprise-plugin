@@ -136,6 +136,15 @@ Antes de reportar éxito, confirmar explícitamente:
   misma versión.
 - Nombres consistentes entre agente / comando / tabla; sin referencias colgantes.
 - Docs de la checklist §10 actualizadas.
+- **Tests en verde**: `Invoke-Pester tests/` sin fallos. Los `.ps1` nuevos o tocados tienen que
+  pasar además `tests/Encoding.Tests.ps1` (BOM UTF-8 — un `.ps1` sin BOM no parsea bajo Windows
+  PowerShell 5.1, que es el intérprete con el que corren los hooks).
+- ⛔ **Dónde se ha escrito.** El plugin se EJECUTA desde
+  `~\.claude\plugins\cache\rs-enterprise-agent\rs-enterprise-agent\<version>\`, no desde
+  `~\.claude\plugins\marketplaces\rs-enterprise-agent\` ni desde ningún otro clon. Antes de
+  reportar, ejecutar `scripts\verificar-sync.ps1` (sin `-Quiet`, devuelve 1 si hay desajuste) y
+  pegar su salida. Si el cambio se hizo en el cache, llevarlo a la fuente y commitearlo **antes**
+  de cerrar: la siguiente actualización del marketplace lo borraría.
 
 Reportar, verbatim y escaneable: ficheros creados/editados, **versión nueva**, y recordar al
 usuario: `Ejecuta /plugin marketplace update rs-enterprise-agent y reinicia Claude Code para

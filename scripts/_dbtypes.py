@@ -56,3 +56,49 @@ def ensure_oracle_char_semantics(col_type: str) -> str:
             return m.group(0)  # ya tiene calificador explícito
         return f"{type_name}({size} CHAR)"
     return re.sub(r'(VARCHAR2|NVARCHAR2|CHAR)\((\d+)\)', add_char, col_type, flags=re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------------------
+# Tipos que NO pueden emitirse sin tamaño.
+#
+# Dos categorías, y la segunda es la peligrosa:
+#   - INVALIDOS: el motor rechaza el DDL. RAW sin longitud da ORA-00906 ("missing left
+#     parenthesis") y la instalación del cliente se para en seco. Ruidoso, pero honesto.
+#   - SILENCIOSOS: el DDL es válido y significa (1). CHAR/NCHAR/binary/varbinary sin longitud
+#     crean una columna de 1 carácter/byte: la instalación termina OK y los datos se truncan
+#     después, sin un solo error. Este es el que hay que cazar aquí, porque en el cliente ya
+#     no se caza.
+#
+# El chequeo vive junto al mapeo de tipos a propósito: `adapt_type` con from==to devuelve la
+# cadena TAL CUAL, así que un tipo mal capturado en el modelo llega intacto al .sql. Sin este
+# gate el generador imprime "OK — DDL generado" sobre 241 KB de DDL que no compila.
+# ---------------------------------------------------------------------------------------
+TIPOS_EXIGEN_TAMANO_INVALIDO = {
+    'ORACLE':    {'RAW', 'VARCHAR2', 'NVARCHAR2', 'VARCHAR'},
+    'SQLSERVER': set(),
+}
+TIPOS_EXIGEN_TAMANO_SILENCIOSO = {
+    'ORACLE':    {'CHAR', 'NCHAR'},
+    'SQLSERVER': {'CHAR', 'NCHAR', 'VARCHAR', 'NVARCHAR', 'BINARY', 'VARBINARY'},
+}
+
+
+def falta_tamano(col_type: str, engine: str):
+    """¿Este tipo necesita un tamaño explícito y viene sin él?
+
+    Devuelve None si está bien, o 'invalido' / 'silencioso' según qué pase en el cliente.
+    Un tipo con paréntesis —incluido (MAX)— se da por bueno: aquí solo se comprueba que el
+    tamaño esté, no que sea razonable.
+    """
+    if not col_type:
+        return None
+    t = col_type.strip()
+    if '(' in t:
+        return None
+    base = t.split()[0].upper() if t.split() else t.upper()
+    eng = (engine or '').upper()
+    if base in TIPOS_EXIGEN_TAMANO_INVALIDO.get(eng, set()):
+        return 'invalido'
+    if base in TIPOS_EXIGEN_TAMANO_SILENCIOSO.get(eng, set()):
+        return 'silencioso'
+    return None

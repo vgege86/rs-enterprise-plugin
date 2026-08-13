@@ -44,10 +44,21 @@ runner/
 references/              conocimiento de dominio, cargado bajo demanda
 docs/                    esta doc + design specs
 scripts/                 utilidades Python/PowerShell (analyze-dalc, export-dmd, install, etc.)
-                         y los dos hooks de arranque: cleanup-preplugin.ps1 y check-requisitos.ps1
+                         y los tres hooks de arranque: cleanup-preplugin.ps1, check-requisitos.ps1
+                         y verificar-sync.ps1
 tests/                   suite Pester (*.Tests.ps1) + pytest (test_*.py) de hooks y scripts
   fixtures/              entradas de ejemplo para los tests (recortadas y anonimizadas)
-assets/                  widget ERD inline + plantillas de instalación en cliente (`instalacion/`)
+assets/
+  erd-widget.html        widget ERD inline
+  batch/                 plantillas de configuración centralizada de los procesos batch
+  instalacion/           plantillas del paquete que se COPIA al servidor del cliente
+  utilidades/            herramientas del equipo de entrega que ⛔ NO viajan al cliente.
+                         `Purgar-Esquema.ps1` vacía un esquema para reinstalar limpio; vive fuera
+                         del paquete a propósito, porque el Instalador\ se queda para siempre en
+                         el servidor del cliente y una herramienta de vaciado ahí anula la
+                         protección del CREATE pelado con fail-fast (ORA-00955 = "párate").
+                         `hooks/instalacion-paquete.ps1` solo copia de `instalacion/`, y hay
+                         tests que fijan la separación
 executions/
   history.json           historial de ejecuciones del pipeline (lo escribe log_execution)
 plugins/                 plugins adicionales publicados por el mismo marketplace (§9.5)
@@ -83,7 +94,7 @@ resuelto y verificado (§11.4).
 
 | Fichero | Declara |
 |---------|---------|
-| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1`, timeout 60), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 15), inline con `${CLAUDE_PLUGIN_ROOT}`. Los 3 commands se lanzan con `powershell -NoProfile` (evita cargar el perfil de usuario en cada arranque → timeouts; ver CHANGELOG 2.15.9) |
+| `.claude-plugin/plugin.json` | `name`, `description`, `version`, `author` y los **hooks** `SessionStart` (→ `scripts/cleanup-preplugin.ps1` timeout 60, `scripts/check-requisitos.ps1 -Quiet` timeout 30, `scripts/verificar-sync.ps1 -Quiet` timeout 30), `PreToolUse` (guardas de PII y de identidad de cliente), `Stop` (→ `runner/runner.ps1`, timeout 120) y `UserPromptSubmit` (→ `hooks/skill-trigger.ps1`, timeout 15), inline con `${CLAUDE_PLUGIN_ROOT}`. Todos se lanzan con `powershell -NoProfile` (evita cargar el perfil de usuario en cada arranque → timeouts; ver CHANGELOG 2.15.9) |
 | `.claude-plugin/marketplace.json` | El marketplace y **la lista de plugins que publica** (desde 3.11.0 son dos): `rs-enterprise-agent` con `source: "./"` y `rs-validador` con `source: "./plugins/rs-validador"`, ambos `category: productivity` y con su propia `version` |
 | `.mcp.json` | El MCP server `rs-workspace` (type `stdio`, `command: python`, arg `${CLAUDE_PLUGIN_ROOT}/mcp/rs-workspace-server.py`, env `PYTHONUTF8=1`) |
 
@@ -494,6 +505,13 @@ Helpers no-tool: `_get_config`, `_get_scope`, `_load_model`, `_run_ps`, `_proyec
   Marcador `~/.claude/.rs-requisitos-ok` con la versión del plugin dentro — un arranque normal no
   spawnea Python, y cada actualización rehace la comprobación una vez. `-Reparar` instala el
   paquete, y solo lo invoca `rs-validar-entorno` tras confirmación del usuario. Ver CHANGELOG 3.24.0.
+- `scripts/verificar-sync.ps1` — evento `SessionStart`: comprueba que la copia **en ejecución**
+  (el cache, §1.1) coincide con el checkout de `marketplaces\` del que sale. Nada los mantiene
+  sincronizados salvo `/plugin marketplace update`, así que editar la fuente y no actualizar deja
+  el plugin corriendo la versión anterior, y editar el cache deja el arreglo fuera de git. Pasó:
+  una sincronización manual copió 9 de 10 ficheros y el que faltó fue el de tests, con lo que el
+  cache ejecutaba el código corregido contra la suite vieja y todo daba verde. ⛔ No copia nada.
+  Ver CHANGELOG 3.25.0.
 - `hooks/skill-trigger.ps1` — evento `UserPromptSubmit`: inyecta un recordatorio determinista
   para disparar la skill cuando se menciona una `.sln` en un workspace uCollect/RS. Fail-fast si
   `cwd` es inaccesible (unidad de red caída) para no bloquear el evento.

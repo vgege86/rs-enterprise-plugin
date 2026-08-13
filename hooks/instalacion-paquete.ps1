@@ -36,11 +36,54 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('Instalacion','Actualizacion')][string]$modo,
     [string]$entorno = "",
     [string]$motor = "",
-    [string]$Soluciones = ""
+    [string]$Soluciones = "",
+    [switch]$DotSourceOnly
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
+
+function Test-RsAuthEntornoCoherente {
+    <#  Revisa el bloque `bd` de UN entorno y devuelve los avisos que merece.
+
+        El bloque viaja LITERAL de la config del proyecto a rutas.json, y rutas.json es lo que
+        Ejecutar-Scripts.ps1 lee en el servidor del cliente. Una declaracion incoherente no da
+        error al generar: se descubre cuando alguien esta delante del servidor del cliente
+        intentando instalar. Por eso se avisa AQUI, en la generacion, y no solo alli.
+
+        Los tres casos, por orden de lo que cuestan:
+          - 'autenticacion' externa Y 'usuario' a la vez: contradictorio. En modo wallet el
+            usuario no se envia, asi que uno de los dos sobra y nadie sabe cual es la verdad.
+            Ejecutar-Scripts.ps1 ya no se queda sin salida por esto, pero sigue sin poder
+            adivinarlo: la decision es de quien prepara la entrega.
+          - wallet con 'conexion' que no es un alias de tnsnames.ora: el wallet indexa la
+            credencial por el texto exacto del alias, y un descriptor o un host:puerto/servicio
+            dan un ORA-12154 que parece de red.
+          - ni 'autenticacion' ni 'usuario': el cliente tendra que teclear el usuario. No es un
+            error, pero conviene saberlo antes de entregar.
+
+        Devuelve una lista de cadenas; vacia = coherente.  #>
+    param($Bd, [string]$Entorno)
+    $avisos = @()
+    if (-not $Bd) { return $avisos }
+    $auth    = "$($Bd.autenticacion)".Trim()
+    $usuario = "$($Bd.usuario)".Trim()
+    $conex   = "$($Bd.conexion)".Trim()
+    $externa = $auth -match '(?i)^(wallet|externa|integrada)$'
+
+    if ($externa -and $usuario) {
+        $avisos += "[$Entorno] declara autenticacion '$auth' Y usuario '$usuario' a la vez. En modo externo el usuario NO se envia: sobra uno de los dos y el paquete no puede adivinar cual."
+    }
+    if ($externa -and $conex -and ($conex.StartsWith('(') -or $conex -match '[\s/@]' -or $conex -match ':\d')) {
+        $avisos += "[$Entorno] declara autenticacion externa pero 'conexion' no es un alias de tnsnames.ora ('$conex'). Con wallet la credencial se busca por el texto EXACTO del alias -> ORA-12154."
+    }
+    if (-not $auth -and -not $usuario) {
+        $avisos += "[$Entorno] no declara 'autenticacion' ni 'usuario': el cliente tendra que teclear el usuario al instalar."
+    }
+    return $avisos
+}
+
+if ($DotSourceOnly) { return }
 
 if (!(Test-Path $destino)) { Write-Host "ERROR: destino no encontrado: $destino"; exit 1 }
 
@@ -76,6 +119,19 @@ if ($entornosCfg) {
         proyecto    = $proyecto
         entornos    = $entornosCfg
     } | ConvertTo-Json -Depth 6 | Set-Content $rutasOut -Encoding UTF8
+
+    # El bloque 'bd' se acaba de copiar LITERAL al rutas.json que viaja al cliente. Si es
+    # incoherente, el sitio barato de enterarse es aqui; el caro es el servidor del cliente.
+    $avisosAuth = @()
+    foreach ($e in $entornosCfg.PSObject.Properties) {
+        $avisosAuth += Test-RsAuthEntornoCoherente -Bd $e.Value.bd -Entorno $e.Name
+    }
+    if ($avisosAuth.Count -gt 0) {
+        Write-Host "AVISO: la declaracion de conexion de rutas.json tiene $($avisosAuth.Count) incoherencia(s):"
+        foreach ($a in $avisosAuth) { Write-Host "       - $a" }
+        Write-Host "       No bloquea la generacion: Ejecutar-Scripts.ps1 resuelve el modo por evidencia y"
+        Write-Host "       ofrece usuario/contrasena si hace falta. Pero corrigelo antes de entregar."
+    }
 } else {
     (Get-Content (Join-Path $assets "rutas.json.tpl") -Raw -Encoding UTF8).Replace('<PROYECTO>', $proyecto) |
         Set-Content $rutasOut -Encoding UTF8
