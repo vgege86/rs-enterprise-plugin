@@ -4,10 +4,43 @@
 
 # 📥 Fuente de datos (CRÍTICO)
 
-- **Esquema / tipos / columnas** → el modelo (`<proyecto>-model.json`, vía `search_model` / `get_model_index` / `get_table_schema`) es la fuente autoritativa.
+- **Esquema / tipos / columnas, para DESARROLLAR** → el modelo (`<proyecto>-model.json`, vía `search_model` / `get_model_index` / `get_table_schema`). Es rápido, no consume sesiones de BD y lleva las descripciones y las marcas PII.
+- **Esquema, para ENTREGAR al cliente** → ⛔ **la BD, siempre**. Nunca el modelo. Ver abajo.
 - **Datos / valores de fila** → siempre `db_query` directo contra la BD.
 - ⛔ **NUNCA** leer ficheros `.sql` de la carpeta `BD\` (ni subcarpetas) como fuente de datos ni de esquema: pueden estar desactualizados. De `BD\` solo se usa `<proyecto>-model.json`.
 - Si la BD no es accesible → informar y pedir acceso; no sustituir la BD por scripts de `BD\`.
+
+## ⛔ Lo que se entrega sale de la BD, no del modelo
+
+El modelo es una **traducción** de la BD, y la traducción es lossy. Medido en una entrega real:
+12 FK → 0, 3 CHECK → 0, 1 IDENTITY → una columna `NUMBER` pelada, 22 DEFAULT → 21, cuatro
+columnas con el tamaño de hace meses y 15 columnas `RAW` sin longitud (ORA-00906: el DDL
+entregado no compilaba). **Ninguna de esas pérdidas da error al generar**; todas lo dan en el
+servidor del cliente.
+
+No se arregla sincronizando mejor el modelo: el problema no es que esté mal hoy, es que puede
+estarlo cualquier día y nada lo delata.
+
+| Artefacto | Fuente | Quién lo genera |
+|---|---|---|
+| DDL de tablas del instalador | **BD viva** (`ALL_*` / `sys.*`) | `scripts/installer-tablas.py` |
+| Secuencias, vistas, PL/SQL, triggers, sinónimos | **BD viva** | `scripts/installer-objects.py` |
+| Inserts de paramétricas | **BD viva** | `scripts/installer-inserts.py` |
+| SQL de desarrollo (`/rs-erd`) | modelo | `scripts/generate-sql.py` |
+| ERD, descripciones, marcas PII | modelo | — |
+
+Si se detecta deriva modelo↔BD al generar, se **reporta** y no se bloquea: lo entregado sale de
+la BD, que es la fuente. El modelo nunca manda sobre lo que viaja al cliente.
+
+⛔ **`DBMS_METADATA.GET_DDL` no está disponible** y no hay que buscar la forma de usarlo: la
+cuenta de entrega es de solo lectura por diseño de la política PII y no tiene
+`SELECT_CATALOG_ROLE`, así que cualquier `GET_DDL` sobre otro esquema devuelve `ORA-31603:
+object not found`. Todo el DDL se reconstruye desde el diccionario `ALL_*`, legible con
+`GRANT SELECT`.
+
+⛔ **Las descripciones y las marcas `pii`/`safe` son EXCLUSIVAS de desarrollo.** No viajan al
+cliente, y eso no se da por supuesto: `scripts/installer-gate-fuga.py` revisa el paquete
+generado y **falla la entrega** si aparece alguna.
 
 ---
 

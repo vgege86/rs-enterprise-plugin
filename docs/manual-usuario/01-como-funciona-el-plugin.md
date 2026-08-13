@@ -335,6 +335,29 @@ un cambio; el manual técnico solo se toca por propuesta que un humano confirma.
 | `/rs-instalador [<Proyecto>\|<workspace>]` | Opus | Genera el **instalador completo de cliente** para una instalación limpia: ejecutables batch en Release, la web, el gestor de servicios con sus módulos, los scripts de base de datos (DDL de tablas, DDL de la tabla de versiones, inserts de tablas paramétricas y la fila base por entorno) y el paquete de instalación con su script de instalación, su script de ejecución de scripts, el fichero de rutas y un readme. |
 | `/rs-actualizador <DESA\|TEST\|PROD> [<Sln>...] [--hasta ...]` | Opus | Genera el **actualizador incremental** de un entorno. Consulta en la tabla de versiones cuándo se entregó por última vez cada solución en ese entorno, calcula el delta de commits hasta hoy —o hasta la fecha indicada, descartando desarrollos posteriores— y empaqueta solo lo afectado, más los scripts SQL de las tareas del rango y el registro de la entrega. |
 
+**Lo que se entrega sale de la base de datos, no del modelo.** El modelo JSON es una traducción, y
+la traducción pierde cosas: en una entrega real llegaron al cliente cero claves ajenas de las doce
+que había, cero restricciones de validación de las tres, una columna autonumérica convertida en un
+número corriente, y varias columnas con el tamaño de hacía meses. Nada de eso daba error al
+generar; todo lo daba —o algo peor que un error— en el servidor del cliente. Ahora el instalador
+lee el esquema real: tipos y tamaños exactos, valores por defecto, columnas autonuméricas, claves
+primarias, restricciones únicas y de validación, índices y claves ajenas.
+
+El modelo se sigue manteniendo, pero su papel es **documentar**: descripciones, marcas de datos
+personales y el diagrama. Si se detecta que el modelo y la base de datos no coinciden, se avisa y
+**no se bloquea**: lo que viaja es lo que hay en la base de datos, que es lo correcto.
+
+**Lo que no debe viajar se declara por nombre**, con su motivo, en el fichero de configuración del
+proyecto. Nunca por patrón: excluir por patrón borraría en silencio tablas del producto que
+casualmente encajen, y el fallo no aparece hasta que algo las usa. Los nombres que parecen copias
+puntuales de desarrollo se **avisan** y **se entregan**; la decisión de excluir es siempre explícita
+y queda escrita en la cabecera del script.
+
+**Las descripciones y las marcas de datos personales no llegan al cliente**, y eso no se da por
+supuesto: antes de cerrar el paquete se revisa lo generado y, si aparece alguna, la generación
+falla. Antes sí llegaban, como comentarios dentro del script de creación de tablas, y nadie lo
+había decidido.
+
 **La tabla de versiones** guarda una fila por entorno y solución entregada, con la fecha de corte
 —que es el punto de partida del siguiente delta— y una descripción **funcional, no técnica**, pensada
 para que el usuario final pueda llegar a leerla. El actualizador genera el insert para la base de

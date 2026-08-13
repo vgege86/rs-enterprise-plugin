@@ -86,8 +86,11 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _dbobjetos as _inv
 
-OBJ_MARK = "##OBJ##"
-END_MARK = "##END##"
+# Ejecución de SQL y parseo de su salida: fuente única en scripts/_dbsql.py, compartida con
+# installer-tablas.py. Duplicarla sería duplicar la DETECCIÓN DE ERRORES, y una copia que se
+# olvide de mirar la salida convierte un fallo de consulta en un fichero vacío sin aviso.
+from _dbsql import (OBJ_MARK, END_MARK, run_sqlplus, run_sqlcmd, parse_blocks,
+                    parse_filas, strip_schema, assert_sin_diagnostico)
 
 # Secuencias creadas por Oracle para columnas IDENTITY: no se scriptan (las crea el
 # CREATE TABLE de la columna identity; scriptarlas da ORA-32794 al borrar/recrear).
@@ -122,114 +125,6 @@ ETAPAS_NOMBRES = [
     ("05", "Triggers",       "TRIGGERS"),
     ("06", "Sinonimos",      "SINÓNIMOS"),
 ]
-
-
-# ---------------------------------------------------------------- ejecución sqlplus
-def run_sqlplus(cfg: dict, body: str) -> str:
-    """Ejecuta un script sqlplus TAL CUAL (no añade ';' — el body trae sus propios
-    terminadores, incluido '/' para los bloques PL/SQL)."""
-    connect = f"CONNECT {cfg['user']}/{cfg['password']}@{cfg['datasource']}\n" if cfg["password"] else ""
-    conn_arg = "/nolog" if cfg["password"] else f"{cfg['user']}/@{cfg['datasource']}"
-    schema_line = (f"ALTER SESSION SET CURRENT_SCHEMA = {cfg['schema']};\n"
-                   if cfg["schema"] and cfg["schema"] != cfg["user"] else "")
-    script = (
-        "SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON TRIMOUT ON TERMOUT ON VERIFY OFF\n"
-        "SET LINESIZE 32767 LONG 2000000 LONGCHUNKSIZE 2000000 WRAP ON\n"
-        "SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED\n"
-        "SET SQLBLANKLINES ON\n"
-        f"{connect}{schema_line}{body}\nEXIT;\n"
-    )
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False, encoding="utf-8")
-    tmp.write(script)
-    tmp.close()
-    env = dict(os.environ, NLS_LANG="AMERICAN_AMERICA.AL32UTF8")
-    try:
-        r = subprocess.run(["sqlplus", "-S", conn_arg, f"@{tmp.name}"], capture_output=True, env=env)
-    finally:
-        os.unlink(tmp.name)
-    out, err = _ins._decode(r.stdout), _ins._decode(r.stderr)
-    if r.returncode != 0:
-        # Mismo criterio que los inserts: la 1ª línea de stdout es el banner de sqlplus, no el error
-        raise RuntimeError(_ins._mensaje_fallo(err, out))
-    for ln in out.splitlines():
-        s = ln.strip()
-        if s.startswith("ORA-") or s.startswith("SP2-") or s.startswith("PLS-"):
-            raise RuntimeError(s[:300])
-    # El fuente almacenado trae CRLF y sqlplus vuelve a convertir el LF en CRLF: cada
-    # salto acaba como '\r\r\n' y splitlines() lo cuenta como DOS líneas, metiendo una
-    # línea en blanco entre cada par. No es cosmético: una línea en blanco dentro de un
-    # CREATE TRIGGER/VIEW hace que sqlplus dé por terminada la sentencia (SP2-0042).
-    return out.replace("\r\r\n", "\n")
-
-
-# ---------------------------------------------------------------- ejecución sqlcmd
-def run_sqlcmd(cfg: dict, body: str) -> str:
-    """Ejecuta un script sqlcmd y devuelve su salida.
-
-    ⛔ Los marcadores viajan DENTRO del propio result set (concatenados en el SELECT), nunca
-    con PRINT: dentro de un lote el flujo de mensajes y el de resultados no llegan
-    necesariamente intercalados en orden, y el marcador dejaría de identificar su objeto.
-    Es el mismo motivo por el que installer-inserts.py mete un GO por tabla."""
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False, encoding="utf-8")
-    tmp.write("SET NOCOUNT ON;\nGO\n" + body + "\nGO\n")
-    tmp.close()
-    # -y 0 / -Y 0: sin esto sqlcmd trunca la columna al ancho de pantalla y las definiciones
-    # largas llegarían cortadas — un CREATE PROCEDURE partido por la mitad.
-    cmd = ["sqlcmd", "-S", cfg["datasource"], "-d", cfg["schema"], "-i", tmp.name,
-           "-h", "-1", "-W", "-y", "0", "-Y", "0", "-w", "65535", "-f", "65001"]
-    entorno = os.environ
-    if cfg["user"]:
-        cmd += ["-U", cfg["user"]]
-        entorno = {**os.environ, "SQLCMDPASSWORD": cfg["password"]}
-    else:
-        cmd += ["-E"]   # autenticación integrada
-    try:
-        r = subprocess.run(cmd, capture_output=True, env=entorno)
-    finally:
-        os.unlink(tmp.name)
-    out, err = _ins._decode(r.stdout), _ins._decode(r.stderr)
-    if r.returncode != 0:
-        raise RuntimeError(_ins._mensaje_fallo(err, out))
-    for ln in out.splitlines():
-        s = ln.strip()
-        if re.match(r"^Msg\s+\d+,\s*Level", s) or s.startswith("Sqlcmd:"):
-            raise RuntimeError(s[:300])
-    return out.replace("\r\n", "\n")
-
-
-def parse_blocks(out: str) -> list:
-    """Parsea la salida marcada: [(nombre, [líneas]), ...]"""
-    bloques, nombre, buf = [], None, []
-    for ln in out.splitlines():
-        s = ln.strip()
-        if s.startswith(OBJ_MARK):
-            if nombre is not None:
-                bloques.append((nombre, buf))
-            nombre, buf = s[len(OBJ_MARK):].strip(), []
-        elif s == END_MARK:
-            if nombre is not None:
-                bloques.append((nombre, buf))
-            nombre, buf = None, []
-        elif nombre is not None:
-            buf.append(ln.rstrip())
-    if nombre is not None:
-        bloques.append((nombre, buf))
-    return bloques
-
-
-# ---------------------------------------------------------------- limpieza de schema
-def strip_schema(texto: str, schema: str) -> tuple:
-    """Quita el prefijo de schema (con y sin comillas). Devuelve (texto, nº sustituciones)."""
-    if not schema:
-        return texto, 0
-    n = 0
-    pat_q = re.compile(r'"%s"\s*\.\s*' % re.escape(schema), re.IGNORECASE)
-    texto, k = pat_q.subn("", texto)
-    n += k
-    pat = re.compile(r'\b%s\s*\.\s*' % re.escape(schema), re.IGNORECASE)
-    texto, k = pat.subn("", texto)
-    n += k
-    return texto, n
 
 
 def cab(titulo: str, proyecto: str, motor: str, extra: list = None,

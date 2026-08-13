@@ -1,5 +1,156 @@
 # RS Enterprise Agent — Changelog
 
+## 3.26.0 — 2026-08-13
+
+### El DDL del instalador ya no sale del modelo: sale de la base de datos
+
+El `<Proyecto>-CreacionTablas.sql` que se entrega al cliente se generaba desde
+`BD/<proyecto>-model.json`. El modelo es una **traducción** de la BD, y la traducción es lossy.
+Medido sobre una entrega real, entre lo que había en la BD y lo que llegaba al `.sql`:
+
+| Objeto | En la BD | En el DDL entregado |
+|---|---|---|
+| FOREIGN KEY | 12 | **0** |
+| CHECK | 3 | **0** |
+| IDENTITY | 1 | **0** (salía como una columna `NUMBER` pelada) |
+| DEFAULT | 22 | 21 |
+| Columnas con tamaño correcto | todas | 4 con el tamaño de hace meses |
+| Columnas `RAW` | 15, con longitud | 15 **sin** longitud → ORA-00906 |
+
+Ninguna de esas pérdidas da error al generar. Todas lo dan —o algo peor que un error— en el
+servidor del cliente: el DDL con `RAW` pelado no compila y para la instalación a medias; una
+`VARCHAR2(51)` entregada como `(10)` crea una columna corta que revienta con ORA-12899 en cuanto
+entran datos reales; las FK, los CHECK y el IDENTITY simplemente no están, y nadie se entera.
+
+Y no se arregla "sincronizando mejor el modelo". El problema no es que esté mal hoy: es que
+puede estarlo cualquier día y **nada lo delata**. La BD, en cambio, es lo que hay.
+
+**`scripts/installer-tablas.py`** (nuevo) extrae de la BD viva tablas, columnas con tipo y
+tamaño exactos, `NOT NULL`, `DEFAULT`, `IDENTITY`, PK, UNIQUE, CHECK, índices y FK. Rama SQL
+Server por `sys.*`. Las FK se emiten **al final**, cuando ya existen todas las tablas: junto a su
+tabla fallarían si la referenciada aún no se ha creado, y el `.sql` es fail-fast.
+
+⛔ **Sin `DBMS_METADATA.GET_DDL`.** La cuenta de entrega es de solo lectura por diseño de la
+política PII y no tiene `SELECT_CATALOG_ROLE`; cualquier `GET_DDL` sobre otro esquema devuelve
+`ORA-31603: object not found`. No es un problema que se resuelva pidiendo el privilegio — la
+cuenta es de solo lectura a propósito. Todo se reconstruye desde el diccionario `ALL_*`, que sí
+es legible con `GRANT SELECT`, igual que ya hacía `installer-objects.py` para los otros seis
+tipos de objeto. No hace falta ninguna cuenta nueva.
+
+`ALL_TAB_COLUMNS.DATA_DEFAULT` y `ALL_CONSTRAINTS.SEARCH_CONDITION` son **LONG**: no se pueden
+manipular en SQL. Se leen desde un bloque PL/SQL anónimo y se emiten con `DBMS_OUTPUT`, el mismo
+patrón que las vistas. Se descartan los CHECK que Oracle genera por cada `NOT NULL` de columna
+(duplicarían el `NOT NULL` que ya lleva la columna, con un nombre que además no coincide entre
+bases de datos) y los índices que respaldan una PK o una UNIQUE (`ORA-00955` al instalar, porque
+la constraint ya los crea).
+
+**`scripts/installer-ddl.py` queda retirado**, pero **no se borra**: se convierte en un shim que
+se niega a ejecutarse y explica por qué. Borrarlo haría que un llamante antiguo diera "no such
+file" —un error de infraestructura, que se arregla restaurando el fichero— en vez de decir qué ha
+cambiado. El error es la documentación.
+
+⛔ **La etapa `ddl` ahora necesita conexión a BD.** `installer-scripts.ps1 -Solo ddl` ya no
+funciona sin BD delante.
+
+### El modelo pasa a ser documentación, y se comprueba que no viaja
+
+El modelo se sigue manteniendo (sync desde BD, descripciones, marcas PII, ERD, validación DALC),
+pero su papel es **documentación y política PII**. Aquí solo se usa para **contrastar**: si hay
+deriva modelo↔BD se reporta —una tabla en BD que el modelo no conoce suele significar que alguien
+la creó a mano y nadie lo sabe— y **nunca bloquea**, porque lo que se entrega sale de la BD. El
+modelo es además **opcional**: que falte ya no impide generar.
+
+Que las descripciones y las marcas PII no viajen al cliente no se da por supuesto. **No viajaban
+antes**: el generador anterior inlineaba las `description` del modelo como comentarios del `.sql`
+que se copia al servidor del cliente, y nadie lo había decidido — era un efecto de que la fuente
+del DDL fuera el mismo fichero donde se documenta para desarrollo.
+
+**`scripts/installer-gate-fuga.py`** (nuevo), que ejecuta `installer-scripts.ps1` al cerrar la
+etapa, recorre todo `<destino>\Scripts\**` y **falla la generación** si encuentra descripciones
+del modelo (por forma JSON y por texto literal ya inlineado), marcas `pii`/`safe`/`clasificacion`,
+referencias a tickets internos o rutas del workspace de desarrollo. No confía en que el generador
+se porte bien: mira el artefacto que se entrega. Y no "limpia" el fichero — borrar la línea
+dejaría intacto el generador que la produjo.
+
+Cuida los falsos positivos, porque un gate que cría avisos falsos deja de leerse: `ORA-00955`,
+`SP2-0751`, `AL32UTF8` o `UTF-8` se parecen a un identificador de incidencia y están exentos.
+
+### Exclusiones declarativas, nunca por patrón
+
+Lo que no viaja al cliente se declara por **nombre exacto** en
+`docs\<proyecto>-instalador.json`:
+
+```json
+"exclusiones": {
+  "tablas": [
+    { "nombre": "RTRABAJO_20260731", "motivo": "copia CTAS manual de desarrollo" }
+  ],
+  "indices": [], "constraints": [],
+  "tipos_objeto": []
+}
+```
+
+⛔ **Nunca por patrón.** Excluir por patrón borra en silencio tablas de producto que casualmente
+encajen, y el fallo no aparece hasta que algo las usa. Los nombres con pinta de copia puntual
+(`_20260731`, `_BAK`, `_COPIA`, `_OLD`, `_TMP`) se **avisan** y **se entregan**; quien excluye es
+la lista declarada. La cabecera del `.sql` lista lo excluido **con su motivo**, para que dentro de
+seis meses se sepa por qué no viaja.
+
+`tipos_objeto` excluye una categoría entera —p. ej. `"FOREIGN KEY"`— y existe para que "las FK no
+viajan nunca" pueda ser una decisión **declarada** en vez de un silencio del generador. Por
+defecto no está: **con la regla «origen = BD», las FK que existen en desarrollo viajan**.
+
+La infraestructura del paquete (`RVERSIONES`, `SEQ_RVERSIONES`, `IX_RVERSIONES_ENT_SOL`) se
+excluye siempre: la crea `00-RVERSIONES.sql`, que va el primero del manifiesto, y emitirla otra
+vez daba `ORA-00955` sobre un esquema recién creado y **vacío** — el paquete chocando consigo
+mismo, con un error que parecía "la BD del cliente ya tenía objetos".
+
+### Nada se da por bueno sin mirarlo
+
+`scripts/_dbsql.py` (nuevo) concentra la ejecución de SQL y el parseo de su salida, hasta ahora
+dentro de `installer-objects.py`. Con dos consumidores, duplicarlo sería duplicar la **detección
+de errores**, y una copia que se olvide de mirar la salida convierte un fallo de consulta en un
+fichero vacío que nadie cuestiona — es lo que ya pasó con el mapeo de tipos entre
+`generate-sql.py` e `installer-ddl.py`.
+
+Toda lectura revienta si el cliente devolvió código distinto de 0 **o** si la salida trae una
+línea de diagnóstico anclada a principio de línea (`ORA-`/`SP2-`/`PLS-`/`Msg`/`Sqlcmd:`). Anclarla
+importa: un `ORA-` dentro de un dato no es un error, y tratarlo como tal abortaría extracciones
+buenas. Es el equivalente Python de `Assert-RsLecturaBd`.
+
+Los generadores fallan cerrados. **No se escribe el fichero** y se sale con código de error si:
+un tipo llega sin tamaño (se listan **todas** las columnas rotas de una vez, no la primera:
+parar en la primera obligaría a N pasadas para descubrir N columnas malas, que es literalmente lo
+que pasó); el diccionario no devuelve **ni una sola columna** (eso no es un esquema vacío, es una
+lectura que no ha funcionado o una cuenta que no ve nada); o una FK apunta a una tabla que no
+viaja (en el cliente sería ORA-00942/ORA-02270 y la instalación se pararía ahí).
+
+Se contrasta además el conteo capturado contra el del diccionario y se marca `<< HUECO n`: Oracle
+no permite distinguir "no existe" de "no lo veo", así que sin ese contraste una cuenta con GRANT
+parcial entrega un paquete incompleto sin decir nada.
+
+**Un defecto que encontró la suite, no una entrega**: con el tamaño ausente el extractor emitía
+`RAW()`. Tiene paréntesis, así que `falta_tamano()` lo daba por bueno — el gate se saltaba
+exactamente el caso que existe para cazar, y el `.sql` se escribía con un OK encima. `dimension()`
+ya no fabrica paréntesis vacíos: sin tamaño, el tipo sale pelado y el gate lo para.
+
+### Lo que NO ha cambiado
+
+Sigue igual, a propósito: el CREATE **pelado con fail-fast** —un `ORA-00955` tiene que seguir
+significando "este esquema no está vacío, párate", así que el DDL del proyecto **no** se hace
+idempotente—; `assets\utilidades\Purgar-Esquema.ps1` fuera del paquete del cliente; los arreglos
+de `Ejecutar-Scripts.ps1` y `RVERSIONES-oracle.sql`; `falta_tamano()`, la deduplicación de índices
+y los tamaños de `sync-from-db.ps1`. El modelo se sigue sincronizando desde la BD.
+
+**Ficheros**: `scripts\installer-tablas.py` (nuevo), `scripts\_dbsql.py` (nuevo),
+`scripts\installer-gate-fuga.py` (nuevo), `scripts\installer-ddl.py` (shim),
+`scripts\installer-objects.py`, `hooks\installer-scripts.ps1`, `agents\rs-instalador.md`,
+`references\bd.md`, `references\hooks.md`, `references\json-schema.md`,
+`docs\plugin-architecture.md`, `docs\manual-usuario\01-como-funciona-el-plugin.md`, `README.md`,
+`tests\test_installer_tablas.py` (nuevo), `tests\test_installer_gate_fuga.py` (nuevo),
+`tests\test_installer_ddl_objetos.py`. Suite: **846 Pester + 429 pytest, 0 fallos** (429 pytest
+frente a 348).
+
 ## 3.25.0 — 2026-08-13
 
 ### El instalador declaraba wallet, el servidor no lo tenía, y el script moría sin ofrecer la otra vía

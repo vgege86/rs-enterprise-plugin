@@ -273,9 +273,12 @@ un workspace nuevo (config BD + andamiaje docs + primer modelo), sin sobrescribi
 `rs-instalador` (`/rs-instalador`, opus) genera el instalador completo de cliente en
 `C:\AIS\<Proyecto>\Instalador` (EXES batch + AgendaWeb + ServiceManager+Modulos + Scripts SQL).
 Orquesta 4 hooks `installer-*.ps1` vía `runner/runner.ps1` (patrón `batch-build`/`online-publish`,
-sin tool MCP) y 3 scripts Python (`installer-ddl.py`, `installer-objects.py`, `installer-inserts.py`),
-sobre el módulo compartido `_dbmodel.py` (orden real de la PK y valor DEFAULT, la misma lectura del
-modelo que usa `generate-sql.py`). La extracción de objetos cubre **los dos motores**: Oracle por el
+sin tool MCP) y 4 scripts Python (`installer-tablas.py`, `installer-objects.py`,
+`installer-inserts.py`, `installer-gate-fuga.py`), sobre el módulo compartido `_dbsql.py`
+(ejecución de SQL y parseo de su salida, con la detección de errores en un solo sitio).
+⛔ **Todo lo que se entrega sale de la BD viva, nunca del `model.json`** — ver `references/bd.md`;
+`installer-ddl.py` (que lo generaba desde el modelo) queda como shim que se niega a ejecutarse.
+El modelo se usa solo para contrastar deriva y no bloquea. La extracción de objetos cubre **los dos motores**: Oracle por el
 diccionario `ALL_*` y SQL Server por el catálogo `sys.*`.
 Config por cliente en `docs\<Proyecto>-instalador.json`; tablas paramétricas desde
 `subviews["Parametricas"]` del model.json. La etapa de scripts está optimizada alrededor de que el

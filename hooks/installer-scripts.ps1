@@ -12,14 +12,20 @@
       - Inserts\<TABLA>.sql             (un fichero por tabla paramétrica)
 
     Delega en los scripts Python del plugin:
-      scripts\installer-ddl.py      (tablas + índices + valores DEFAULT desde el model.json
-                                     — no toca BD. Los DEFAULT salen del campo `default` de
-                                     cada columna, que rellena hooks\sync-from-db.ps1: un
-                                     modelo sincronizado antes de eso los deja a NULL)
+      scripts\installer-tablas.py   (tablas, columnas con tipo y tamaño EXACTOS, NOT NULL,
+                                     DEFAULT, IDENTITY, PK, UNIQUE, CHECK, índices y FK,
+                                     desde la BD VIVA. ⛔ Ya NO sale del model.json: la
+                                     traducción BD -> modelo es lossy y el modelo se queda
+                                     desfasado — ver scripts\installer-ddl.py, retirado)
       scripts\installer-objects.py  (secuencias/vistas/funciones/procs/triggers/sinónimos
-                                     desde la BD viva — no están en el model.json.
+                                     desde la BD viva.
                                      ORACLE vía diccionario ALL_*, SQLSERVER vía sys.*)
       scripts\installer-inserts.py  (inserts por tabla paramétrica, vista "Parametricas")
+      scripts\installer-gate-fuga.py (gate: ningún artefacto del paquete puede llevar
+                                     descripciones del modelo, marcas pii/safe ni tickets)
+
+    ⛔ La etapa `ddl` AHORA NECESITA CONEXIÓN A BD. Antes se generaba sin ella (leía el
+    model.json), así que `-Solo ddl` funcionaba sin BD delante. Ya no.
 
     RENDIMIENTO
       - La config de BD se resuelve UNA sola vez aquí y se pasa a los scripts Python por
@@ -94,44 +100,54 @@ if ($Solo -ne "todo") { Write-Host "Regeneración selectiva: $Solo" }
 
 try {
     # --- Config de BD resuelta una vez y compartida con los scripts Python ---
-    # Solo hace falta para las partes que tocan BD. Si algo sale mal se sigue adelante sin
-    # cachear: cada script Python vuelve a resolverla por su cuenta (comportamiento anterior).
-    if ($Solo -ne "ddl") {
-        $getCfg = Join-Path $PSScriptRoot "get-config.ps1"
-        try {
-            $cfgJson = (& $getCfg $workspace -Conexion $Conexion) -join "`n"
-            $parsed  = $cfgJson | ConvertFrom-Json
-            if ($parsed.PSObject.Properties.Name -contains "error") {
-                Write-Host "ERROR: get-config.ps1 devolvió error ($($parsed.error))"
-                exit 1
-            } else {
-                $cfgTmp = [System.IO.Path]::GetTempFileName()
-                [System.IO.File]::WriteAllText($cfgTmp, $cfgJson, (New-Object System.Text.UTF8Encoding($false)))
-                $env:RS_DB_CONFIG_JSON = $cfgTmp
-                Write-Host "Conexión BD: $($parsed.conexion)  (esquema $($parsed.schema), usuario $($parsed.user))"
-            }
-        } catch {
-            Write-Host "AVISO: no se pudo cachear la config de BD ($($_.Exception.Message)) — cada script la resolverá por su cuenta"
+    # Si algo sale mal se sigue adelante sin cachear: cada script Python vuelve a resolverla
+    # por su cuenta (comportamiento anterior).
+    # ⛔ Ya no se salta para -Solo ddl: desde que el DDL sale de la BD y no del modelo, la
+    # etapa de tablas necesita conexión igual que las otras dos.
+    $getCfg = Join-Path $PSScriptRoot "get-config.ps1"
+    try {
+        $cfgJson = (& $getCfg $workspace -Conexion $Conexion) -join "`n"
+        $parsed  = $cfgJson | ConvertFrom-Json
+        if ($parsed.PSObject.Properties.Name -contains "error") {
+            Write-Host "ERROR: get-config.ps1 devolvió error ($($parsed.error))"
+            exit 1
+        } else {
+            $cfgTmp = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($cfgTmp, $cfgJson, (New-Object System.Text.UTF8Encoding($false)))
+            $env:RS_DB_CONFIG_JSON = $cfgTmp
+            Write-Host "Conexión BD: $($parsed.conexion)  (esquema $($parsed.schema), usuario $($parsed.user))"
         }
-
-        # Visibilidad de la conexión sobre el esquema: la resuelve UNA vez y la comparten los
-        # scripts Python por RS_DB_VISIBILIDAD_JSON. Es lo que decide si un tipo de objeto
-        # vacío significa "no hay" o "esta cuenta no lo ve" — ver hooks\db-visibilidad.ps1.
-        try {
-            $visJson = (& (Join-Path $PSScriptRoot "db-visibilidad.ps1") $workspace -Conexion $Conexion) -join "`n"
-            $visTmp  = [System.IO.Path]::GetTempFileName()
-            [System.IO.File]::WriteAllText($visTmp, $visJson, (New-Object System.Text.UTF8Encoding($false)))
-            $env:RS_DB_VISIBILIDAD_JSON = $visTmp
-        } catch {
-            Write-Host "AVISO: no se pudo diagnosticar la visibilidad del esquema ($($_.Exception.Message))"
-        }
+    } catch {
+        Write-Host "AVISO: no se pudo cachear la config de BD ($($_.Exception.Message)) — cada script la resolverá por su cuenta"
     }
 
-    # --- DDL tablas + índices (sin schema) ---
+    # Visibilidad de la conexión sobre el esquema: la resuelve UNA vez y la comparten los
+    # scripts Python por RS_DB_VISIBILIDAD_JSON. Es lo que decide si un tipo de objeto
+    # vacío significa "no hay" o "esta cuenta no lo ve" — ver hooks\db-visibilidad.ps1.
+    try {
+        $visJson = (& (Join-Path $PSScriptRoot "db-visibilidad.ps1") $workspace -Conexion $Conexion) -join "`n"
+        $visTmp  = [System.IO.Path]::GetTempFileName()
+        [System.IO.File]::WriteAllText($visTmp, $visJson, (New-Object System.Text.UTF8Encoding($false)))
+        $env:RS_DB_VISIBILIDAD_JSON = $visTmp
+    } catch {
+        Write-Host "AVISO: no se pudo diagnosticar la visibilidad del esquema ($($_.Exception.Message))"
+    }
+
+    # --- DDL tablas: columnas, PK, UNIQUE, CHECK, DEFAULT, IDENTITY, índices y FK ---
+    # Desde la BD VIVA. El model.json ya no es origen de DDL: solo se contrasta para reportar
+    # deriva. Ver scripts\installer-tablas.py.
     if ($Solo -eq "todo" -or $Solo -eq "ddl") {
-        Write-Host "== DDL creación de tablas e índices (sin schema) =="
-        python "$scriptsDir\installer-ddl.py" "$workspace" "$proyecto" "$ddlOut"
-        if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: installer-ddl.py falló (exit $LASTEXITCODE)"; exit 1 }
+        Write-Host "== DDL creación de tablas (desde la BD viva, sin schema) =="
+        $argsDdl = @("$scriptsDir\installer-tablas.py", "$workspace", "$proyecto", "$ddlOut") + $argsConexion
+        python @argsDdl
+        $ddlCode = $LASTEXITCODE
+        # exit 2 = algún tipo llegó sin tamaño. NO es un aviso: el script no ha escrito el
+        # fichero, así que continuar dejaría el paquete sin DDL de tablas y el resumen de abajo
+        # lo cantaría como ausente. Se corta aquí, que es donde está el diagnóstico.
+        if ($ddlCode -ne 0) {
+            Write-Host "ERROR: installer-tablas.py falló (exit $ddlCode) — el paquete NO es entregable."
+            exit 1
+        }
         if (!(Test-Path $ddlOut)) { Write-Host "ERROR: no se generó $ddlOut"; exit 1 }
     }
 
@@ -181,6 +197,21 @@ try {
         $avisos = $true
     }
     Write-Host "   Inserts: $nIns ficheros en $insertsDir"
+
+    # --- Gate: nada de desarrollo puede viajar al cliente ---
+    # ⛔ Se comprueba el ARTEFACTO, no se confía en que los generadores se porten bien. Hasta la
+    # 3.25.0 el DDL inlineaba las `description` del model.json como comentarios del .sql que se
+    # copia al servidor del cliente, y nadie lo había decidido.
+    Write-Host "`n== Gate de fuga de metadatos de desarrollo =="
+    $modeloPath = Join-Path $workspace "BD\$proyecto-model.json"
+    $argsGate = @("$scriptsDir\installer-gate-fuga.py", "$outScripts")
+    if (Test-Path $modeloPath) { $argsGate += @("--modelo", "$modeloPath") }
+    python @argsGate
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: el paquete contiene metadatos de desarrollo — NO es entregable."
+        exit 1
+    }
+
     if ($avisos) { exit 2 }
 }
 finally {

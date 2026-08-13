@@ -19,7 +19,9 @@ C:\AIS\<Proyecto>\Instalador\
 │   └── Modulos\     DLLs de los módulos activos del cliente
 ├── Scripts\
 │   ├── 00-RVERSIONES.sql               DDL de la tabla de versiones (registro de entregas)
-│   ├── <Proyecto>-CreacionTablas.sql   DDL de todas las tablas + índices + DEFAULT, SIN schema
+│   ├── <Proyecto>-CreacionTablas.sql   tablas, columnas con tipo y tamaño exactos, DEFAULT,
+│   │                                   IDENTITY, PK, UNIQUE, CHECK, índices y FK — SIN schema,
+│   │                                   extraído de la BD VIVA (el model.json no interviene)
 │   ├── <Proyecto>-01-Secuencias.sql    ┐
 │   ├── <Proyecto>-02-Vistas.sql        │
 │   ├── <Proyecto>-03-Funciones.sql     │ objetos extraídos de la BD VIVA (el model.json
@@ -56,8 +58,9 @@ aun así no aparecen, detener y pedir la raíz al usuario. Nunca asumir una vers
 
 1. `mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config(workspace)` → `proyecto`, `motor`, `model_exists`.
    - Si el workspace no es un trunk válido (sin `docs\.rs-databases.json`) → pedir la ruta trunk correcta y detener.
-   - Si `model_exists` es false → detener: el DDL y los inserts necesitan `BD\<proyecto>-model.json`
-     (sugerir `/rs-erd` para generarlo primero).
+   - `model_exists` false **NO detiene**: desde la 3.26.0 el DDL sale de la BD, no del modelo.
+     Sin modelo se genera igual y solo se pierde el contraste de deriva; decirlo en el SUMMARY y
+     sugerir `/rs-erd` para tenerlo, que es lo que documenta el esquema y lleva las marcas PII.
 2. Fijar `destino = C:\AIS\<proyecto>\Instalador`.
 3. **Configuración de los batch centralizada** → `check_batch_config(workspace)` (fallback
    `hooks\batch-centralizar.ps1 "<workspace>"`, modo informe, no escribe nada).
@@ -87,6 +90,10 @@ Estructura:
   "agendaweb": { "sln": "AgendaWeb<Proyecto>.sln", "publishProfile": "" },
   "servicemanager": { "modulos": ["AIS.RS.<Proyecto>.API"] },
   "parametricas": { "vista": "Parametricas", "excluir": [], "incluir_extra": [], "max_paralelo": 8 },
+  "exclusiones": {
+    "tablas": [ { "nombre": "RTRABAJO_20260731", "motivo": "copia CTAS manual de desarrollo" } ],
+    "indices": [], "constraints": [], "tipos_objeto": []
+  },
   "entornos": {
     "DESA": { "backup": "", "modulos": { "AgendaWeb": "", "Exes": "", "ServiceManager": "", "Modulos": "" },
               "bd": { "motor": "ORACLE", "conexion": "", "usuario": "", "autenticacion": "usuario", "tnsAdmin": "", "schema": "" } },
@@ -121,6 +128,16 @@ sugerencia si hay que caer a contraseña. ⛔ Con wallet, `conexion` es el **ali
 texto del alias y el troceo por `/` y `@` produce un ORA-12154 que parece de red y no lo es —
 `Ejecutar-Scripts.ps1` lo rechaza antes de conectar. `tnsAdmin` es la carpeta del wallet y `schema`
 el `CURRENT_SCHEMA`, para cuando el usuario de conexión no es el dueño de las tablas.
+
+`exclusiones` (opcional) declara **qué NO viaja al cliente**, por **nombre exacto** sobre el
+inventario leído de la BD. ⛔ Nunca por patrón: excluir por patrón borra en silencio tablas de
+producto que casualmente encajen, y el fallo no aparece hasta que algo las usa. El `motivo` es
+para que dentro de seis meses se sepa por qué; la cabecera del `.sql` lo lista. `tipos_objeto`
+excluye una categoría entera (p. ej. `"FOREIGN KEY"`) y existe para que "esto no viaja nunca" sea
+una decisión declarada y no un silencio del generador — **por defecto las FK que existen en la BD
+viajan**. La infraestructura del paquete (`RVERSIONES` y compañía) se excluye siempre, sin
+declararla. Los nombres con pinta de copia puntual (`_20260731`, `_BAK`, `_TMP`…) se **avisan** y
+**se entregan**: quien excluye es esta lista.
 
 `parametricas.max_paralelo` (opcional, default `8`): **cap único de sesiones BD simultáneas de la
 etapa de scripts** — gobierna tanto los inserts paramétricos como la extracción de objetos
@@ -247,11 +264,31 @@ Antes de reportar OK de cada etapa, exigir evidencia real (nunca "OK" sin esto):
     (`---- Resumen objetos (conteo capturado) ----`), **junto al bloque de cobertura**. El conteo
     solo distingue "el schema no tiene vistas" de "la extracción de vistas falló" si va
     acompañado de la cobertura: sin ella, un 0 es ambiguo.
-  - **Valores DEFAULT**: el log del DDL dice `N tablas | M índices | K defaults`. Si `K` es 0 y el
-    proyecto tiene columnas con valor por defecto, **el modelo está desactualizado**, no la BD:
-    el campo `default` de cada columna lo rellena `hooks\sync-from-db.ps1`, y un `model.json`
-    sincronizado antes de eso no lo lleva. Resincronizar (`/rs-erd`) y repetir `-Solo ddl` antes de
-    entregar; si no, en el cliente toda columna con DEFAULT queda a NULL y no salta ningún error.
+  - ⛔ **El DDL de tablas sale de la BD VIVA, no del modelo.** El log de la etapa lo dice
+    (`Fuente: BD VIVA — <motor>, esquema <x>`) y resume
+    `N tablas | M índices | U unique | C check | K defaults | I identity | F FK`. **Reportar esa
+    línea entera en el SUMMARY.** Un `0` en FK, CHECK o IDENTITY ya no significa "el modelo no los
+    tenía": significa que el esquema no los tiene, y si el proyecto sí los usa hay que mirarlo.
+    - `Cobertura tablas: diccionario N · capturado M` con `<< HUECO n` = el diccionario ve tablas
+      que la extracción no capturó → **el paquete iría incompleto**, no dar la entrega por buena.
+    - `DERIVA modelo/BD: ...` = el modelo está desfasado respecto a la BD. **No bloquea** —lo
+      entregado sale de la BD, que es correcto— pero **reportarlo**: una tabla en BD que el modelo
+      no conoce suele significar que alguien la creó a mano y nadie lo sabe. Resincronizar con
+      `/rs-erd` cuando se pueda.
+    - `AVISO: N tabla(s) con nombre de copia puntual que SÍ se entregan` = decidir si son restos
+      de desarrollo y, en ese caso, declararlas en `exclusiones.tablas` **con motivo**.
+    - **exit 2** = algún tipo llegó sin tamaño. El script **no ha escrito el fichero** y lista
+      todas las columnas rotas: las `INVÁLIDA(S)` rompen el DDL en el cliente (ORA-00906), las
+      `SILENCIOSA(S)` valen, significan `(1)` y truncan datos sin error. Esto ya no puede venir de
+      un modelo desfasado: sale del diccionario, así que hay que mirar la columna en la BD.
+    - **exit 1 por FK colgante** = una FOREIGN KEY apunta a una tabla que no viaja (excluida o
+      ausente). En el cliente sería ORA-00942/ORA-02270. Salidas: no excluir la tabla referenciada,
+      o declarar esa FK en `exclusiones.constraints`.
+  - ⛔ **Gate de fuga de metadatos de desarrollo.** Al cerrar la etapa se revisa todo
+    `<destino>\Scripts\**`: si aparece una descripción del modelo, una marca `pii`/`safe`, una
+    referencia a un ticket interno o una ruta del workspace, la etapa sale con **exit 1** y el
+    paquete **no es entregable**. Si salta, corregir el **generador** que produce esa línea, nunca
+    el `.sql` a mano: la siguiente generación lo volvería a meter.
   - exit 2 de la etapa Scripts = alguna tabla paramétrica dio error de BD, algún tipo de objeto
     falló, falta algún fichero de objetos, o **hay hueco de cobertura** → reportarlo como AVISO,
     no como éxito silencioso. exit 1 = **no entregable** (incluye el caso "esta cuenta no ve nada
@@ -314,7 +351,9 @@ Destino: C:\AIS\<Proyecto>\Instalador
 - EXES:          <N procesos batch>  [OK|FAIL]
 - AgendaWeb:     <N ficheros>        [OK|FAIL|OMITIDO]
 - ServiceManager:<host + N módulos>  [OK|FAIL]
-- Scripts:       <N> tablas (<K> defaults) + <N> inserts   [OK|AVISO|FAIL]
+- Scripts:       <N> tablas · <K> defaults · <I> identity · <F> FK · <C> check + <N> inserts   [OK|AVISO|FAIL]
+- Cobertura:     diccionario <N> vs capturado <M> · excluidas <E>   [OK|HUECO]
+- Gate de fuga:  sin metadatos de desarrollo en el paquete   [OK|FAIL]
 - Objetos BD:    sec <n> · vistas <n> · func <n> · procs <n> · trig <n> · sinón <n>  [OK|AVISO|FAIL]
 - Paquete:       Instalar.ps1 + Ejecutar-Scripts.ps1 + rutas.json + scripts.json + readme.txt  [OK|PLANTILLA|FAIL]
 - RVERSIONES:    DDL + fila base de <N> soluciones en <entornos>  [OK|AVISO|FAIL]

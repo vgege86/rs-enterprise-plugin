@@ -46,26 +46,34 @@ def _cargar(nombre):
     return mod
 
 
-ddl = _cargar("installer-ddl")
+# ⛔ `installer-ddl.py` está RETIRADO (3.26.0): el DDL del instalador ya no sale del modelo.
+# La lógica que consumía el modelo —orden de la PK, expresión del DEFAULT— sigue viva en
+# `_dbmodel.py` y en `generate-sql.py`, que es un generador de DESARROLLO (/rs-erd) y ahí el
+# modelo sí es la fuente legítima. Los tests de esa lógica se apuntan ahí; lo que se entrega al
+# cliente lo cubre tests/test_installer_tablas.py, contra la extracción de la BD.
+gsql = _cargar("generate-sql")
+shim = _cargar("installer-ddl")
 obj = _cargar("installer-objects")
+
+import _dbmodel
 
 
 # --------------------------------------------------------------- column_default
 class TestColumnDefault:
     def test_columna_sin_default_da_cadena_vacia(self):
-        assert ddl.column_default({"type": "NUMBER(10)"}) == ""
-        assert ddl.column_default({"type": "NUMBER(10)", "default": None}) == ""
+        assert _dbmodel.column_default({"type": "NUMBER(10)"}) == ""
+        assert _dbmodel.column_default({"type": "NUMBER(10)", "default": None}) == ""
 
     def test_cero_y_cadena_vacia_son_defaults_reales(self):
         # `0` y `'N'` son falsy o casi: la comprobación tiene que ir contra la cadena vacía,
         # nunca contra la falsedad del valor, o se pierden justo los defaults más comunes.
-        assert ddl.column_default({"default": "0"}) == "0"
-        assert ddl.column_default({"default": 0}) == "0"
-        assert ddl.column_default({"default": "'N'"}) == "'N'"
+        assert _dbmodel.column_default({"default": "0"}) == "0"
+        assert _dbmodel.column_default({"default": 0}) == "0"
+        assert _dbmodel.column_default({"default": "'N'"}) == "'N'"
 
     def test_recorta_espacios_del_diccionario(self):
         # Oracle devuelve DATA_DEFAULT con relleno; sin recortar, el DDL sale con espacios.
-        assert ddl.column_default({"default": "  SYSDATE  "}) == "SYSDATE"
+        assert _dbmodel.column_default({"default": "  SYSDATE  "}) == "SYSDATE"
 
 
 # --------------------------------------------------------------- CREATE TABLE
@@ -83,7 +91,7 @@ def _tabla():
 
 class TestGenerateCreateTable:
     def test_emite_el_default_entre_el_tipo_y_el_not_null(self):
-        sql = ddl.generate_create_table("RTABLA", _tabla(), "ORACLE", "ORACLE")
+        sql = gsql.generate_create_table("RTABLA", _tabla(), "ORACLE", "ORACLE")
         assert "ESTADO CHAR(1 CHAR) DEFAULT 'A' NOT NULL" in sql
         assert "F_ALTA DATE DEFAULT SYSDATE NOT NULL" in sql
         # Nullable con default: sin NOT NULL detrás, pero el DEFAULT sigue estando.
@@ -92,23 +100,16 @@ class TestGenerateCreateTable:
         assert "NOT NULL DEFAULT" not in sql
 
     def test_columna_sin_default_no_gana_la_palabra_DEFAULT(self):
-        sql = ddl.generate_create_table("RTABLA", _tabla(), "ORACLE", "ORACLE")
+        sql = gsql.generate_create_table("RTABLA", _tabla(), "ORACLE", "ORACLE")
         linea = [l for l in sql.splitlines() if l.strip().startswith("ID ")][0]
         assert "DEFAULT" not in linea
-
-    def test_inline_defaults_false_los_deja_fuera(self):
-        sql = ddl.generate_create_table("RTABLA", _tabla(), "SQLSERVER", "ORACLE",
-                                        inline_defaults=False)
-        assert "DEFAULT" not in sql
-        # Lo demás sí se traduce: es el tipo lo que adapt_type sabe convertir.
-        assert "DECIMAL(10)" in sql
 
     def test_la_coma_separadora_no_se_come_el_comentario(self):
         # Cicatriz previa (ORA-00907): el comentario nunca puede ir antes de la coma. El
         # DEFAULT se mete entre tipo y NOT NULL, así que esto se vuelve a comprobar aquí.
         t = _tabla()
         t["columns"]["ESTADO"]["description"] = "Estado del registro"
-        sql = ddl.generate_create_table("RTABLA", t, "ORACLE", "ORACLE")
+        sql = gsql.generate_create_table("RTABLA", t, "ORACLE", "ORACLE")
         linea = [l for l in sql.splitlines() if "ESTADO CHAR" in l][0]
         assert linea.rstrip().index(",") < linea.index("--")
 
@@ -119,55 +120,30 @@ def _modelo(engine="ORACLE"):
             "schema": "RSMIPROY", "tables": {"RTABLA": _tabla()}}
 
 
-def _generar(tmp_path, target=None, engine="ORACLE"):
-    ws = tmp_path / "trunk"
-    (ws / "BD").mkdir(parents=True)
-    (ws / "BD" / "MIPROYECTO-model.json").write_text(json.dumps(_modelo(engine)), encoding="utf-8")
-    out = tmp_path / "salida.sql"
-    argv = ["installer-ddl.py", str(ws), "MIPROYECTO", str(out)]
-    if target:
-        argv.append(target)
-    viejo, sys.argv = sys.argv, argv
-    try:
-        ddl.main()
-    finally:
-        sys.argv = viejo
-    return out.read_text(encoding="utf-8")
+class TestInstallerDdlRetirado:
+    """El shim tiene que NEGARSE, no generar.
 
+    Se deja el fichero en su sitio a propósito: borrarlo haría que un llamante antiguo diera
+    "no such file" —un error de infraestructura, que se arregla restaurando el fichero— en vez
+    de explicar que la fuente del DDL ha cambiado. El error es la documentación.
+    """
 
-class TestFicheroGenerado:
-    def test_mismo_motor_los_defaults_van_inline(self, tmp_path):
-        sql = _generar(tmp_path)
-        assert "DEFAULT SYSDATE" in sql
-        assert "SIN APLICAR" not in sql
+    def test_ejecutarlo_falla_con_codigo_distinto_de_cero(self):
+        with pytest.raises(SystemExit) as e:
+            shim.main()
+        assert e.value.code != 0
 
-    def test_motor_distinto_los_defaults_salen_comentados_y_no_rompen_el_create(self, tmp_path):
-        # Un `DEFAULT SYSDATE` colado en un CREATE TABLE de SQL Server tumba la sentencia
-        # entera: se pierde la tabla, no solo el default.
-        sql = _generar(tmp_path, target="SQLSERVER")
-        create = sql.split("-- VALORES POR DEFECTO")[0]
-        assert "DEFAULT" not in create
-        assert "-- VALORES POR DEFECTO — SIN APLICAR (3)" in sql
-        for linea in sql.splitlines():
-            if "SYSDATE" in linea:
-                assert linea.lstrip().startswith("--")
+    def test_dice_cual_es_el_sustituto(self, capsys):
+        with pytest.raises(SystemExit):
+            shim.main()
+        salida = capsys.readouterr().out
+        assert "installer-tablas.py" in salida
+        assert "retirado" in salida.lower()
 
-    def test_avisa_cuando_el_modelo_no_trae_ningun_default(self, tmp_path, capsys):
-        # Un modelo sincronizado antes de que sync-from-db.ps1 extrajera los defaults no se
-        # distingue de una BD sin defaults más que por este aviso.
-        ws = tmp_path / "trunk"
-        (ws / "BD").mkdir(parents=True)
-        m = _modelo()
-        for c in m["tables"]["RTABLA"]["columns"].values():
-            c.pop("default", None)
-        (ws / "BD" / "MIPROYECTO-model.json").write_text(json.dumps(m), encoding="utf-8")
-        viejo, sys.argv = sys.argv, ["installer-ddl.py", str(ws), "MIPROYECTO",
-                                     str(tmp_path / "o.sql")]
-        try:
-            ddl.main()
-        finally:
-            sys.argv = viejo
-        assert "ninguna columna del modelo declara 'default'" in capsys.readouterr().out
+    def test_importarlo_no_revienta(self):
+        # Si el shim hiciera sys.exit(1) durante el import, este fichero sería inimportable y
+        # ni siquiera se podría comprobar que se niega.
+        assert shim.MOTIVO
 
 
 # --------------------------------------------------------------- orden de la PK
@@ -182,24 +158,24 @@ class TestOrdenPk:
     def test_el_ordinal_manda_sobre_el_orden_de_declaracion(self):
         # Columnas declaradas ID_MOV, COD_EMP; PK real (COD_EMP, ID_MOV).
         t = self._tabla({"ID_MOV": 2, "COD_EMP": 1, "FECHA": False})
-        assert ddl.pk_columns(t) == ["COD_EMP", "ID_MOV"]
+        assert _dbmodel.pk_columns(t) == ["COD_EMP", "ID_MOV"]
 
     def test_sin_ordinales_se_respeta_el_orden_de_declaracion(self):
         # Modelos anteriores al ordinal siguen valiendo; es lo mejor que se puede hacer.
         t = self._tabla({"ID_MOV": True, "COD_EMP": True})
-        assert ddl.pk_columns(t) == ["ID_MOV", "COD_EMP"]
+        assert _dbmodel.pk_columns(t) == ["ID_MOV", "COD_EMP"]
 
     def test_pk_true_no_se_confunde_con_el_ordinal_1(self):
         # bool es subclase de int en Python: sin descartarlo, `True` contaría como posición 1.
         t = self._tabla({"A": True, "B": True, "C": False})
-        assert ddl.pk_columns(t) == ["A", "B"]
+        assert _dbmodel.pk_columns(t) == ["A", "B"]
 
     def test_el_CREATE_TABLE_emite_la_PK_en_su_orden_real(self):
         t = {"columns": {
             "ID_MOV":  {"type": "NUMBER(12)", "nullable": False, "pk": 2},
             "COD_EMP": {"type": "VARCHAR2(4)", "nullable": False, "pk": 1},
             "FECHA":   {"type": "DATE", "nullable": False, "pk": False}}}
-        sql = ddl.generate_create_table("RMOVIM", t, "ORACLE", "ORACLE")
+        sql = gsql.generate_create_table("RMOVIM", t, "ORACLE", "ORACLE")
         assert "PRIMARY KEY (COD_EMP, ID_MOV)" in sql
         # y las columnas siguen en su orden de tabla, que es independiente
         assert sql.index("ID_MOV NUMBER") < sql.index("COD_EMP VARCHAR2")
@@ -211,40 +187,20 @@ class TestOrdenPk:
         iba al final, así que (A=true, B=2) salía como (B, A) — la clave invertida, sin error.
         """
         t = self._tabla({"COD_EMP": True, "ID_MOV": 2})
-        assert ddl.pk_columns(t) == ["COD_EMP", "ID_MOV"]      # orden de declaración
-        assert ddl.pk_orden_ambiguo(t) is True
+        assert _dbmodel.pk_columns(t) == ["COD_EMP", "ID_MOV"]      # orden de declaración
+        assert _dbmodel.pk_orden_ambiguo(t) is True
 
     def test_una_tabla_coherente_no_se_marca_como_ambigua(self):
-        assert ddl.pk_orden_ambiguo(self._tabla({"A": 1, "B": 2})) is False
-        assert ddl.pk_orden_ambiguo(self._tabla({"A": True, "B": True})) is False
-        assert ddl.pk_orden_ambiguo(self._tabla({"A": False, "B": False})) is False
+        assert _dbmodel.pk_orden_ambiguo(self._tabla({"A": 1, "B": 2})) is False
+        assert _dbmodel.pk_orden_ambiguo(self._tabla({"A": True, "B": True})) is False
+        assert _dbmodel.pk_orden_ambiguo(self._tabla({"A": False, "B": False})) is False
 
     def test_las_columnas_que_no_son_PK_no_cuentan_para_la_ambiguedad(self):
         # `pk: false` no es "la otra forma": es no ser clave. Contarlo daría un falso aviso
         # en toda tabla con PK por ordinal, que es justo lo que escribe el sync ahora.
         t = self._tabla({"A": 1, "B": 2, "C": False})
-        assert ddl.pk_orden_ambiguo(t) is False
-        assert ddl.pk_columns(t) == ["A", "B"]
-
-    def test_el_generador_avisa_de_la_PK_ambigua(self, tmp_path, capsys):
-        # El DDL es válido y la tabla se crea: lo que no se puede garantizar es el orden de la
-        # clave. Sin aviso, eso se entrega y no se descubre hasta que el plan de ejecución
-        # deja de usar el índice.
-        ws = tmp_path / "trunk"
-        (ws / "BD").mkdir(parents=True)
-        m = _modelo()
-        m["tables"]["RTABLA"]["columns"]["ID"]["pk"] = 1
-        m["tables"]["RTABLA"]["columns"]["ESTADO"]["pk"] = True
-        (ws / "BD" / "MIPROYECTO-model.json").write_text(json.dumps(m), encoding="utf-8")
-        viejo, sys.argv = sys.argv, ["installer-ddl.py", str(ws), "MIPROYECTO",
-                                     str(tmp_path / "o.sql")]
-        try:
-            ddl.main()
-        finally:
-            sys.argv = viejo
-        salida = capsys.readouterr().out
-        assert "mezclan ordinal y booleano" in salida
-        assert "RTABLA" in salida
+        assert _dbmodel.pk_orden_ambiguo(t) is False
+        assert _dbmodel.pk_columns(t) == ["A", "B"]
 
     def test_los_dos_generadores_de_DDL_usan_la_misma_funcion(self):
         # Estaban duplicados y generate-sql.py no ordenaba: mismo objeto, no dos copias.
@@ -254,7 +210,6 @@ class TestOrdenPk:
         gen = _u.module_from_spec(spec)
         spec.loader.exec_module(gen)
         assert gen.pk_columns is _dbmodel.pk_columns
-        assert ddl.pk_columns is _dbmodel.pk_columns
         assert gen.column_default is _dbmodel.column_default
         assert gen.pk_orden_ambiguo is _dbmodel.pk_orden_ambiguo
 
