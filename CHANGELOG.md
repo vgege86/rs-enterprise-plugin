@@ -1,5 +1,49 @@
 # RS Enterprise Agent — Changelog
 
+## 3.26.1 — 2026-08-14
+
+### El README decía 3.23.0 con el plugin en la 3.26.0, y el proceso no tenía a quién culpar
+
+La línea `> Versión actual: **3.23.0**` de `README.md` llevaba **tres entregas** sin tocarse. No es
+una errata: es la primera línea que lee quien abre el README, la única que dice qué versión describe
+todo lo que viene debajo, y el propio README ya citaba más abajo funcionalidad de la 3.24.0 y de la
+3.25.0. Quien lo leyera concluiría que tiene delante la documentación de una versión que ya no
+existe, o —peor— que el plugin está tres versiones por detrás de donde está.
+
+La causa está en el paso 8 de `skills/rs-plugin-dev/SKILL.md`, que decía: **"`README.md` → si el
+cambio es visible al usuario (nuevo comando/skill, nº de tools MCP, etc.)"**. Una línea de versión
+no encaja en ninguno de esos ejemplos. El paso se cumplía —los tres cambios sí tocaron el README, en
+sus tablas de comandos— y aun así la línea se quedaba atrás, porque **no la reclamaba ningún
+artefacto nuevo**. Un ítem que solo se dispara cuando algo lo pide no cubre lo que no pide nada.
+
+Ahora la línea es **incondicional** en el paso 8 y, sobre todo, se comprueba en el paso 9, que es
+bloqueante: `plugin.json`, `marketplace.json`, la entrada del `CHANGELOG.md` y la línea del README
+llevan la misma versión, **los cuatro sitios o ninguno**. Sin el check del paso 9, el ítem del paso 8
+es una intención; con él, es una puerta. `docs/plugin-architecture.md` §10 recoge lo mismo en la fila
+"Cualquier cambio", que es la que gobierna el bump.
+
+### El manual de usuario en Word: el paso que cierra el ciclo no estaba escrito
+
+La 3.23.1 creó `docs/manual-usuario/` precisamente para que el manual entregable dejara de quedarse
+desfasado —hasta entonces el `.docx` no tenía fuente y se había quedado veintidós versiones atrás—.
+La fuente Markdown funciona: está al día hasta la 3.26.0. Lo que faltaba era el otro medio ciclo.
+El `.docx` **se regenera** desde esa fuente con `/rs-word`, ese paso no estaba en la checklist del
+paso 8, y el resultado es el mismo fallo con otra cara: la fuente correcta y el documento que se
+entrega, en la 3.23.1.
+
+El paso 8 lo incluye ahora, con la restricción que lo hace realista: la plantilla corporativa `.dotx`
+⛔ **no vive en este repo** —es material de marca del workspace del cliente, decisión de la 3.7.0— y
+el `.docx` no se versiona (`.gitignore`). Sin la ruta de la plantilla no se puede regenerar, así que
+la regla no es "regenera siempre" sino **"regenera, y si no puedes, decláralo como pendiente en el
+reporte de cierre"**. Un pendiente escrito es recuperable; un ciclo medio cerrado en silencio, no.
+
+⚠️ **El manual `.docx` sigue en la 3.23.1**, por esa misma razón: esta entrega no tenía la plantilla
+delante. Se regenera con `/rs-word docs/manual-usuario --plantilla <ruta del .dotx>`.
+
+**Ficheros**: `skills/rs-plugin-dev/SKILL.md` (pasos 8 y 9), `docs/plugin-architecture.md` (§10),
+`README.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`. Sin cambios de código:
+ningún hook, tool MCP, agente ni comando tocado. Suite: **846 Pester + 429 pytest, 0 fallos**.
+
 ## 3.26.0 — 2026-08-13
 
 ### El DDL del instalador ya no sale del modelo: sale de la base de datos

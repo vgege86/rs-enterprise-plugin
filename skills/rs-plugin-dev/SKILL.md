@@ -123,17 +123,29 @@ incompatible). Este paso no es opcional ni condicional.
 Actualizar los ficheros de la checklist §10 según el tipo de cambio, como mínimo:
 - `CHANGELOG.md` → nueva entrada con la **versión ya bumpeada** del paso 7 y fecha; describir el
   cambio con el mismo nivel de detalle que las entradas existentes (qué, por qué, ficheros).
-- `README.md` → si el cambio es visible al usuario (nuevo comando/skill, nº de tools MCP, etc.).
+- `README.md`, línea **`> Versión actual: **<x.y.z>**`** → ⛔ **SIEMPRE**, sin condición, con la
+  versión del paso 7. No es "si el cambio es visible al usuario": es la primera línea que lee
+  quien abre el README y la única que dice qué versión describe lo que hay debajo. Es la que más
+  fácil se escapa, precisamente porque no la reclama ningún artefacto nuevo.
+- `README.md`, resto → si el cambio es visible al usuario (nuevo comando/skill, nº de tools MCP, etc.).
 - `docs/plugin-architecture.md` → si cambia la anatomía o el patrón de extensión.
 - `skills/rs-enterprise-agent/SKILL.md` (tabla `# Modos directos`) → si es un modo directo nuevo.
 - `references/mcp.md` / `references/hooks.md` → si se tocó MCP/hooks.
+- `docs/manual-usuario/*.md` → si el cambio es visible al usuario. Y si se tocan, **regenerar el
+  `.docx`** con `/rs-word` sobre `docs/manual-usuario/`, nombrándolo con la versión del paso 7.
+  El `.docx` no se versiona (está en `.gitignore`) y la plantilla `.dotx` **no vive en este repo**
+  —es material de marca del workspace del cliente—, así que hace falta su ruta: si no está
+  disponible, ⛔ **declararlo como pendiente en el reporte de cierre**, nunca darlo por hecho.
+  Actualizar la fuente Markdown y no regenerar deja el manual entregable en una versión anterior
+  sin que nada lo delate.
 
 ### 9. ⛔ Verificación de coherencia (BLOQUEANTE)
 Antes de reportar éxito, confirmar explícitamente:
 - Cada artefacto nuevo tiene todos sus ficheros (modo directo → agente + comando + fila SKILL).
 - Frontmatter válido en cada `.md` creado.
 - **Versión idéntica** en `plugin.json` y `marketplace.json` + entrada en `CHANGELOG.md` con esa
-  misma versión.
+  misma versión + la línea `> Versión actual:` del `README.md` con esa misma versión. Los cuatro
+  sitios o ninguno: comprobarlo aquí es lo que convierte el ítem del paso 8 en una puerta.
 - Nombres consistentes entre agente / comando / tabla; sin referencias colgantes.
 - Docs de la checklist §10 actualizadas.
 - **Tests en verde**: `Invoke-Pester tests/` sin fallos. Los `.ps1` nuevos o tocados tienen que

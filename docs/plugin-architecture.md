@@ -721,7 +721,7 @@ Checklist de coherencia — qué tocar según el artefacto añadido/modificado:
 | Cambio de convención de dominio | reference correspondiente · CHANGELOG |
 | **Cualquier cambio visible al usuario** | `docs/manual-usuario/` (fuente Markdown del manual en Word) — el `.docx` se regenera desde ahí con `/rs-word` y no se versiona |
 | Mover contenido `SKILL.md` ↔ reference | tabla §8 este doc (contenido de la reference) · §9.6 si cambia la convención · CHANGELOG con el antes/después en tokens |
-| **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` |
+| **Cualquier cambio** | ⛔ **bump de versión** en `plugin.json` **y** `marketplace.json` (idénticas) + entrada `CHANGELOG.md` + la línea `> Versión actual:` del `README.md`. Los cuatro sitios, siempre |
 
 ⛔ **Sin nombres de clientes, en ningún fichero del repo.** Ni en documentación, ni en el
 CHANGELOG, ni en comentarios de código, ni en ejemplos o tests. Tampoco sus derivados
