@@ -365,10 +365,11 @@ function Resolve-RsVsMsBuildOrExit {
 }
 
 function Get-RsVsWherePaths {
-    return @(
-        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'),
-        (Join-Path $env:ProgramFiles        'Microsoft Visual Studio\Installer\vswhere.exe')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+    # Las variables se filtran ANTES de Join-Path: fuera de Windows no existen y Join-Path con
+    # $null revienta en vez de devolver "no hay vswhere" (fallaba la suite en la CI de Linux).
+    return @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ } |
+        ForEach-Object { Join-Path $_ 'Microsoft Visual Studio\Installer\vswhere.exe' } |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique
 }
 
 # ---------------------------------------------------------------------------------------------------

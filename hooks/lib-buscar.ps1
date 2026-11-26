@@ -51,7 +51,8 @@ function Get-RsFicherosDeScope {
     )
 
     $regexExcluir = if ($CarpetasExcluidas) {
-        '\\(' + (($CarpetasExcluidas | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\\'
+        # [\\/]: separador de Windows y de Linux (con '\\' solo, la CI de Linux no excluia nada).
+        '[\\/](' + (($CarpetasExcluidas | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')[\\/]'
     } else { $null }
 
     $vistos    = @{}

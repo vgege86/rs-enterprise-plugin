@@ -25,6 +25,21 @@ Para que la línea de tarea lleve el identificador real, `rs-editor-planner` añ
 explicativos) y `rs-crear-tests` (`<summary>` de una línea por test, sin `// Arrange/Act/Assert`).
 `rs-editor-validator` lo revisa como `[mejora][bajo]`: avisa, no bloquea el pipeline.
 
+### La suite Pester fallaba en la CI de Linux (8 tests, ya en rojo en `main`)
+
+Dos supuestos de Windows en código que la CI ejecuta en `ubuntu-latest`:
+
+- `Get-RsVsWherePaths` (`hooks/lib-msbuild.ps1`) hacía `Join-Path` con
+  `${env:ProgramFiles(x86)}`, que fuera de Windows no existe: `Join-Path` con `$null` revienta
+  en vez de devolver "no hay vswhere". Ahora filtra las variables vacías antes. (3 tests de
+  `MsBuild.Tests.ps1`.)
+- `Get-RsFicherosDeScope` (`hooks/lib-buscar.ps1`) excluía `bin`/`obj` con la regex
+  `\\(bin|obj)\\`, que solo reconoce la barra de Windows: en Linux no excluía nada y
+  `find_symbol`/`search_code` devolvían también lo compilado. Ahora `[\\/]`. (5 tests de
+  `Search.Tests.ps1`.)
+
+En Windows no cambia nada.
+
 ## 3.28.0 — 2026-11-26
 
 ### El enmascarado tapaba nombres de columna y cuerpos de trigger, y el agente aprendió a sortearlo
