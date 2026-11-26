@@ -17,12 +17,12 @@ Invocación directa. Escribe en el working copy (revert) **solo tras confirmaci�
 
 # Premisa
 
-En el flujo RS, el pipeline modifica ficheros pero el commit es un paso aparte (`/rs-commit`). Por tanto, "el último cambio" = los **cambios pendientes** del working copy dentro del scope. `executions/history.json` se usa solo como **contexto** (qué tarea/solución fue la última), no como fuente de la lista de ficheros.
+En el flujo RS, el pipeline modifica ficheros pero el commit es un paso aparte (`/rs-commit`). Por tanto, "el último cambio" = los **cambios pendientes** del working copy dentro del scope. El historial de ejecuciones se usa solo como **contexto** (qué tarea/solución fue la última), no como fuente de la lista de ficheros.
 
 # Proceso
 
 1. `mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope(sln_path)` → `scope_dirs`.
-2. **Contexto (opcional):** leer `<workspace>/executions/history.json` (Read) y tomar la primera entrada (la más reciente) → `task`, `solution`, `status`, `timestamp`. Si no existe o está vacío → continuar sin contexto (no es bloqueante).
+2. **Contexto (opcional):** `Glob` `<workspace>/executions/history/*.json` (sin los `*-archive-*`) y, si existe, `<workspace>/executions/history.json`; leerlos (Read) y tomar la entrada con el `timestamp` más reciente **de la solución activa** → `task`, `solution`, `status`, `timestamp`, `developer`. Si no existe o está vacío → continuar sin contexto (no es bloqueante).
 3. `mcp__plugin_rs-enterprise-agent_rs-workspace__detect_vcs(workspace)` → `"svn"` | `"git"` | `"none"`. Si `none` → informar que no hay VCS y ⛔ detener (no hay a qué revertir).
 4. **Listar lo pendiente:** `svn_status`/`git_status(workspace)` → cambios pendientes. Filtrar a `scope_dirs` (solo ficheros de la solución activa). Si no hay cambios pendientes en scope → informar "nada que deshacer" y detener.
 5. **Previsualizar (dry-run):** `vcs_revert(workspace, files=<lista ; -separada>, dry_run=True)` → plan por fichero (revert / delete / skip). Mostrarlo.
@@ -48,7 +48,7 @@ Si el último cambio tocó tablas/DALCs, el `BD\<proyecto>-model.json` puede hab
 
 ```
 ## Deshacer: <Solución>
-Último cambio (history.json): "<task>" — <timestamp>   (o: sin registro previo)
+Último cambio (historial): "<task>" — <timestamp> — <developer>   (o: sin registro previo)
 VCS: <svn|git>
 
 ### Cambios pendientes en scope [N]

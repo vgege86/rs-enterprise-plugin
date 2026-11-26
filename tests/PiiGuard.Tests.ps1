@@ -838,7 +838,7 @@ Describe "log-execution.ps1 saneado de PII" {
     <#
         Se conduce a traves del propio hook (no llamando a Remove-RsPii aislada) para
         cubrir el camino real: parseo de parametros, lectura/escritura de
-        executions/history.json y la funcion compartida en conjunto. Cada It usa su
+        executions/history/<dev>.json y la funcion compartida en conjunto. Cada It usa su
         propia subcarpeta de $TestDrive para que el history.json de una prueba no
         arrastre entradas de otra (ConvertTo-Json colapsa un array de 1 elemento a un
         objeto plano, asi que leer "el ultimo task" en un fichero compartido seria
@@ -850,9 +850,9 @@ Describe "log-execution.ps1 saneado de PII" {
         $ws = Join-Path $TestDrive "wslog"
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
 
-        & $script:hookLog $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" "revisar el deudor 12345678Z" -Status success -Developer tester | Out-Null
 
-        $historia = Get-Content (Join-Path $ws "executions/history.json") -Raw
+        $historia = Get-Content (Join-Path $ws "executions/history/tester.json") -Raw
         $historia | Should -Not -Match "12345678Z"
         $historia | Should -Match "\[PII\]"
     }
@@ -864,9 +864,9 @@ Describe "log-execution.ps1 saneado de PII" {
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
         $texto = "genera el paquete en PROD_20260803A y avisa"
 
-        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" $texto -Status success -Developer tester | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history/tester.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -875,9 +875,9 @@ Describe "log-execution.ps1 saneado de PII" {
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
         $texto = "carpeta 20260803A generada"
 
-        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" $texto -Status success -Developer tester | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history/tester.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -887,9 +887,9 @@ Describe "log-execution.ps1 saneado de PII" {
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
         $texto = "referencia 12345678A revisada, no coincide con ningun deudor"
 
-        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" $texto -Status success -Developer tester | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history/tester.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 
@@ -900,9 +900,9 @@ Describe "log-execution.ps1 saneado de PII" {
         New-Item -ItemType Directory -Path $ws -Force | Out-Null
         $texto = "importe acumulado 987654321 centimos"
 
-        & $script:hookLog $ws "Mi.sln" $texto -Status success | Out-Null
+        & $script:hookLog $ws "Mi.sln" $texto -Status success -Developer tester | Out-Null
 
-        $entrada = Get-Content (Join-Path $ws "executions/history.json") -Raw | ConvertFrom-Json
+        $entrada = Get-Content (Join-Path $ws "executions/history/tester.json") -Raw | ConvertFrom-Json
         $entrada.task | Should -Be $texto
     }
 }

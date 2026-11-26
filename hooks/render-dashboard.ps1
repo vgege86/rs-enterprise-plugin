@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Genera el dashboard HTML de estadísticas del pipeline (executions/history.json) y lo abre en el
+    Genera el dashboard HTML de estadísticas del pipeline (executions/history/*.json + el history.json antiguo) y lo abre en el
     navegador. Output JSON: success, path, opened, total.
 
 .PARAMETER Workspace

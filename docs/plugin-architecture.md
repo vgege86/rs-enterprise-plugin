@@ -60,7 +60,8 @@ assets/
                          `hooks/instalacion-paquete.ps1` solo copia de `instalacion/`, y hay
                          tests que fijan la separación
 executions/
-  history.json           historial de ejecuciones del pipeline (lo escribe log_execution)
+  history/<dev>.json     historial de ejecuciones del pipeline, uno por desarrollador (lo escribe log_execution)
+  history.json           historial antiguo (anterior a 3.27.0) — solo se lee
 plugins/                 plugins adicionales publicados por el mismo marketplace (§9.5)
   rs-validador/          mantenimiento de RSValidador (validador de ficheros) — árbol propio y
                          completo: .claude-plugin/, skills/, agents/, commands/, references/,

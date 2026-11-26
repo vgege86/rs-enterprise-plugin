@@ -3,7 +3,7 @@ Renderiza la guía de usuario del plugin (README.md) a un HTML autónomo y legib
 El HTML (CSS/JS inline, sin dependencias externas) vive en help-template.html; este script
 convierte el Markdown del README a HTML y lo inyecta en la plantilla.
 
-A diferencia de render-dashboard.py (que lee history.json del workspace), la fuente es el
+A diferencia de render-dashboard.py (que lee el historial de ejecuciones del workspace), la fuente es el
 README.md del propio plugin: la guía se mantiene sola al día con el README.
 
 Conversor Markdown→HTML minimalista (solo stdlib) para el subconjunto que usa el README:

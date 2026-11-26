@@ -1,5 +1,37 @@
 # RS Enterprise Agent — Changelog
 
+## 3.27.0 — 2026-11-26
+
+### history.json daba conflicto en SVN en cuanto trabajaban dos desarrolladores
+
+Todas las ejecuciones del pipeline iban a un único `executions/history.json`, versionado en el
+trunk, y `log-execution.ps1` insertaba cada entrada nueva **al principio** del array (y lo
+reescribía entero al rotar). Con varios desarrolladores sobre el mismo trunk, todos tocaban las
+mismas primeras líneas del mismo fichero: conflicto en casi cada `svn update`.
+
+Añadir solo un campo "de quién es" no lo habría arreglado: SVN fusiona **por líneas**, no por
+campos, y dos entradas nuevas arriba del mismo array chocan aunque digan desarrolladores distintos.
+Lo que lo arregla es que **cada desarrollador escriba solo en su fichero**:
+
+- `log-execution.ps1` (y la tool `log_execution`) escriben en `executions/history/<developer>.json`
+  y cada entrada lleva el campo nuevo **`developer`**.
+- `developer` sale de `-Developer` / el parámetro `developer` de la tool; si no, de
+  `$env:RS_DEVELOPER`; si no, del usuario de Windows (`$env:USERNAME`). Se normaliza para que sirva
+  de nombre de fichero: `EMPRESA\Ana.Perez` → `ana.perez`.
+- La rotación (500 entradas) archiva a `<developer>-archive-AAAAMM.json`, también por desarrollador.
+- El fichero siempre es un array, también con una sola entrada (antes `ConvertTo-Json` por pipeline
+  lo escribía como objeto suelto).
+- `/rs-historial`, `/rs-stats`, `/rs-dashboard` y `/rs-deshacer` juntan todos los ficheros. Los dos
+  primeros y el dashboard enseñan y filtran por desarrollador.
+
+⚠️ **El `executions/history.json` antiguo no se toca ni se migra**: se sigue leyendo como histórico
+(sus entradas salen como `(sin registrar)` / `—`). Migrarlo automáticamente lo reescribiría cada
+desarrollador en su máquina, y eso es justo el conflicto que se quiere quitar. Si se quiere
+retirar, que lo borre **una** persona con un commit propio cuando ya no haga falta.
+
+Tests: `tests/LogExecution.Tests.ps1` (nuevo), `tests/test_history_por_desarrollador.py` (nuevo) y
+`tests/PiiGuard.Tests.ps1` adaptado a la nueva ruta.
+
 ## 3.26.2 — 2026-11-26
 
 ### Los hooks de entrega fallaban con MSB4226 en cuanto había VS 2026 instalado

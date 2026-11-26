@@ -114,10 +114,10 @@ del caché lleva la versión: cada actualización las dejaba muertas). Los resto
 | Script | Uso |
 |--------|-----|
 | `check-env.ps1 <workspace>` | Valida .rs-databases.json, AIS, dotnet, SVN, modelo BD → JSON |
-| `log-execution.ps1 <workspace> <sln> <task> [-Status]` | Registra ejecución en executions/history.json |
+| `log-execution.ps1 <workspace> <sln> <task> [-Status] [-Developer]` | Registra ejecución en `executions/history/<developer>.json` (un fichero por desarrollador: sin conflictos SVN) |
 | `find-doc-section.ps1 <workspace> <keyword>` | Busca sección en docs funcionales para UpdateDocs |
 | `parse-weblog.ps1 -Path <fichero\|carpeta> [-Glob *.log] [-Desde <ISO>] [-Niveles ERROR,FATAL] [-MaxSignatures 30] [-Samples 2]` | Agrupa un log de errores web por **firma** (excepción o código ORA/`Codigo error` + frame propio + mensaje normalizado) → firmas con recuento, ventana, `pantalla` y muestras. Formatos: NLog/log4net, ELMAH XML, `rs-cerrores` (AgendaWeb) y stack plano. Solo el agregado; PII redactada (incluidos los literales SQL) |
-| `render-dashboard.ps1 <workspace>` | HTML de estadísticas del pipeline (executions/history.json) → lo abre en navegador |
+| `render-dashboard.ps1 <workspace>` | HTML de estadísticas del pipeline (`executions/history/*.json` + `history.json` antiguo) → lo abre en navegador |
 | `render-help.ps1 <workspace>` | Renderiza el README del plugin a un HTML navegable (guía de usuario) → lo abre en navegador |
 | `render-word.ps1 <workspace> -Sources <a.md;carpeta> [-Template <x.dotx>] [-Output <y.docx>] [-Title <t>] [-Objeto <o>] [-Autor <a>] [-StripMarks] [-Open]` | Convierte Markdown del agentic_manual a Word `.docx` sobre la plantilla `.dotx` del workspace (requiere Word por COM) |
 

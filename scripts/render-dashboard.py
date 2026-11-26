@@ -1,7 +1,11 @@
 """
 Genera un dashboard HTML autónomo con las estadísticas de ejecución del pipeline.
 El HTML (CSS/JS inline, sin dependencias externas) vive en dashboard-template.html; este script
-solo calcula las métricas desde executions/history.json e inyecta los datos.
+solo calcula las métricas desde el historial de ejecuciones e inyecta los datos.
+
+Historial = executions/history/<desarrollador>.json (uno por desarrollador, para que varios
+desarrolladores sobre el mismo trunk no choquen en SVN) + el executions/history.json antiguo
+(anterior a 3.27.0, entradas sin developer). Los <dev>-archive-AAAAMM.json no se leen.
 
 Mismas métricas que /rs-stats (agents/rs-stats.md): total, tasa de éxito, distribución por estado,
 top soluciones, agentes más usados y tendencia de 7 días.
@@ -24,16 +28,47 @@ def _proyecto(workspace: Path) -> str:
     return p if p and p != workspace.name else ""
 
 
-def _load_history(workspace: Path) -> list:
-    path = workspace / "executions" / "history.json"
-    if not path.exists():
-        return []
+def _read_json_list(path: Path) -> list:
     try:
         # utf-8-sig: los hooks PowerShell escriben con BOM.
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return []
-    return data if isinstance(data, list) else []
+    if isinstance(data, dict):  # ConvertTo-Json de un array de 1 elemento (ficheros antiguos)
+        data = [data]
+    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
+
+
+def history_files(workspace: Path) -> list:
+    """Ficheros vivos del historial: uno por desarrollador + el history.json antiguo.
+    Los <dev>-archive-AAAAMM.json quedan fuera, como antes los history-archive-*."""
+    ex = workspace / "executions"
+    files = []
+    hdir = ex / "history"
+    if hdir.is_dir():
+        files += sorted(p for p in hdir.glob("*.json") if "-archive-" not in p.name)
+    legacy = ex / "history.json"
+    if legacy.is_file():
+        files.append(legacy)
+    return files
+
+
+def _load_history(workspace: Path) -> list:
+    entries = []
+    seen = set()
+    for path in history_files(workspace):
+        fallback_dev = path.stem if path.parent.name == "history" else ""
+        for e in _read_json_list(path):
+            # Si alguien copió entradas entre ficheros, no contarlas dos veces.
+            key = e.get("id") or (e.get("timestamp"), e.get("solution"), e.get("task"))
+            if key in seen:
+                continue
+            seen.add(key)
+            if not e.get("developer") and fallback_dev:
+                e["developer"] = fallback_dev
+            entries.append(e)
+    entries.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+    return entries
 
 
 def _day(ts: str) -> str:
@@ -71,6 +106,19 @@ def _metrics(history: list) -> dict:
         key=lambda a: (-a["count"], a["name"]),
     )
 
+    # Desarrolladores: total y éxitos. Las entradas del history.json antiguo no tienen developer.
+    dev_total = Counter()
+    dev_ok = Counter()
+    for e in history:
+        name = e.get("developer") or "(sin registrar)"
+        dev_total[name] += 1
+        if (e.get("status") or "").lower() == "success":
+            dev_ok[name] += 1
+    developers = sorted(
+        ({"name": n, "total": t, "success": dev_ok.get(n, 0)} for n, t in dev_total.items()),
+        key=lambda d: (-d["total"], d["name"]),
+    )
+
     # Tendencia últimos 7 días (calendario, incluyendo hoy). Días sin ejecuciones → ceros.
     today = datetime.now().date()
     days = [today - timedelta(days=i) for i in range(6, -1, -1)]
@@ -92,6 +140,7 @@ def _metrics(history: list) -> dict:
         "partial": partial,
         "solutions": solutions,
         "agents": agents,
+        "developers": developers,
         "trend": trend,
         "period_from": timestamps[0] if timestamps else "",
         "period_to": timestamps[-1] if timestamps else "",

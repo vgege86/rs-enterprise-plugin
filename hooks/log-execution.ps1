@@ -1,7 +1,21 @@
 ﻿<#
 .SYNOPSIS
-    Registra una ejecución del pipeline en executions/history.json.
+    Registra una ejecución del pipeline en executions/history/<desarrollador>.json.
     Se llama al final de cada pipeline para que /rs-historial tenga datos.
+
+.DESCRIPTION
+    ⛔ UN FICHERO POR DESARROLLADOR. Hasta la 3.26.x todas las ejecuciones iban a un único
+    executions/history.json, y cada entrada nueva se insertaba AL PRINCIPIO del array. Con varios
+    desarrolladores sobre el mismo trunk, todos modificaban las mismas primeras líneas del mismo
+    fichero y SVN daba conflicto en cada update/commit. Añadir un campo "developer" no lo arregla
+    (el conflicto es por líneas, no por campos): lo que lo arregla es que cada uno escriba solo en
+    SU fichero. Los lectores (/rs-historial, /rs-stats, /rs-dashboard) juntan todos.
+
+    El history.json antiguo no se toca: se sigue leyendo como histórico (entradas sin developer).
+
+.PARAMETER Developer
+    Quién ejecuta. Por defecto: $env:RS_DEVELOPER y, si no está, el usuario de Windows
+    ($env:USERNAME). Se normaliza a minúsculas y [a-z0-9._-] para el nombre del fichero.
 
 .PARAMETER Workspace
     Ruta raíz del proyecto
@@ -26,7 +40,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Solution,
     [Parameter(Mandatory=$true)][string]$Task,
     [ValidateSet("success","fail","partial")][string]$Status = "success",
-    [string]$Agents = ""
+    [string]$Agents = "",
+    [string]$Developer = ""
 )
 
 
@@ -40,8 +55,16 @@ trap {
 
 . (Join-Path $PSScriptRoot "lib-pii.ps1")
 
-$historyDir  = Join-Path $Workspace "executions"
-$historyFile = Join-Path $historyDir "history.json"
+# --- Quién: fija el fichero ---
+if (-not $Developer) { $Developer = $env:RS_DEVELOPER }
+if (-not $Developer) { $Developer = $env:USERNAME }
+if (-not $Developer) { $Developer = $env:USER }
+# DOMINIO\usuario -> usuario; solo caracteres seguros para un nombre de fichero.
+$Developer = ($Developer -replace '^.*[\\/]', '').Trim().ToLowerInvariant() -replace '[^a-z0-9._-]', '_'
+if (-not $Developer -or $Developer -match '^[._-]*$') { $Developer = "desconocido" }
+
+$historyDir  = Join-Path (Join-Path $Workspace "executions") "history"
+$historyFile = Join-Path $historyDir "$Developer.json"
 
 if (-not (Test-Path $historyDir)) { New-Item -ItemType Directory -Force $historyDir | Out-Null }
 
@@ -57,7 +80,7 @@ if (Test-Path $historyFile) {
 
 # --- Saneado PII ---
 # El texto de la tarea lo escribe el usuario y puede llevar datos personales
-# ("revisar el deudor 12345678Z"). history.json se versiona y se lee en /rs-stats
+# ("revisar el deudor 12345678Z"). El historial se versiona y se lee en /rs-stats
 # y /rs-dashboard, asi que un dato aqui se propaga a tres sitios mas.
 $Task = Remove-RsPii $Task
 
@@ -65,6 +88,7 @@ $Task = Remove-RsPii $Task
 $entry = @{
     id        = [System.Guid]::NewGuid().ToString("N").Substring(0,8)
     timestamp = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+    developer = $Developer
     solution  = $Solution
     workspace = $Workspace
     task      = $Task
@@ -75,28 +99,33 @@ $entry = @{
 # Añadir al inicio
 $history = @($entry) + $history
 
-# Rotación: si supera 500 → archivar las más antiguas a history-archive-YYYYMM.json
+# Rotación: si supera 500 → archivar las más antiguas a <dev>-archive-YYYYMM.json (también por
+# desarrollador: un archivo compartido volvería a dar los mismos conflictos).
 $maxEntries = 500
 if ($history.Count -gt $maxEntries) {
     $toArchive  = $history[$maxEntries..($history.Count - 1)]
     $month      = (Get-Date -Format "yyyyMM")
-    $archiveFile = Join-Path $historyDir "history-archive-$month.json"
+    $archiveFile = Join-Path $historyDir "$Developer-archive-$month.json"
 
     # Cargar archivo existente del mes y añadir
     $existing = @()
     if (Test-Path $archiveFile) {
         try { $existing = @(Get-Content $archiveFile -Encoding UTF8 -Raw | ConvertFrom-Json) } catch { }
     }
-    ($toArchive + $existing) | ConvertTo-Json -Depth 4 | Set-Content $archiveFile -Encoding UTF8
+    ConvertTo-Json -InputObject @($toArchive + $existing) -Depth 4 | Set-Content $archiveFile -Encoding UTF8
 
     $history = $history[0..($maxEntries - 1)]
 }
 
-$history | ConvertTo-Json -Depth 4 | Set-Content $historyFile -Encoding UTF8
+# -InputObject: con la pipeline, un array de 1 elemento se escribiría como objeto suelto y el
+# fichero de un desarrollador nuevo no sería un array.
+ConvertTo-Json -InputObject @($history) -Depth 4 | Set-Content $historyFile -Encoding UTF8
 
 @{
     success   = $true
     entry_id  = $entry.id
+    developer = $Developer
+    file      = $historyFile
     timestamp = $entry.timestamp
     total_entries = $history.Count
 } | ConvertTo-Json
