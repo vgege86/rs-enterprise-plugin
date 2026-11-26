@@ -28,15 +28,21 @@ Requiere confirmación explícita del usuario. Scope siempre limitado a los fich
 
 2. **Añadir ficheros sin versionar/trackear (CRÍTICO — antes de filtrar):**
    Si el estado trae `needs_svn_add`/`needs_add: true` o ficheros `?`:
-   - Filtrar los `?` dentro del scope (excluir bin/obj/.vs)
-   - SVN → `mcp__plugin_rs-enterprise-agent_rs-workspace__svn_add(workspace, files)` (fallback `hooks/svn-add.ps1`). Git → `mcp__plugin_rs-enterprise-agent_rs-workspace__git_add(workspace, files)`.
-   - Resultado `method: cli|tortoisesvn|tortoisegit` → añadidos ✅ continuar. `method: manual` → mostrar `files_pending` + instrucciones → **esperar confirmación** antes de continuar.
+   - Filtrar los `?` dentro del scope (excluir bin/obj/.vs y las exclusiones del paso 4).
+   - Construir la lista **fichero a fichero**, separada por `;`. ⛔ Nunca una carpeta entera, `.` ni la raíz del workspace: si un `?` es una carpeta nueva, listar los ficheros de código que hay dentro (no `packages\`, `TestResults\`, `*.zip`, `*.db`, `*.log`…); `svn_add` añade solas las carpetas padre que hagan falta.
+   - SVN → `mcp__plugin_rs-enterprise-agent_rs-workspace__svn_add(workspace, files=<lista>)` (fallback `hooks/svn-add.ps1 -Files <lista>`). Git → `mcp__plugin_rs-enterprise-agent_rs-workspace__git_add(workspace, files=<lista>)`. ⛔ El parámetro es `files`; no subir `max_files` sin preguntar.
+   - `success: false` → mostrar `error`/`rejected`/`expanded` tal cual y **detener**: no reintentar con otra lista sin el usuario.
+   - `method: cli` → seguir al paso 2b. `method: tortoisesvn|tortoisegit` → paso 2b también (sin svn/git CLI no hay verificación: avisarlo). `method: manual` → mostrar `files_pending` + instrucciones → **esperar confirmación** antes de continuar.
    - ⛔ No continuar si quedan `?` sin añadir en scope (se perderían en el commit).
+2b. **Verificar lo que quedó programado (OBLIGATORIO tras cualquier add):**
+   - Volver a llamar a `svn_status(workspace)` / `git_status(workspace)`.
+   - Todo lo que esté en `A` y **no** esté en la lista pedida (más sus carpetas padre) → **detener**, enseñar la lista completa (con el `added_count` del add) y proponer deshacerlo con `svn revert --depth infinity <ruta>` / `git restore --staged -- <ruta>`. ⛔ No revertir por cuenta propia: en un working copy compartido un `A` puede ser trabajo de otro desarrollador.
+   - Si el add trae `warning` (se programó más de lo pedido) → misma comprobación, aunque todo esté dentro del scope.
 
 3. Filtrar SOLO ficheros dentro de los paths del scope de la solución.
 4. Exclusiones automáticas: `bin\`, `obj\`, `.vs\`, `*.user`, `*.suo`, ficheros con "password"/"secret"/"credentials" en el nombre.
 5. Si no hay cambios en scope → informar y detener.
-6. Mostrar lista de ficheros a commitear con estado.
+6. Mostrar lista de ficheros a commitear con estado. Si en el working copy hay elementos en `A` **fuera** del scope, avisarlo aparte (no se commitean, pero siguen programados y cualquier commit de la raíz o de TortoiseSVN los arrastraría).
 7. Diff por fichero modificado → resumen del cambio:
    - SVN: `svn diff <fichero>` vía Bash.
    - Git: `git -C <workspace> diff -- <fichero>` y `git -C <workspace> diff --staged -- <fichero>` vía Bash.
@@ -44,8 +50,8 @@ Requiere confirmación explícita del usuario. Scope siempre limitado a los fich
 
 9. **Confirmación 1 — commit:** confirmar/editar el mensaje y confirmar que procede el commit.
 10. Solo si el usuario confirma → ejecutar vía Bash:
-    - **SVN:** `svn commit <lista-ficheros-en-scope> -m "<mensaje>"`.
-      Fallback sin `svn.exe`: `& "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:commit /path:"<workspace>" /logmsg:"<mensaje>"`. Sin TortoiseSVN → instrucciones manuales. → **Fin (SVN termina aquí).**
+    - **SVN:** `svn commit --depth empty <lista-explícita> -m "<mensaje>"`. La lista son los ficheros del paso 6 **más** las carpetas nuevas (`A`) que los contienen; `--depth empty` hace que una carpeta suba sola, sin su contenido. ⛔ Nunca la raíz del workspace ni una carpeta sin `--depth empty`: `svn commit <carpeta>` sube todo lo que haya programado dentro.
+      Fallback sin `svn.exe`: `& "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:commit /path:"<f1>*<f2>*..." /logmsg:"<mensaje>"` con la **misma lista explícita** separada por `*`. ⛔ Nunca `/path:"<workspace>"`: el diálogo preselecciona todo lo programado del working copy. Sin TortoiseSVN → instrucciones manuales. → **Fin (SVN termina aquí).**
     - **Git:** `git -C <workspace> commit -m "<mensaje>" -- <lista-ficheros-en-scope>`. Si falla → reportar, no continuar a push.
 
 11. **(Solo Git) Confirmación 2 — push, separada de la anterior:**
@@ -66,6 +72,8 @@ Requiere confirmación explícita del usuario. Scope siempre limitado a los fich
 # Reglas de seguridad
 
 ⛔ No commitear ficheros fuera del scope de la solución.
+⛔ Commit siempre por **lista explícita de ficheros** (SVN: `--depth empty`), nunca la raíz del workspace ni una carpeta entera.
+⛔ Tras cualquier add, volver a mirar el estado (paso 2b) antes de seguir.
 ⛔ No commitear ni pushear sin confirmación explícita de cada paso por separado.
 ⛔ No commitear ficheros excluidos automáticamente (paso 4).
 ⛔ No commitear si hay conflictos (`C`/`UU`) detectados → informar y detener.

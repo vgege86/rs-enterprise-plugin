@@ -1,5 +1,72 @@
 # RS Enterprise Agent — Changelog
 
+## 3.31.0 — 2026-11-26
+
+### `svn_add` añadió todo lo no versionado del working copy: 57 elementos, 1925 ficheros, `success: true`
+
+En una instalación de cliente, con la 3.26.1, una llamada a `svn_add` con dos rutas concretas
+programó para alta **todo** lo no versionado del working copy: 57 elementos que al expandirse
+dejaron 1925 ficheros en estado `A`. Entre ellos, `packages\`, `BD\`, `TestResults\`, un `.zip`,
+una base de datos SQLite, logs, un JSON de configuración y proyectos de otros desarrolladores
+del mismo working copy compartido. La respuesta fue `success: true`, sin un solo aviso.
+
+**Causa: tres defectos encadenados.**
+1. **FastMCP descarta en silencio los parámetros que la tool no declara.** La llamada usó
+   `paths=` en vez de `files=`; el modelo de argumentos de pydantic lo ignoró y la tool recibió
+   `files` vacío. Reproducido con `mcp` 1.30.
+2. **`files` vacío significaba "añadir todo"**, y la descripción de la tool lo anunciaba.
+   `svn-add.ps1` lanzaba `svn status` sobre el workspace y añadía cada `?`: una carpeta sin
+   versionar aparece como un solo `?`, de ahí los 57.
+3. **`svn add --force` es recursivo y el resultado solo listaba lo pedido**: cada carpeta
+   arrastró su contenido y `added` decía 57. Las exclusiones (`\\packages\\`…) exigían barra a
+   los dos lados, así que una carpeta en la raíz no se excluía. Y con `--force`, una carpeta ya
+   versionada en una lista explícita también se recorría.
+
+**Mismo patrón en otras dos tools.** `git_add` tenía el mismo "vacío = todo". `vcs_revert` no,
+porque su `files` ya era obligatorio, pero el punto 1 le afectaba peor:
+`vcs_revert(..., dryRun=True)` o `dry-run=True` se quedaba sin el parámetro y **revertía de
+verdad**, sin la previsualización que `/rs-deshacer` enseña antes de pedir confirmación. Y
+aceptaba carpetas: en Git, `git checkout HEAD -- <carpeta>` revierte el árbol entero, y `.`
+revierte todo.
+
+**Arreglo.**
+- **Las 51 tools rechazan los parámetros desconocidos** (`mcp/rs-workspace-server.py`:
+  `extra="forbid"` en el modelo de argumentos de FastMCP y `additionalProperties: false` en el
+  schema). Se toca una estructura interna de FastMCP: si cambia, el servidor no arranca, porque
+  arrancar ignorando parámetros es justo el fallo. La CLI `rs.py` ya los rechazaba.
+- **`svn_add` / `git_add`**: `files` pasa a ser obligatorio y desaparece la detección
+  automática. Separador `;` (la coma se sigue aceptando).
+  - Lista vacía, `.`, la raíz, rutas fuera del workspace o comodines → error, sin tocar nada.
+    La validación es común (`hooks/lib-vcsrutas.ps1`).
+  - Sin `--force`: lo ya versionado sale en `skipped` y no se recorre. Lo ignorado
+    (`svn:ignore`, `.gitignore`) no se fuerza.
+  - Una carpeta nueva solo entra si lo que arrastra no pasa de `max_files` (parámetro nuevo,
+    defecto 50). Si pasa, **no se añade nada** y `expanded` da el desglose: avisar después habría
+    dejado los 1925 programados igual. En Git el recuento es exacto
+    (`git ls-files --others --exclude-standard`); en SVN se cuentan los ficheros en disco.
+  - `added` / `added_count` son lo que quedó **realmente** programado (estado antes y después),
+    incluidas las carpetas padre que añade `svn add --parents`; `warning` si es más de lo pedido.
+  - TortoiseSVN/TortoiseGit solo con ficheros: con una carpeta abren un diálogo con todo su
+    contenido preseleccionado.
+- **`vcs_revert`**: solo ficheros; una carpeta, `.` o la raíz rechazan la llamada entera.
+- **`rs-commit`**:
+  - lista de add fichero a fichero, nunca carpetas ni la raíz;
+  - **después de cualquier add vuelve a mirar el estado** y se detiene si hay algo en `A` que
+    no pidió;
+  - commit SVN con `--depth empty` y lista explícita (`svn commit <carpeta>` sube todo lo
+    programado dentro);
+  - la alternativa con TortoiseSVN ya no abre el commit sobre la raíz del workspace, cuyo diálogo
+    habría preseleccionado los 1925.
+
+Tests:
+- `tests/VcsAdd.Tests.ps1` (nuevo), con working copies SVN y repos Git reales: lista vacía,
+  `.`, raíz, fuera del workspace, comodines, fichero en carpeta nueva, tope de `max_files`,
+  carpeta ya versionada que no se recorre, ignorados, y carpetas y `.` en `vcs_revert`.
+- `tests/test_rs_cli.py`: parámetros desconocidos rechazados (`paths`, `dryRun`, `dry-run`) sin
+  llegar al hook, el alias `path` sigue valiendo, `additionalProperties: false` en las 51, y
+  `files` obligatorio.
+- La CI instala `subversion`.
+
 ## 3.30.0 — 2026-11-26
 
 ### Una sola implementación de las tools: el MCP y una CLI nueva sobre el mismo núcleo

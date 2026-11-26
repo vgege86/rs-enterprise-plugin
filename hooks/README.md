@@ -108,7 +108,7 @@ del caché lleva la versión: cada actualización las dejaba muertas). Los resto
 | `svn-diff-revision.ps1 <workspace> <revisions>` | Diff de revisiones específicas → combined_diff filtrado |
 | `svn-log.ps1 <workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits → JSON |
 | `vcs-delta.ps1 <workspace> -Desde <fecha> [-Hasta <fecha>] [-Ruta <subruta>] [-Limit 500]` | Delta de commits entre dos fechas (SVN o Git, autodetectado) → commits + tareas Mantis/Jira + ficheros tocados |
-| `svn-add.ps1 <workspace> [-Files <lista>]` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
+| `svn-add.ps1 <workspace> -Files <lista> [-MaxFiles 50]` | Añade una lista **explícita** de ficheros a SVN (vacía/raíz/`.` → error; carpetas con tope de `-MaxFiles`; `added` = lo realmente programado). `git-add.ps1` igual para Git |
 
 ### Entorno y logging
 | Script | Uso |

@@ -905,23 +905,19 @@ def git_diff_revision(workspace: Workspace, revisions: str, max_diff_chars: int 
     return _diff_summary(raw.get("combined_diff") or "", revisions, r'^diff --git a/.+ b/(.+)')
 
 
-@tool(description="Añade ficheros ? a SVN: CLI → TortoiseProc → instrucciones manuales. files vacío = auto-detectar todos los ? del workspace.")
-def svn_add(workspace: Workspace, files: str = "") -> str:
-    args = [workspace]
-    if files:
-        args += ["-Files", files]
+@tool(description="Añade a SVN una lista EXPLÍCITA de ficheros sin versionar (?): CLI → TortoiseProc → instrucciones manuales. files = rutas separadas por ';' (absolutas o relativas al workspace), OBLIGATORIO: vacío, '.', la raíz del workspace, rutas fuera de él o comodines → error, nunca 'añadir todo'. Una carpeta se añade con su contenido solo si en total no pasa de max_files ficheros (default 50); si pasa, no se añade nada y se devuelve el desglose. added = lo que quedó REALMENTE en estado A (incluido lo que arrastró cada carpeta, en expanded); lo ya versionado sale en skipped.")
+def svn_add(workspace: Workspace, files: str, max_files: int = 50) -> str:
+    args = [workspace, "-Files", files, "-MaxFiles", str(max_files)]
     return json.dumps(_run_ps("svn-add.ps1", *args), ensure_ascii=False, separators=_JSON_SEP)
 
 
-@tool(description="Añade ficheros ?? (sin trackear) a Git: CLI → TortoiseGitProc → instrucciones manuales. files vacío = auto-detectar todos los ?? del workspace. Equivalente Git de svn_add.")
-def git_add(workspace: Workspace, files: str = "") -> str:
-    args = [workspace]
-    if files:
-        args += ["-Files", files]
+@tool(description="Añade a Git una lista EXPLÍCITA de ficheros sin trackear (??): CLI → TortoiseGitProc → instrucciones manuales. files = rutas separadas por ';' (absolutas o relativas al workspace), OBLIGATORIO: vacío, '.', la raíz, rutas fuera del repo o comodines → error, nunca 'añadir todo'. Una carpeta se añade solo si lo que arrastra (git ls-files --others --exclude-standard) no pasa de max_files ficheros (default 50). added = lo que quedó REALMENTE en el índice como nuevo. Equivalente Git de svn_add.")
+def git_add(workspace: Workspace, files: str, max_files: int = 50) -> str:
+    args = [workspace, "-Files", files, "-MaxFiles", str(max_files)]
     return json.dumps(_run_ps("git-add.ps1", *args), ensure_ascii=False, separators=_JSON_SEP)
 
 
-@tool(description="Revierte una lista EXPLÍCITA de ficheros a su estado versionado (SVN o Git), o los elimina si son nuevos/sin versionar. Autodetecta el motor. files = rutas separadas por ';' (absolutas o relativas a la raíz del repo). dry_run=True devuelve el plan sin ejecutar. ⛔ Solo toca los ficheros indicados — pensado para deshacer los cambios pendientes del último cambio del pipeline (rs-deshacer), previa confirmación humana.")
+@tool(description="Revierte una lista EXPLÍCITA de ficheros a su estado versionado (SVN o Git), o los elimina si son nuevos/sin versionar. Autodetecta el motor. files = rutas de FICHEROS separadas por ';' (absolutas o relativas a la raíz del repo); una carpeta, '.' o la raíz se rechazan (en Git revertirían el árbol entero). dry_run=True devuelve el plan sin ejecutar. ⛔ Solo toca los ficheros indicados — pensado para deshacer los cambios pendientes del último cambio del pipeline (rs-deshacer), previa confirmación humana.")
 def vcs_revert(workspace: Workspace, files: str, dry_run: bool = False) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     args = [workspace, "-Files", files]

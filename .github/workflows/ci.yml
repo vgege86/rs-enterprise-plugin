@@ -32,6 +32,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # tests/VcsAdd.Tests.ps1 crea working copies SVN reales (3.31.0); git ya viene en el runner.
+      - name: Instalar subversion
+        run: sudo apt-get install -y -qq subversion
       - name: Instalar PSScriptAnalyzer + Pester
         shell: pwsh
         run: |

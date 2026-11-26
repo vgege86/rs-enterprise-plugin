@@ -16,6 +16,11 @@ echo {"workspace":"C:\\RS\\Proyecto\\trunk","sql":"SELECT 1 FROM dual"} | python
 **Fallback:** si el MCP no responde, la CLI. Los hooks de `references/hooks.md` siguen
 disponibles para lo que no está en la CLI o para depurar un hook concreto.
 
+> ⛔ **Un parámetro que la tool no declara es un error** (desde 3.31.0), en todas: antes se
+> descartaba en silencio, y `svn_add(paths=...)` llegaba sin ficheros y añadía todo lo no
+> versionado, o `vcs_revert(dryRun=True)` revertía de verdad. Los nombres son exactamente los de
+> esta tabla.
+
 > El primer parámetro `workspace` (raíz del workspace/trunk) acepta también el alias `path` en la
 > entrada — mismo valor, cualquiera de los dos nombres funciona (ver CHANGELOG 2.15.10). El nombre
 > canónico sigue siendo `workspace`.
@@ -53,9 +58,9 @@ disponibles para lo que no está en la CLI o para depurar un hook concreto.
 | `parse_web_log(path, glob="*.log", desde="", niveles="ERROR,FATAL", max_signatures=30, samples=2)` | Parsea un log de errores web (NLog/log4net, ELMAH XML, `rs-cerrores` —el formato propio de la AgendaWeb, `Error: (dd/MM/yyyy H:mm) - Codigo error: … Descripción error: …`— y volcado de stack .NET) y **agrupa por firma** (excepción o **código** `ORA-xxxxx`/`Codigo error` + frame de código propio + mensaje normalizado) → `signatures[]` con `{hash, exception, origin, pantalla, message, count, first_seen, last_seen, files, samples}` ordenado por `count`. `pantalla` es la `.aspx.cs` más cercana del stack (`""` si no hay), para triar sin abrir el código. Devuelve **solo el agregado**, nunca el log completo, y redacta PII en mensajes y muestras —incluidos los literales SQL, donde va el dato que no tiene forma reconocible—. `format_detected` dice qué formato se reconoció; `path` = fichero o carpeta. Base de `/rs-log-errores` |
 | `svn_diff_revision(workspace, revisions, max_diff_chars?)` | Diff revisiones SVN filtrado (para rs-validar-req) |
 | `git_diff_revision(workspace, revisions, max_diff_chars?, summary_only?)` | Diff de commits Git (hashes) filtrado. Equivalente Git de `svn_diff_revision` |
-| `svn_add(workspace, files?)` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
-| `git_add(workspace, files?)` | Añade ficheros ??: CLI → TortoiseGitProc → instrucciones manuales. Equivalente Git de `svn_add` |
-| `vcs_revert(workspace, files, dry_run?)` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `dry_run=True` devuelve el plan sin ejecutar. Para `/rs-deshacer` (previa confirmación humana) |
+| `svn_add(workspace, files, max_files=50)` | Añade a SVN una lista **explícita** de ficheros (`;`): CLI → TortoiseProc (solo ficheros) → instrucciones manuales. ⛔ `files` obligatorio: vacío, `.`, la raíz, fuera del workspace o comodines → error, nunca "todo". Una carpeta entra solo si lo que arrastra no pasa de `max_files`; si pasa, no se añade nada (`expanded` da el desglose). `added`/`added_count` = lo que quedó **realmente** en `A` (incluidas carpetas padre); `warning` si es más de lo pedido; lo ya versionado sale en `skipped` (sin `--force`) |
+| `git_add(workspace, files, max_files=50)` | Igual que `svn_add` para Git: lista explícita obligatoria, carpetas contadas con `git ls-files --others --exclude-standard` contra `max_files`, `added` = lo que quedó realmente en el índice como nuevo; lo ignorado por `.gitignore` no se fuerza |
+| `vcs_revert(workspace, files, dry_run?)` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `dry_run=True` devuelve el plan sin ejecutar. ⛔ Solo ficheros: una carpeta, `.` o la raíz se rechazan sin tocar nada (en Git revertirían el árbol entero). Para `/rs-deshacer` (previa confirmación humana) |
 | `security_scan(sln_path)` | Scan seguridad: SQL injection, XSS, credenciales, input sin validar |
 | `sync_model_tables(workspace, tables, conexion="")` | Sincroniza tablas específicas model.json con BD (post-migración). `not_in_db[]` = las que no se leyeron, que puede ser "no existe" o "esta cuenta no la ve"; ninguna se toca |
 | `map_dependencies(workspace)` | Mapa dependencias: proyectos compartidos entre soluciones, conflictos NuGet |

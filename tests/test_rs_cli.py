@@ -185,3 +185,71 @@ def test_el_servidor_mcp_registra_las_herramientas_del_nucleo():
     # El alias "path" de workspace solo existe en el schema si pydantic aporto sus metadatos.
     detect = next(t for t in expuestas if t.name == "detect_vcs")
     assert "workspace" in detect.inputSchema["properties"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Parametros desconocidos: se RECHAZAN (3.31.0)
+#
+# FastMCP descartaba en silencio los campos que no declara la tool. svn_add(paths=...) llegaba
+# sin ficheros y anadia todo lo no versionado del working copy; vcs_revert(dryRun=True)
+# ejecutaba el revert de verdad. Ahora la llamada falla y el hook no llega a ejecutarse.
+# ---------------------------------------------------------------------------------------------
+def _servidor_con_run_ps_espia():
+    try:
+        from mcp.server.fastmcp import FastMCP  # noqa: F401
+    except ImportError:
+        pytest.skip("paquete mcp 1.x no instalado (requirements.txt fija mcp<2)")
+    srv = _cargar("rs_server_extra", _SERVER)
+    llamadas = []
+    srv.core._run_ps = lambda script, *a, **k: llamadas.append((script, a)) or {"success": True}
+    srv.core._check_workspace = lambda w: None
+    return srv, llamadas
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("svn_add", {"workspace": "W", "paths": "a.cs;b.md"}),
+    ("git_add", {"workspace": "W", "paths": "a.cs"}),
+    ("vcs_revert", {"workspace": "W", "files": "a.cs", "dryRun": True}),
+    ("vcs_revert", {"workspace": "W", "files": "a.cs", "dry-run": True}),
+])
+def test_parametro_desconocido_falla_y_no_ejecuta_el_hook(tool, args):
+    import asyncio
+    srv, llamadas = _servidor_con_run_ps_espia()
+    with pytest.raises(Exception, match="(?i)extra|not permitted|validation"):
+        asyncio.run(srv.mcp.call_tool(tool, args))
+    assert llamadas == []
+
+
+def test_el_alias_path_de_workspace_sigue_valiendo():
+    import asyncio
+    srv, llamadas = _servidor_con_run_ps_espia()
+    asyncio.run(srv.mcp.call_tool("svn_add", {"path": "W", "files": "a.cs"}))
+    assert llamadas and llamadas[0][0] == "svn-add.ps1"
+
+
+def test_todas_las_tools_declaran_que_no_admiten_parametros_extra():
+    import asyncio
+    srv, _ = _servidor_con_run_ps_espia()
+    expuestas = asyncio.run(srv.mcp.list_tools())
+    sin_cerrar = [t.name for t in expuestas if t.inputSchema.get("additionalProperties") is not False]
+    assert sin_cerrar == []
+
+
+@pytest.mark.parametrize("tool", ["svn_add", "git_add", "vcs_revert"])
+def test_files_es_obligatorio_en_las_tools_de_vcs(tool):
+    # Con `files` opcional y vacio por defecto, olvidarlo equivalia a "anadir todo".
+    params = {n: oblig for n, _, oblig, _ in cli.parametros(core.TOOLS[tool].fn)}
+    assert params["files"] is True
+
+
+def test_svn_add_pasa_files_y_max_files_al_hook():
+    llamadas = []
+    original = core._run_ps
+    core._run_ps = lambda script, *a, **k: llamadas.append((script, a)) or {"success": True}
+    try:
+        core.svn_add("W", "a.cs;b.cs")
+        core.git_add("W", "a.cs", max_files=10)
+    finally:
+        core._run_ps = original
+    assert llamadas[0] == ("svn-add.ps1", ("W", "-Files", "a.cs;b.cs", "-MaxFiles", "50"))
+    assert llamadas[1] == ("git-add.ps1", ("W", "-Files", "a.cs", "-MaxFiles", "10"))

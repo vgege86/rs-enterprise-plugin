@@ -26,9 +26,32 @@ def _cargar_nucleo():
 
 core = _cargar_nucleo()
 
+def _rechazar_argumentos_desconocidos(servidor):
+    """Hace que cada tool RECHACE los parametros que no declara, en vez de ignorarlos.
+
+    FastMCP valida con un modelo pydantic que, por defecto, descarta los campos extra en
+    silencio. Con eso svn_add(paths=...) llegaba sin ficheros y anadia todo lo no versionado,
+    y vcs_revert(dryRun=True) ejecutaba el revert de verdad (3.31.0). Se toca la estructura
+    interna de FastMCP (fn_metadata.arg_model): si cambia, el servidor no arranca, porque
+    arrancar ignorando parametros es justo el fallo que esto evita.
+    """
+    for t in servidor._tool_manager.list_tools():
+        modelo = getattr(getattr(t, "fn_metadata", None), "arg_model", None)
+        if modelo is None or not hasattr(modelo, "model_rebuild"):
+            raise RuntimeError(
+                f"rs-workspace: esta version de FastMCP no expone fn_metadata.arg_model en "
+                f"'{t.name}'; no se puede garantizar el rechazo de parametros desconocidos")
+        modelo.model_config["extra"] = "forbid"
+        modelo.model_rebuild(force=True)
+        # Que el schema lo diga tambien: el agente ve que no admite parametros extra.
+        if isinstance(t.parameters, dict):
+            t.parameters["additionalProperties"] = False
+
+
 mcp = FastMCP("rs-workspace")
 for _tool in core.TOOLS.values():
     mcp.tool(name=_tool.name, description=_tool.description)(_tool.fn)
+_rechazar_argumentos_desconocidos(mcp)
 
 
 if __name__ == "__main__":

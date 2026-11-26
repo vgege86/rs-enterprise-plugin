@@ -156,13 +156,14 @@ directorio inexistente — fallando abiertas y sin avisar. Los restos los retira
 | `hooks/svn-diff.ps1` | `<workspace>` | Estado SVN → `modificados, añadidos, eliminados, ?` |
 | `hooks/svn-log.ps1` | `<workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits SVN → JSON (requiere svn CLI) |
 | `hooks/svn-diff-revision.ps1` | `<workspace> <revisions> [-MaxDiffChars 15000]` | Diff revisiones SVN → `files_changed, combined_diff` (requiere svn CLI) |
-| `hooks/svn-add.ps1` | `<workspace> [-Files <lista>]` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
+| `hooks/svn-add.ps1` | `<workspace> -Files <lista ;-sep> [-MaxFiles 50]` | Añade una lista **explícita** de ficheros a SVN: CLI → TortoiseProc (solo ficheros) → manual. ⛔ Lista vacía, `.`, la raíz, fuera del workspace o comodines → error sin tocar nada (hasta 3.30.0, vacío = todo lo no versionado). Sin `--force`; carpeta nueva solo si su contenido no pasa de `-MaxFiles`. `added` = lo que quedó realmente en `A` (svn status antes/después). Validación de rutas en `lib-vcsrutas.ps1`. Tests: `tests/VcsAdd.Tests.ps1` |
 | `hooks/git-status.ps1` | `<workspace>` | Estado Git → `modificados, staged, sin trackear (?), conflicto` |
 | `hooks/git-log.ps1` | `<workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits Git → JSON, `revision` = hash corto (requiere git CLI) |
 | `hooks/vcs-delta.ps1` | `<workspace> -Desde <yyyy-MM-dd> [-Hasta <fecha>] [-Ruta <subruta>] [-Limit 500]` | Delta de commits entre dos fechas, **autodetectando SVN/Git** (reutiliza `detect-vcs.ps1`) → commits con IDs de tarea Mantis/Jira, ficheros tocados con acción y lista única de tareas. Fallback 1:1 de `vcs_delta` |
 | `hooks/git-diff-revision.ps1` | `<workspace> <revisions> [-MaxDiffChars 15000]` | Diff de commits Git (hashes coma-separados) → `files_changed, combined_diff` (requiere git CLI) |
-| `hooks/git-add.ps1` | `<workspace> [-Files <lista>]` | Añade ficheros ??: CLI → TortoiseGitProc → instrucciones manuales |
-| `hooks/vcs-revert.ps1` | `<workspace> -Files <lista ;-sep> [-DryRun]` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `-DryRun` devuelve el plan sin ejecutar. Fallback 1:1 de `vcs_revert` |
+| `hooks/git-add.ps1` | `<workspace> -Files <lista ;-sep> [-MaxFiles 50]` | Espejo Git de `svn-add.ps1`: lista explícita obligatoria, carpetas contadas con `git ls-files --others --exclude-standard`, lo ignorado no se fuerza, `added` = lo que quedó realmente en el índice |
+| `hooks/vcs-revert.ps1` | `<workspace> -Files <lista ;-sep> [-DryRun]` | Revierte una lista **explícita** de ficheros a su estado versionado (SVN/Git autodetectado) o los elimina si son nuevos. `-DryRun` devuelve el plan sin ejecutar. ⛔ Solo ficheros: carpeta, `.` o raíz → error sin tocar nada (en Git revertirían el árbol entero) |
+| `hooks/lib-vcsrutas.ps1` | (librería, no se invoca sola) | `Resolve-RsRutasExplicitas`: valida ENTERA la lista de rutas de `svn-add`, `git-add` y `vcs-revert` (vacía, `.`, raíz, fuera de la raíz, comodines → error) y la resuelve a absolutas; `Get-RsRutaRelativa` |
 
 ## Entorno / Logging
 

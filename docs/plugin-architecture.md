@@ -466,7 +466,7 @@ Desde 3.30.0 hay **una implementación y dos frontales**:
 | Pieza | Qué es |
 |---|---|
 | `scripts/rs_core.py` | Las **51 tools**, cada una decorada `@tool(description=...)` y registrada en `TOOLS`. La mayoría hace **shell-out a un `hooks/*.ps1` vía `_run_ps`** (busca `powershell` y, si no, `pwsh`); `db_query`, las de modelo y `ping` se resuelven en Python. No importa `mcp`; pydantic es opcional (solo da el alias `path` al schema). |
-| `mcp/rs-workspace-server.py` | FastMCP (`FastMCP("rs-workspace")`, stdio). **Sin lógica**: recorre `TOOLS` y registra cada función con su descripción. El schema que ven los agentes sale de la firma de la función, así que no cambió al separar el núcleo (comprobado tool a tool). |
+| `mcp/rs-workspace-server.py` | FastMCP (`FastMCP("rs-workspace")`, stdio). **Sin lógica**: recorre `TOOLS` y registra cada función con su descripción. El schema que ven los agentes sale de la firma de la función, así que no cambió al separar el núcleo (comprobado tool a tool). ⛔ Desde 3.31.0 **rechaza los parámetros que la tool no declara** (`extra="forbid"` en el modelo de argumentos de FastMCP, y `additionalProperties: false` en el schema): FastMCP los descartaba en silencio. Si una versión de FastMCP cambia esa estructura interna, el servidor no arranca. |
 | `scripts/rs.py` | CLI: `rs.py list`, `rs.py help <tool>`, `rs.py <tool> --param valor` o `--args-json -` (JSON por stdin). Misma salida que la tool; exit 0 / 1 (la tool devolvió error) / 2 (llamada mal formada). Es la vía de respaldo cuando el MCP no arranca, y lo que usan `hooks/db-query.ps1`, las personas y la CI. |
 
 ⛔ La firma de cada función de `rs_core.py` es el contrato de los dos frontales: renombrar un
