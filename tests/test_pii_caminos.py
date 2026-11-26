@@ -1,19 +1,17 @@
 """Los DOS caminos de enmascarado tienen que dar exactamente el mismo resultado.
 
-La tool MCP db_query llama a mask_resultset directamente; hooks/db-query.ps1 llama al
-mismo motor a traves de scripts/pii_cli.py. Que sea un solo motor es toda la arquitectura:
-la guarda de solo-lectura ya esta duplicada entre ambos, y una divergencia en la politica
-PII no seria un error visible sino una fuga silenciosa por uno de los dos lados.
+db_query (scripts/rs_core.py) llama a mask_resultset directamente; scripts/pii_cli.py llama al
+mismo motor por stdin. Hasta la 3.29.0 hooks/db-query.ps1 enmascaraba por pii_cli; desde la
+3.30.0 delega entero en la CLI rs.py, pero pii_cli se conserva y tiene que seguir dando lo
+mismo: una divergencia en la politica PII no seria un error visible sino una fuga silenciosa.
 
 Nada lo comprobaba. Los tres hallazgos criticos de la revision final -- modelo en forma de
 lista, resolucion del modelo por glob, y conexion= sin su modelo -- vivian justo en ese
 hueco: cada camino estaba probado por separado y ninguno contra el otro.
 
-Alcance de la comparacion: mask_resultset (lo que usa el MCP) contra pii_cli.py (lo que
-invoca el hook), con el MISMO (modelo, sql, columns, rows). No cubre el tramo de
-PowerShell de hooks/db-query.ps1 -- parseo CSV de sqlplus, construccion de la matriz,
-ramas de fallo -- porque requeriria una BD; ese tramo lo cubre tests/PiiGuard.Tests.ps1
-con sqlplus mockeado.
+Alcance de la comparacion: mask_resultset (lo que usa el MCP) contra pii_cli.py (el CLI de
+enmascarado), con el MISMO (modelo, sql, columns, rows). El parseo de la salida de
+sqlplus y las ramas de fallo de db_query los cubre tests/test_mcp.py.
 """
 import importlib.util
 import json

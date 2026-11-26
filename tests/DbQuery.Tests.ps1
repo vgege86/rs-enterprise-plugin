@@ -6,6 +6,9 @@
     requieren ni BD ni un .rs-databases.json real: con una SQL prohibida el script sale con el error
     de la guarda usando cualquier workspace.
 
+    Desde la 3.30.0 db-query.ps1 delega en scripts/rs.py: la guarda que se prueba aqui es la de
+    Python (rs_core._is_readonly_sql), a traves del envoltorio. Necesitan `python` en el PATH.
+
     Ejecutar: Invoke-Pester tests/DbQuery.Tests.ps1
 #>
 

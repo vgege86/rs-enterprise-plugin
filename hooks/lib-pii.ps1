@@ -3,7 +3,7 @@
     Deteccion de datos personales por FORMA, compartida entre la guarda de escritura
     (pii-guard-write.ps1) y el saneado del registro de ejecuciones (log-execution.ps1).
     Unico sitio que conoce estos patrones y el checksum DNI/NIE -- dot-sourcear desde
-    quien lo necesite (mismo patron que hooks/lib-dbconfig.ps1, ver hooks/db-query.ps1).
+    quien lo necesite (mismo patron que hooks/lib-dbconfig.ps1).
 
 .DESCRIPTION
     DNI y NIE no se detectan por forma sola: se exige letra de control valida

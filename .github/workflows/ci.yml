@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # hooks/db-query.ps1 delega en scripts/rs.py (3.30.0): sus tests Pester necesitan `python`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Instalar PSScriptAnalyzer + Pester
         shell: pwsh
         run: |

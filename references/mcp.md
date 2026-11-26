@@ -1,7 +1,20 @@
 # MCP rs-workspace
 
-Servidor MCP local. Preferente sobre hooks — más eficiente en tokens.
-Fallback: hook equivalente listado en `references/hooks.md`.
+Servidor MCP local. Preferente — más eficiente en tokens.
+
+**Una implementación, dos frontales** (desde 3.30.0): las tools viven en `scripts/rs_core.py`;
+el servidor (`mcp/rs-workspace-server.py`) solo las registra, y la CLI `scripts/rs.py` ejecuta
+las mismas con la misma salida, sin necesitar el paquete `mcp`:
+
+```
+python <plugin_root>/scripts/rs.py list
+python <plugin_root>/scripts/rs.py help db_query
+python <plugin_root>/scripts/rs.py detect_vcs --workspace "C:\RS\Proyecto\trunk"
+echo {"workspace":"C:\\RS\\Proyecto\\trunk","sql":"SELECT 1 FROM dual"} | python <plugin_root>/scripts/rs.py db_query --args-json -
+```
+
+**Fallback:** si el MCP no responde, la CLI. Los hooks de `references/hooks.md` siguen
+disponibles para lo que no está en la CLI o para depurar un hook concreto.
 
 > El primer parámetro `workspace` (raíz del workspace/trunk) acepta también el alias `path` en la
 > entrada — mismo valor, cualquiera de los dos nombres funciona (ver CHANGELOG 2.15.10). El nombre
@@ -93,7 +106,7 @@ promete (`docs/proteccion-pii-consultas-bd.md` §4.3 y §5.2c).
 
 | Campo | Qué significa y qué hay que hacer |
 |---|---|
-| `pii.error` | El filtro no pudo aplicarse. En el camino de hook puede significar que los datos vienen **sin enmascarar** (fallo abierto), o que no vienen filas. **Avisar siempre, literal** |
+| `pii.error` | El filtro no pudo aplicarse: no vienen filas (también por el hook `db-query.ps1`, que desde 3.30.0 falla cerrado sin Python). **Avisar siempre, literal** |
 | `pii.model_error` | El modelo BD declarado en `.rs-databases.json` no se puede usar: no existe, es ilegible, el JSON está corrupto o su raíz no es un objeto. La consulta sale con `success: false` y **cero filas** — no se devuelve nada sin política. Trasladar el mensaje literal: dice qué fichero falta y cómo generarlo (`/rs-init` en un workspace nuevo, `/rs-erd` para sincronizarlo desde la BD) |
 | `pii.suspect` | Columnas que salían en claro y cuyos **valores** tienen forma de dato personal (DNI, IBAN, correo, teléfono, tarjeta). La lista de patrones está incompleta. Nombrar las columnas y sugerir `/rs-pii bootstrap` |
 | `pii.predicate_warning` | Columnas con datos personales usadas como **filtro** en el `WHERE`. Aunque la salida vaya enmascarada, el valor se puede inferir repitiendo la consulta (§5.2c). Avisar de que esa consulta interroga un dato personal |

@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.29.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.30.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -505,7 +505,7 @@ Resumen de `docs/proteccion-pii-consultas-bd.md` §5. Esta medida es **provision
 - **Un `WHERE` sigue infiriendo el valor.** `SELECT COUNT(*) ... WHERE DNI LIKE '1234%'` devuelve un número, que sale en claro por diseño; repitiendo la consulta se reconstruye el dato sin haber visto un solo valor enmascarado. La medida **avisa** (`pii.predicate_warning`), no bloquea — bloquear rompería el filtrado legítimo.
 - **Un seudónimo sigue siendo dato personal.** Art. 4(5) RGPD: la seudonimización reduce el riesgo, no saca el dato del ámbito de la norma. `pii:3f9a2c1b7e04` se sigue transfiriendo al proveedor externo. Si el requisito es que el dato personal **no salga en claro**, esto lo cumple; si es que **no salga**, no lo cumple.
 - **Depende de que el plugin esté instalado.** *(Corregido en 3.4.0: hasta entonces las guardas se registraban a mano en la configuración personal de cada desarrollador, no viajaban con el repositorio y guardaban rutas absolutas que cada actualización dejaba apuntando a una carpeta inexistente — fallaban abiertas y sin señal.)* Hoy las declara el propio plugin y se instalan, actualizan y retiran con él. Queda la dependencia ordinaria: sin plugin no hay guardas, y un plugin recién instalado o actualizado no las tiene vivas hasta reiniciar Claude Code. `/rs-env` y `/rs-pii status` distinguen las dos caras — si están **disponibles** y si **bloquean aquí** (`guards_missing`).
-- **La vía de respaldo puede devolver datos sin filtrar.** Si `db_query` cae al hook y ahí el filtro **no se puede ni ejecutar** (falta Python o el fichero del filtro en el puesto), la consulta devuelve los datos sin enmascarar y lo señala en la respuesta. Es deliberado: dejar sin servicio la consulta empuja al cliente de BD directo, que no pasa por ningún filtro. Si el filtro sí corre y falla, no se devuelve ninguna fila.
+- **La vía de respaldo ejecuta lo mismo que la principal.** Desde la 3.30.0 `db_query` por el hook `db-query.ps1` o por la CLI `scripts/rs.py` es el mismo código que la tool MCP. Sin Python no hay consulta: falla cerrado, sin filas (hasta la 3.29.0 devolvía los datos sin enmascarar con un aviso).
 - **Una columna marcada `"safe"` por error no se detecta** salvo que sus valores tengan forma reconocible — nombres, apellidos y direcciones no la tienen. Solo lo ve la revisión del cambio en el control de versiones.
 - **Fuera del filtro**: los ficheros que generan el instalador y el actualizador, la exportación del modelo y los informes HTML. Se entregan al cliente por diseño y pueden contener datos reales; su control es organizativo.
 
@@ -519,6 +519,14 @@ No necesitas esto para usar el plugin, pero explica cómo funciona.
 
 Servidor local `mcp/rs-workspace-server.py` (FastMCP) con **51 tools** que envuelven la lógica del plugin. Preferente sobre los hooks — más eficiente en tokens, con caché en memoria y disco.
 
+Desde la 3.30.0 las tools viven en `scripts/rs_core.py` y el servidor solo las registra. Las mismas 51 se pueden usar **por línea de comandos**, con la misma salida y sin el paquete `mcp`, con la CLI `scripts/rs.py`: vía de respaldo cuando el servidor no arranca, y útil a mano o en la CI.
+
+```
+python scripts/rs.py list                       # herramientas
+python scripts/rs.py help db_query               # parámetros de una
+python scripts/rs.py detect_vcs --workspace "C:\RS\Proyecto\trunk"
+```
+
 **Protección de contexto** — nunca satura la conversación:
 - `compile_check` / `run_tests` / `find_symbol` / `db_query` truncan resultados a un máximo.
 - `parse_web_log` devuelve el **agregado** de un log de errores (firmas + recuento + pantalla), nunca sus líneas: un log de cientos de MB se resume sin cargarlo. Reconoce NLog/log4net, ELMAH XML, el formato propio de la AgendaWeb y volcados de stack .NET.
@@ -529,7 +537,7 @@ Lista completa → `references/mcp.md`.
 
 ### Hooks
 
-Scripts PowerShell en `hooks/` — fallback cuando el MCP no está activo. Dos hooks de infraestructura corren solos:
+Scripts PowerShell en `hooks/` — lo que ejecutan las tools por debajo, invocables también a mano. Dos hooks de infraestructura corren solos:
 - `skill-trigger.ps1` — fuerza el disparo del plugin al mencionar una `.sln` en workspaces RS.
 - `runner/runner.ps1` — ejecuta los builds encolados (batch-build / online-publish / copy-ais).
 
@@ -621,10 +629,10 @@ skills/           rs-enterprise-agent (pipeline + modos) · rs-plugin-dev · rs-
 agents/           51 subagentes: pipeline y modos directos
 commands/         50 definiciones de slash commands
 hooks/            scripts PowerShell (build, SVN/Git, BD, análisis, trigger)
-mcp/              servidor MCP con 51 tools
+mcp/              servidor MCP: registra las 51 tools de scripts/rs_core.py
 references/       documentación de referencia (carga bajo demanda)
 docs/             plugin-architecture.md (fuente canónica) + manual-usuario/ (fuente del Word)
-scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)
+scripts/          rs_core.py (las 51 tools) · rs.py (CLI) · utilidades python (render-erd, render-dashboard, export-dmd…)
 runner/           runner.ps1 — ejecutor de builds (Stop hook)
 tests/            suite de tests del plugin (pytest + Pester)
 executions/       history/<desarrollador>.json — historial de ejecuciones (uno por desarrollador; history.json = histórico anterior a 3.27.0)

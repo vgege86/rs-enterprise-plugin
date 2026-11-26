@@ -1,5 +1,55 @@
 # RS Enterprise Agent — Changelog
 
+## 3.30.0 — 2026-11-26
+
+### Una sola implementación de las tools: el MCP y una CLI nueva sobre el mismo núcleo
+
+Hasta la 3.29.0 toda la lógica de las 51 tools vivía dentro del servidor MCP, y la vía de
+respaldo —los hooks PowerShell— llevaba su propia copia de lo más delicado: `hooks/db-query.ps1`
+reimplementaba en PowerShell la guarda de solo lectura y el tratamiento de la salida de
+sqlplus/sqlcmd, con avisos de "⛔ PARIDAD" para que alguien recordase cambiar las dos. Una
+divergencia ahí no da un error: da un `UPDATE` que pasa por un camino, o una política PII que se
+aplica en uno y no en el otro. Y como la vía de respaldo solo se usa cuando el MCP falla, era el
+código que menos se ejercitaba.
+
+- **`scripts/rs_core.py`** (nuevo): las 51 tools, cada una con `@tool(description=...)`. No
+  importa `mcp`; pydantic es opcional. `_run_ps` busca `powershell` y, si no está, `pwsh`, y
+  devuelve un error JSON si no hay ninguno en vez de reventar.
+- **`mcp/rs-workspace-server.py`**: de 1.295 a ~35 líneas, solo registra las tools del núcleo. El
+  schema que ven los agentes es **idéntico** al de la 3.29.0 (nombre, descripción y parámetros de
+  las 51, comprobado una a una). Ningún agente, comando ni skill cambia.
+- **`scripts/rs.py`** (nuevo): CLI de las mismas tools con la misma salida JSON. `list`,
+  `help <tool>`, `<tool> --param valor`, `--args-json -` (JSON por stdin, para SQL y textos con
+  comillas sin pelearse con el escapado de Git Bash → PowerShell). Exit 0 / 1 (la tool devolvió
+  error) / 2 (llamada mal formada). No necesita el paquete `mcp`: es la vía de respaldo cuando el
+  servidor no arranca, y sirve a mano y en la CI.
+- **`hooks/db-query.ps1`**: envoltorio de `rs.py db_query`, sin lógica propia. Devuelve
+  exactamente la salida de la tool MCP. `$env:RS_PYTHON` elige el intérprete.
+
+⛔ **Cambio de política: sin Python, `db-query.ps1` falla cerrado.** Antes, si no podía ejecutar
+el filtro PII, devolvía los datos **sin enmascarar** con un aviso (fallo abierto deliberado, para
+no empujar al usuario a sqlplus directo). Con la política en `enforce` eso es exactamente la fuga
+que la medida evita, y sqlplus directo ya lo bloquea `pii-guard-bash.ps1`. Ahora: `success:
+false`, `pii.mode: "error"`, cero filas, exit 1. Igual si `python` es el alias de la Microsoft
+Store (no ejecuta nada). `docs/proteccion-pii-consultas-bd.md` §5.2g recoge la revisión.
+
+⚠️ La salida de `db-query.ps1` pasa a ser la de la tool MCP: `rows_truncated` en vez de
+`truncated`, `motor`, y ya no lleva el eco `sql`.
+
+El descifrado DPAPI sigue en dos lenguajes (`rs_core._unprotect_secret` y `lib-crypto.ps1`): los
+hooks PowerShell lo necesitan para conectar por su cuenta, así que no se puede quitar uno.
+`tests/test_dpapi_paridad.py` sigue vigilándolo.
+
+Tests:
+- `tests/test_rs_cli.py` (nuevo): argumentos, `--args-json` por stdin con BOM, códigos de
+  salida, la CLI sin `mcp` ni pydantic, y que el servidor registra exactamente el núcleo.
+- `tests/test_mcp.py` y `tests/test_dpapi_paridad.py` cargan el núcleo: ya no necesitan `mcp`.
+- `tests/PiiGuard.Tests.ps1`: los tests que simulaban sqlplus dentro de PowerShell se sustituyen
+  por tests del envoltorio. Fallo cerrado sin Python y con salida vacía; SQL intacto por stdin; y,
+  fuera de Windows, de extremo a extremo con un sqlplus falso en el PATH (enmascarado, acentos,
+  modelo ausente, error a mitad de volcado). Los caminos PII de `db_query` siguen en `test_mcp.py`.
+- La CI instala Python en el job de PowerShell.
+
 ## 3.29.0 — 2026-11-26
 
 ### El código generado traía demasiados comentarios, y los que importan faltaban

@@ -1,18 +1,32 @@
 ﻿<#
 .SYNOPSIS
-    Ejecuta una consulta SQL contra la BD del workspace y devuelve resultados como JSON.
+    Ejecuta una consulta SQL de solo lectura contra la BD del workspace y devuelve el resultado
+    como JSON, con la politica PII aplicada.
+
+.DESCRIPTION
+    Envoltorio de la herramienta db_query (scripts/rs_core.py) a traves de la CLI scripts/rs.py:
+    misma guarda de solo lectura, mismo enmascarado y misma salida que la tool MCP. Desde la
+    3.30.0 este hook no lleva logica propia; hasta entonces duplicaba en PowerShell la guarda y
+    el tratamiento de la salida de sqlplus/sqlcmd.
+
+    ⛔ Sin Python falla CERRADO: no hay consulta. Antes devolvia los datos sin enmascarar con un
+    aviso (fallo abierto); con la politica PII en enforce eso era justo la fuga que se evita.
 
 .PARAMETER Workspace
-    Ruta raíz del proyecto (trunk).
+    Ruta raiz del proyecto (trunk).
 
 .PARAMETER Sql
     Sentencia SQL SELECT a ejecutar.
 
 .PARAMETER MaxRows
-    Máximo de filas a devolver (defecto 200).
+    Maximo de filas a devolver (defecto 200).
 
 .PARAMETER Conexion
-    Id de conexión de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+    Id de conexion de docs\.rs-databases.json. Si se omite, la principal (conexiones[0]).
+
+.NOTES
+    $env:RS_PYTHON elige el interprete (ruta o nombre). Si esta definida y no es ejecutable,
+    falla cerrado: no se cae en silencio a otro Python.
 #>
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
@@ -23,379 +37,63 @@ param(
 
 $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = "Continue"
-. (Join-Path $PSScriptRoot "lib-dbconfig.ps1")
+$env:PYTHONUTF8 = "1"
 
-# Lineas de diagnostico de sqlplus/sqlcmd, ANCLADAS al principio de linea. Misma forma
-# que usa la tool MCP db_query (rs-workspace-server.py). El filtro anterior era
-# 'ORA-|SP2-|ERROR' sin anclar, que casa con el CONTENIDO de los datos: una consulta que
-# falla a mitad de volcado sobre cualquier tabla de incidencias o de log cuyas filas
-# contengan la palabra "error" seleccionaba esas filas -- en claro, incluso en enforce --
-# como si fueran el mensaje de error.
-$RS_RX_DIAG = '^\s*(?:ORA-\d{3,6}\b|SP2-\d{3,6}\b|PLS-\d{3,6}\b|Sqlcmd:|Msg \d+\b)'
-$RS_MAX_DIAG_LINEAS = 10
-$RS_MAX_DIAG_CHARS  = 300
-
-function Get-RsDiagnostico {
-    <# Mensaje de error a partir de la salida capturada del cliente SQL.
-
-       NUNCA devuelve la salida entera. sqlplus emite las filas CSV segun las va trayendo,
-       asi que un error a mitad de fetch (ORA-01555, ORA-29275, un error de conversion por
-       fila) deja filas de datos ya emitidas en lo capturado. Volcar eso como "error" mete
-       en el contexto justo las filas que el enmascarado nunca llega a ver -- la rama de
-       error no pasa por mask_resultset. Sin lineas de diagnostico reconocibles se devuelve
-       un mensaje fijo con el codigo de salida, no el volcado. #>
-    param([AllowEmptyCollection()][array]$Salida, [int]$ExitCode)
-    $diag = @($Salida | Where-Object { $_ -match $RS_RX_DIAG } |
-              Select-Object -First $RS_MAX_DIAG_LINEAS |
-              ForEach-Object {
-                  $t = "$_".Trim()
-                  if ($t.Length -gt $RS_MAX_DIAG_CHARS) { $t.Substring(0, $RS_MAX_DIAG_CHARS) + "..." } else { $t }
-              })
-    if ($diag.Count -gt 0) { return ($diag -join "; ") }
-    return "la consulta fallo (exit $ExitCode) sin lineas de diagnostico reconocibles; la salida capturada no se devuelve porque puede contener filas de datos"
-}
-
-function Invoke-RsPii {
-    <# Aplica la politica PII delegando en scripts/pii_cli.py.
-
-       Devuelve @{ ok; abierto; columns; rows; pii }.
-
-       ok = $true          -> columns/rows enmascarados segun la politica.
-       ok=$false, abierto  -> el CLI no se puede ni EJECUTAR (sin python, sin fichero). Es
-                              el unico fallo ABIERTO, deliberado y documentado (#5.2 del
-                              documento): este hook es el camino fallback, la proteccion
-                              efectiva es la tool MCP, y dejar sin servicio la consulta
-                              empujaria al usuario a sqlplus directo, que es peor.
-       ok=$false, cerrado  -> el CLI CORRIO y fallo. Tenia las filas y no ha podido aplicar
-                              la politica: el llamante NO debe devolver ninguna fila. Antes
-                              esto caia en el mismo saco que el caso anterior, asi que un
-                              modelo en forma inesperada devolvia todas las filas en claro
-                              con pii.mode = "error".
-
-       -PorConvenio dice que $ModelPath NO esta declarado en .rs-databases.json, sino
-       derivado del convenio BD\<proyecto>-model.json. Solo cambia el caso "el fichero no
-       esta": con la ruta declarada es un error (politica declarada que no se aplica), con
-       la ruta del convenio es el workspace ordinario sin politica (mode=off). El CLI
-       asume DECLARADO si no se le dice nada, para que la imprecision degrade hacia mas
-       enmascarado y no hacia menos. #>
-    param(
-        [AllowEmptyCollection()][array]$Cabeceras,
-        [AllowEmptyCollection()][array]$Matriz,
-        [string]$Sql,
-        [string]$Workspace,
-        [AllowEmptyString()][string]$ModelPath,
-        [switch]$PorConvenio
-    )
-    # Join-Path de DOS argumentos: con tres es PS 6+ y este hook corre en 5.1.
-    $cli = Join-Path $PSScriptRoot "..\scripts\pii_cli.py"
-    if (-not (Test-Path $cli) -or -not (Get-Command python -ErrorAction SilentlyContinue)) {
-        return @{ ok = $false; abierto = $true; pii = @{
-            mode  = "error"
-            error = "pii_cli no ejecutable (falta python o scripts/pii_cli.py) - datos SIN enmascarar"
-        } }
+function Get-RsPython {
+    <#
+    .SYNOPSIS
+        Localiza el interprete de Python: $env:RS_PYTHON si esta definida, si no python,
+        python3 o el lanzador py.
+    .OUTPUTS
+        Array con el ejecutable y sus argumentos previos (@('python') o @('py','-3')); $null si
+        no hay ninguno.
+    #>
+    if ($env:RS_PYTHON) {
+        if (Get-Command $env:RS_PYTHON -CommandType Application -ErrorAction SilentlyContinue) { return , @($env:RS_PYTHON) }
+        return $null
     }
-    try {
-        $entrada = @{ columns = @($Cabeceras); rows = @($Matriz); sql = $Sql } |
-                   ConvertTo-Json -Depth 6 -Compress
-        if ($ModelPath -and $PorConvenio) {
-            $res = $entrada | python $cli $Workspace $ModelPath --convenio 2>$null
-        } elseif ($ModelPath) {
-            $res = $entrada | python $cli $Workspace $ModelPath 2>$null
-        } else {
-            $res = $entrada | python $cli $Workspace 2>$null
-        }
-        $code = $LASTEXITCODE
-    } catch {
-        return @{ ok = $false; abierto = $false; pii = @{
-            mode  = "error"
-            error = "fallo al invocar pii_cli - la politica PII no se pudo aplicar, no se devuelven filas"
-        } }
+    foreach ($nombre in @('python', 'python3')) {
+        if (Get-Command $nombre -CommandType Application -ErrorAction SilentlyContinue) { return , @($nombre) }
     }
-    if ($code -ne 0 -or -not $res) {
-        return @{ ok = $false; abierto = $false; pii = @{
-            mode  = "error"
-            error = "pii_cli fallo (exit $code) - la politica PII no se pudo aplicar, no se devuelven filas"
-        } }
-    }
-    # El parseo va DENTRO de su propio try. Fuera, un CLI que sale con 0 pero emite algo
-    # que no es JSON (salida truncada, una linea de aviso colada por delante, un fallo de
-    # codificacion) dejaba $obj a $null y este camino devolvia ok = $true con columns/rows
-    # vacios y pii = $null. No se escapaba ninguna fila, pero once agentes tienen
-    # instruccion de LEER ese bloque pii, asi que un null ahi es un defecto que van a
-    # pisar. Una salida no parseable es exactamente el mismo caso que un exit != 0: el
-    # CLI corrio, tenia las filas y no consta que aplicara la politica -> fallo CERRADO.
-    try {
-        $obj = $res | ConvertFrom-Json
-    } catch {
-        return @{ ok = $false; abierto = $false; pii = @{
-            mode  = "error"
-            error = "pii_cli devolvio una salida no parseable - la politica PII no se pudo aplicar, no se devuelven filas"
-        } }
-    }
-    if (-not $obj -or -not $obj.pii) {
-        # JSON valido pero sin bloque pii: mismo razonamiento. Nunca se devuelve pii = $null.
-        return @{ ok = $false; abierto = $false; pii = @{
-            mode  = "error"
-            error = "pii_cli devolvio una respuesta sin bloque pii - la politica PII no se pudo aplicar, no se devuelven filas"
-        } }
-    }
-    return @{ ok = $true; abierto = $false; columns = @($obj.columns); rows = @($obj.rows); pii = $obj.pii }
+    if (Get-Command 'py' -CommandType Application -ErrorAction SilentlyContinue) { return , @('py', '-3') }
+    return $null
 }
 
-# --- Guarda solo-lectura (misma validación que la tool MCP db_query, rs-workspace-server.py) ---
-# Este hook es el fallback 1:1 de esa tool; sin esta guarda ejecutaría cualquier sentencia
-# (DROP/DELETE/bloque PL/SQL) interpolada directamente en el script sqlplus.
-# ⛔ PARIDAD: la lógica equivalente vive en _is_readonly_sql/_strip_sql_comments (rs-workspace-server.py).
-# Si cambias una, cambia la otra.
+$cli = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "scripts") "rs.py"
+$python = Get-RsPython
 
-# Quita comentarios -- de línea y /* */ de bloque que estén FUERA de literales de string, para que un
-# ; o un verbo de escritura escondido en un comentario no engañe a la guarda (y para no dar falso
-# positivo con un ; comentado). Espejo de _strip_sql_comments del MCP.
-function Remove-SqlComments {
-    param([string]$s)
-    $out = New-Object System.Text.StringBuilder
-    $i = 0; $n = $s.Length; $inStr = $false
-    while ($i -lt $n) {
-        $ch = $s[$i]
-        if ($inStr) {
-            [void]$out.Append($ch)
-            if ($ch -eq "'") {
-                if ($i + 1 -lt $n -and $s[$i + 1] -eq "'") { [void]$out.Append($s[$i + 1]); $i += 2; continue }
-                $inStr = $false
-            }
-            $i++; continue
-        }
-        if ($ch -eq "'") { $inStr = $true; [void]$out.Append($ch); $i++; continue }
-        if ($ch -eq '-' -and $i + 1 -lt $n -and $s[$i + 1] -eq '-') {
-            $j = $s.IndexOf("`n", $i); [void]$out.Append(' ')
-            if ($j -lt 0) { break }
-            $i = $j; continue
-        }
-        if ($ch -eq '/' -and $i + 1 -lt $n -and $s[$i + 1] -eq '*') {
-            $j = $s.IndexOf('*/', $i + 2); [void]$out.Append(' ')
-            if ($j -lt 0) { break }
-            $i = $j + 2; continue
-        }
-        [void]$out.Append($ch); $i++
-    }
-    return $out.ToString()
-}
-
-$sqlTrim   = $Sql.Trim()
-$sqlGuard  = (Remove-SqlComments $Sql).Trim()   # solo para VALIDAR
-$guardUpper = $sqlGuard.ToUpper()
-if (-not ($guardUpper.StartsWith("SELECT") -or $guardUpper.StartsWith("WITH"))) {
-    @{ success = $false; error = "Solo se permiten consultas SELECT o CTE (WITH ... SELECT)" } | ConvertTo-Json
-    exit 1
-}
-# Un CTE puede colgar un verbo de escritura tras el bloque ("WITH x AS (...) DELETE FROM ...");
-# StartsWith("WITH") no lo pilla. Bloquear si aparece cualquier verbo de escritura.
-if ($guardUpper.StartsWith("WITH") -and $guardUpper -match '\b(INSERT|UPDATE|DELETE|MERGE)\b') {
-    @{ success = $false; error = "CTE con verbo de escritura no permitido" } | ConvertTo-Json
-    exit 1
-}
-# Bloquea multi-statement ("SELECT 1; DROP TABLE x"): sobre el SQL sin comentarios, quita el ; final
-# habitual y cuenta los ; que queden fuera de literales de string.
-$guardNorm = $sqlGuard.TrimEnd(';')
-$inStr = $false
-$semiCount = 0
-foreach ($ch in $guardNorm.ToCharArray()) {
-    if ($ch -eq "'") { $inStr = -not $inStr }
-    elseif ($ch -eq ';' -and -not $inStr) { $semiCount++ }
-}
-if ($semiCount -gt 0) {
-    @{ success = $false; error = "Multi-statement SQL no permitido" } | ConvertTo-Json
-    exit 1
-}
-# Para la EJECUCIÓN se usa el SQL original (comentarios inocuos para el cliente BD), solo sin ; final.
-$sqlNorm = $sqlTrim.TrimEnd(';')
-
-# Eco de SQL saneado: UNA sola vez, para toda salida que incluya "sql" (error de sqlplus,
-# sin filas, o resultado con filas). Un literal con dato personal (ej. WHERE DNI =
-# '12345678Z') no debe quedar persistido en NINGUNA respuesta, y una consulta que no
-# encuentra filas es justo la forma de una busqueda dirigida a una persona concreta.
-$sqlEcho = ($Sql -replace "'[^']*'", "'?'")
-
-$Workspace = Resolve-RsWorkspace $Workspace
-
-# --- Leer docs\.rs-databases.json ---
-$cfg = Read-RsDatabases $Workspace
-if (-not $cfg.ok) {
-    @{ success = $false; error = $cfg.error } | ConvertTo-Json
+if (-not $python -or -not (Test-Path $cli)) {
+    $motivo = if ($python) { "no se encuentra scripts\rs.py" }
+              elseif ($env:RS_PYTHON) { "RS_PYTHON='$($env:RS_PYTHON)' no es un ejecutable" }
+              else { "falta python en el PATH" }
+    @{
+        success = $false
+        error   = "db_query no disponible: $motivo. Sin Python no se consulta: la politica PII no se podria aplicar."
+        columns = @(); rows = @(); row_count = 0; rows_truncated = $false
+        pii     = @{ mode = "error"; error = "motor de enmascarado no disponible - no se devuelven filas" }
+    } | ConvertTo-Json -Depth 4
     exit 1
 }
 
-# Resolución en Select-RsConexion (lib-dbconfig.ps1), único sitio que la conoce. Este hook
-# tenía su propia copia de la regla: la misma en el fondo, pero dos implementaciones de "qué
-# conexión se usa" acaban divergiendo, y el resto de hooks ya dependen de esa función.
-$c = Select-RsConexion -Config $cfg -Id $Conexion
-if (-not $c) {
-    $validas = ($cfg.conexiones | ForEach-Object { "$($_.id)" }) -join ", "
-    @{ success = $false; error = "Conexión '$Conexion' no existe. Válidas: $validas" } | ConvertTo-Json
+# Parametros en JSON por stdin: el SQL viaja intacto (comillas, saltos de linea, $) sin
+# depender del escapado de la linea de comandos.
+$argumentos = @{ workspace = $Workspace; sql = $Sql; max_rows = $MaxRows; conexion = $Conexion } |
+              ConvertTo-Json -Compress
+$exe   = $python[0]
+$extra = @($python | Select-Object -Skip 1)
+$salida = $argumentos | & $exe @extra $cli db_query --args-json -
+$codigo = $LASTEXITCODE
+
+# Salida vacia = Python no llego a ejecutar la CLI (p. ej. el alias de la Microsoft Store, que
+# no hace nada). Mismo fallo cerrado que sin Python.
+if (-not ($salida -join "").Trim()) {
+    @{
+        success = $false
+        error   = "db_query no disponible: '$exe' no ejecuto scripts\rs.py (exit $codigo). Sin Python no se consulta."
+        columns = @(); rows = @(); row_count = 0; rows_truncated = $false
+        pii     = @{ mode = "error"; error = "motor de enmascarado no disponible - no se devuelven filas" }
+    } | ConvertTo-Json -Depth 4
     exit 1
 }
-
-# Modelo BD de LA CONEXION SELECCIONADA (no el de la principal): lleva la politica PII
-# entera. Misma resolucion que get-config.ps1 -> config["model_path"] de la tool MCP.
-$modelPath = Get-RsModelPath -Workspace $Workspace -Conexion $c -Proyecto $cfg.proyecto
-# Declarado (campo "model") o derivado del convenio BD\<proyecto>-model.json. La ruta sola
-# no lo distingue, y de esa distincion depende que un fichero ausente sea un error
-# (politica declarada que no se aplica) o el workspace ordinario sin politica (mode=off).
-# Se le dice al CLI en vez de decidirlo aqui: asi la regla vive en un solo sitio y es la
-# MISMA que aplica _cargar_modelo() de la tool MCP con config["model_declarado"].
-$modelPorConvenio = -not (Test-RsModelDeclarado -Conexion $c)
-
-$motor      = "$($c.motor)".ToUpper()
-$cadena     = "$($c.cadena)"
-$dataSource = Get-CsPart -Cadena $cadena -Clave "Data Source"
-if (-not $dataSource) { $dataSource = Get-CsPart -Cadena $cadena -Clave "Server" }
-$user       = Get-CsPart -Cadena $cadena -Clave "User Id"
-$password   = Unprotect-RsSecret (Get-CsPart -Cadena $cadena -Clave "Password")
-
-# --- Ejecutar SQL ---
-# Rutas temp propias (no GetTempFileName() + ".sql": eso crea un fichero de 0 bytes en OTRA ruta
-# que quedaba huérfano — el finally solo limpiaba las rutas con sufijo). [Guid] existe en PS5.1.
-$tmpDir  = [System.IO.Path]::GetTempPath()
-$tempSql = Join-Path $tmpDir ("rsdbq-" + [Guid]::NewGuid().ToString("N") + ".sql")
-$tempOut = Join-Path $tmpDir ("rsdbq-" + [Guid]::NewGuid().ToString("N") + ".txt")
-
-try {
-    if ($motor -eq "ORACLE") {
-        # Credenciales en el script SQL (CONNECT), no en la línea de comando: con sqlplus -S
-        # "user/pass@ds" la password queda visible en la lista de procesos toda la ejecución.
-        # Mismo patrón que la tool MCP db_query (rs-workspace-server.py): /nolog + CONNECT.
-        # WHENEVER SQLERROR va ANTES del CONNECT para que un login fallido salga con el SQLCODE.
-        if ($password) {
-            $connectLine = "CONNECT $user/$password@$dataSource`n"
-            $sqlplusConn = "/nolog"
-        } else {
-            $connectLine = ""
-            $sqlplusConn = "$user/@$dataSource"
-        }
-        # MARKUP CSV (sqlplus 12.2+) en vez de COLSEP: las cabeceras salen con el nombre completo
-        # de la columna. Con salida tabular sqlplus las trunca al ancho del campo, así que un
-        # SELECT 'a' AS C1 devolvía la cabecera "C". Además QUOTE ON escapa los valores que
-        # contienen el separador, que partidos a mano corrompían las filas en silencio.
-        @"
-SET MARKUP CSV ON DELIMITER , QUOTE ON
-SET PAGESIZE 0
-SET FEEDBACK OFF
-SET LINESIZE 32767
-SET TRIMSPOOL ON
-WHENEVER SQLERROR EXIT SQL.SQLCODE
-$connectLine$sqlNorm;
-EXIT;
-"@ | ForEach-Object { [System.IO.File]::WriteAllText($tempSql, $_, (New-Object System.Text.UTF8Encoding($false))) }
-
-        # UTF8 sin BOM a propósito: Set-Content -Encoding UTF8 (PS 5.1) antepone el BOM, sqlplus lo
-        # lee como parte del primer comando y el primer SET falla con SP2-0734.
-        # Out-File -Encoding UTF8 explicito en vez de "> $tempOut": el operador > usa el
-        # encoding por defecto de Out-File, que es UTF-16LE en Windows PowerShell 5.1 y
-        # UTF-8 en PowerShell 7. La lectura de abajo funcionaba en los dos por la
-        # deteccion de BOM de Get-Content, no porque coincidieran: el fichero por el que
-        # pasan TODAS las filas de la consulta no debe depender de eso.
-        sqlplus -S "$sqlplusConn" "@$tempSql" 2>&1 | Out-File -FilePath $tempOut -Encoding UTF8
-        $exitCode = $LASTEXITCODE
-        # @() en todas las colecciones: con una sola línea/columna PowerShell colapsa a escalar y
-        # $lines[0] / $headers[$i] devuelven un [char], que ConvertTo-Json rechaza como clave.
-        $raw = @(Get-Content $tempOut -Encoding UTF8 -ErrorAction SilentlyContinue)
-
-        if ($exitCode -ne 0) {
-            # Sin columns/pii a proposito: una consulta que nunca llego a ejecutarse no tiene
-            # nada que enmascarar. Solo se sanea el eco de SQL, igual que en el resto de salidas.
-            $errMsg = Get-RsDiagnostico -Salida $raw -ExitCode $exitCode
-            @{ success = $false; error = $errMsg; sql = $sqlEcho } | ConvertTo-Json
-            exit 0
-        }
-
-        # Primera línea = cabeceras CSV, resto = datos. Sin filas, sqlplus no emite ni la cabecera.
-        $lines = @($raw | Where-Object { $_.Trim() -ne "" })
-        if ($lines.Count -le 1) {
-            # Sin filas no hay nada que enmascarar, pero la respuesta mantiene la MISMA forma
-            # que la del camino con filas: columns/rows/pii siempre presentes, y el bloque pii
-            # con sus mismas claves y el modo REAL del workspace. Antes emitia dos claves
-            # (mode/reason) con mode="off" fijo, de modo que un workspace en enforce reportaba
-            # "off" en cuanto una consulta no devolvia filas. Se obtiene invocando pii_cli con
-            # un resultset vacio: el modo y los avisos salen de la misma politica, no de un
-            # literal en PowerShell. El aviso de predicado sigue teniendo sentido aqui (un
-            # WHERE DNI = '...' que no encuentra nada tambien informa sobre el valor).
-            # Nota: con SET PAGESIZE 0 sqlplus no emite cabecera cuando no hay filas, asi que
-            # $lines.Count es 0 en este camino; no se intenta extraer nombres de columna.
-            # Sin filas que proteger no hay nada que se pueda escapar, pero si el CLI corrio
-            # y fallo (modelo declarado ausente, modelo corrupto) la respuesta sale con
-            # success = $false igual que en el camino con filas y que la tool MCP: el
-            # workspace esta roto y el usuario tiene que enterarse, no leer un success = true
-            # con el motivo escondido dentro del bloque pii. El fallo ABIERTO (sin python)
-            # sigue saliendo con success = $true, que es su contrato documentado.
-            $rPii = Invoke-RsPii -Cabeceras @() -Matriz @() -Sql $sqlNorm -Workspace $Workspace `
-                                 -ModelPath $modelPath -PorConvenio:$modelPorConvenio
-            @{
-                success   = ($rPii.ok -or $rPii.abierto)
-                error     = if ($rPii.ok -or $rPii.abierto) { $null } else { $rPii.pii.error }
-                row_count = 0
-                truncated = $false
-                sql       = $sqlEcho
-                columns   = @()
-                rows      = @()
-                pii       = $rPii.pii
-            } | ConvertTo-Json -Depth 4
-            exit 0
-        }
-
-        $todas = @($lines | ConvertFrom-Csv)
-        $rows  = @($todas | Select-Object -First $MaxRows)
-
-        # --- Enmascarado PII ---
-        # Se delega en scripts/pii_cli.py y NO se reimplementa aqui: la guarda read-only ya
-        # esta duplicada entre este hook y la tool MCP, y una divergencia en la politica PII
-        # seria una fuga silenciosa en vez de un error visible.
-        # Cabeceras desde los objetos de ConvertFrom-Csv, NO partiendo $lines[0] por comas:
-        # los valores con coma van entrecomillados (SET MARKUP CSV ... QUOTE ON) y un split
-        # a mano los partiria en silencio, que es el bug que ConvertFrom-Csv evita.
-        $cabeceras = @($todas[0].PSObject.Properties.Name)
-        $matriz    = @()
-        foreach ($fila in $rows) {
-            $matriz += , @($cabeceras | ForEach-Object { "$($fila.$_)" })
-        }
-
-        $rPii = Invoke-RsPii -Cabeceras $cabeceras -Matriz $matriz -Sql $sqlNorm -Workspace $Workspace `
-                             -ModelPath $modelPath -PorConvenio:$modelPorConvenio
-        if ($rPii.ok) {
-            $cabeceras = $rPii.columns
-            $matriz    = $rPii.rows
-            $piiMeta   = $rPii.pii
-        } elseif ($rPii.abierto) {
-            # Fallo ABIERTO: el filtro no se puede ni ejecutar. Se devuelven los datos sin
-            # tocar con el aviso en pii.error. Ver la cabecera de Invoke-RsPii.
-            $piiMeta = $rPii.pii
-        } else {
-            # Fallo CERRADO: el filtro corrio y no pudo aplicar la politica sobre unas filas
-            # que ya tenia. Devolverlas seria devolverlas en claro.
-            @{
-                success   = $false
-                error     = $rPii.pii.error
-                sql       = $sqlEcho
-                row_count = 0
-                truncated = $false
-                columns   = @()
-                rows      = @()
-                pii       = $rPii.pii
-            } | ConvertTo-Json -Depth 6
-            exit 0
-        }
-
-        @{
-            success   = $true
-            row_count = $matriz.Count
-            truncated = $todas.Count -gt $MaxRows
-            sql       = $sqlEcho   # ya saneado arriba, una sola vez para todas las salidas
-            columns   = @($cabeceras)
-            rows      = @($matriz)
-            pii       = $piiMeta
-        } | ConvertTo-Json -Depth 6
-    } else {
-        @{ success = $false; error = "Motor '$motor' no soportado por este hook. Usar sqlcmd manualmente." } | ConvertTo-Json
-    }
-} finally {
-    Remove-Item $tempSql, $tempOut -Force -ErrorAction SilentlyContinue
-}
+$salida
+exit $codigo

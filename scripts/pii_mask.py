@@ -1,8 +1,8 @@
 """Aplica la politica PII a un resultset antes de que entre en el contexto.
 
-Punto unico de transformacion: lo consumen la tool MCP db_query y, via pii_cli.py,
-el hook hooks/db-query.ps1. Que sea uno solo es deliberado - la guarda de solo-lectura
-esta duplicada entre ambos caminos y una divergencia aqui seria una fuga silenciosa.
+Punto unico de transformacion: lo consume db_query (scripts/rs_core.py, la misma para la
+tool MCP, la CLI y hooks/db-query.ps1) y, via pii_cli.py, la clasificacion de /rs-pii. Que
+sea uno solo es deliberado: una divergencia aqui seria una fuga silenciosa.
 
 La clave HMAC vive en el perfil local del usuario, NUNCA en el repositorio.
 """

@@ -33,6 +33,17 @@ Cuatro causas, con arreglo distinto cada una:
 Después, **reiniciar Claude Code**: los servidores MCP se resuelven al arrancar. Comprobación:
 `/rs-help` responde.
 
+Mientras tanto, si Python está pero falla solo el paquete `mcp`, las mismas tools funcionan por
+la CLI (desde 3.30.0), que no lo necesita:
+
+```
+python "<plugin_root>\scripts\rs.py" ping
+python "<plugin_root>\scripts\rs.py" list
+```
+
+⛔ Sin Python no hay ni MCP ni CLI, y `db_query` por el hook `db-query.ps1` tampoco devuelve
+filas: falla cerrado en vez de devolver datos sin enmascarar.
+
 ---
 
 ## Build falla

@@ -1,14 +1,15 @@
 """
-Tests de las funciones puras del MCP server (mcp/rs-workspace-server.py).
+Tests de las funciones puras de las herramientas rs-workspace (scripts/rs_core.py).
+
+Desde la 3.30.0 la implementacion vive en scripts/rs_core.py y la comparten el servidor MCP y
+la CLI (scripts/rs.py); el nombre del fichero se conserva por historia.
 
 Solo lógica pura, sin arrancar el server ni tocar BD/VCS/PowerShell: parseo de resultsets,
 normalización de workspace, extracción de password de la cadena de conexión, resumen de diff y
 derivación del nombre de proyecto.
 
-El módulo tiene un guion en el nombre (no importable con `import`), así que se carga por ruta con
-importlib. Importarlo NO arranca el server: `mcp.run()` está bajo `if __name__ == "__main__"`.
-Requiere el paquete `mcp` instalado (viene en requirements.txt) porque el módulo importa FastMCP
-en la cabecera.
+scripts/ no es un paquete, así que el núcleo se carga por ruta con importlib. No importa el
+paquete `mcp`: estos tests corren sin él.
 """
 import importlib.util
 import json
@@ -16,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-_SERVER = Path(__file__).resolve().parent.parent / "mcp" / "rs-workspace-server.py"
+_SERVER = Path(__file__).resolve().parent.parent / "scripts" / "rs_core.py"
 
 
 def _load_server():
-    spec = importlib.util.spec_from_file_location("rs_workspace_server", _SERVER)
+    spec = importlib.util.spec_from_file_location("rs_core", _SERVER)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -284,8 +285,7 @@ def test_cargar_modelo_aviso_no_incluye_contenido_del_fichero(monkeypatch, tmp_p
 
 
 # --- db_query end-to-end: subprocess.run stubado, sin tocar BD ni PowerShell ---
-# @mcp.tool(...) de FastMCP devuelve la funcion tal cual (verificado: type(srv.db_query)
-# es function, no un wrapper) - se puede llamar directamente en el test.
+# @tool(...) del nucleo devuelve la funcion tal cual: se puede llamar directamente en el test.
 
 class _ResultadoFalso:
     """Sustituye subprocess.CompletedProcess en estos tests."""

@@ -1,5 +1,8 @@
 # Dependencias Python del servidor MCP rs-workspace (mcp/rs-workspace-server.py).
 #
+# La CLI scripts/rs.py y el nucleo scripts/rs_core.py NO necesitan `mcp`: solo la libreria
+# estandar (pydantic, si esta, solo anade metadatos al schema MCP).
+#
 # FastMCP se importa como `from mcp.server.fastmcp import FastMCP`; lo aporta el paquete `mcp`
 # (SDK oficial de Model Context Protocol). Piso de versión conservador: a partir de 1.2.0 el
 # submódulo `mcp.server.fastmcp` es estable. Instalar con: pip install -r requirements.txt

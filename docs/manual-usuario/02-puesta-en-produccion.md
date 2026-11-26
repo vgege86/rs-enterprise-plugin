@@ -87,11 +87,10 @@ claros sus límites:
 - **Depende de que el plugin esté instalado.** Las guardas las declara el propio plugin y se
   instalan, actualizan y retiran con él. Queda la dependencia ordinaria: sin plugin no hay guardas, y
   un plugin recién instalado o actualizado no las tiene vivas hasta reiniciar Claude Code.
-- **La vía de respaldo puede devolver datos sin filtrar.** Si la consulta cae al script de respaldo y
-  allí el filtro **no se puede ni ejecutar** —falta Python o falta el fichero del filtro en el
-  puesto—, la consulta devuelve los datos sin enmascarar y lo señala en la respuesta. Es deliberado:
-  dejar la consulta sin servicio empujaría al cliente de base de datos directo, que no pasa por
-  ningún filtro. Si el filtro sí corre y falla, no se devuelve ninguna fila.
+- **La vía de respaldo hace exactamente lo mismo que la principal.** Desde la 3.30.0 el script de
+  respaldo ejecuta el mismo código que la herramienta de consulta. Si falta Python en el puesto,
+  la consulta **no devuelve ninguna fila** y lo dice (hasta la 3.29.0 devolvía los datos sin
+  enmascarar con un aviso). Igual si el filtro corre y falla.
 - **Una columna marcada como segura por error no se detecta**, salvo que sus valores tengan forma
   reconocible. Nombres, apellidos y direcciones no la tienen. Solo lo ve la revisión del cambio en el
   control de versiones.

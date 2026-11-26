@@ -48,9 +48,8 @@ foreach ($c in $cfg.conexiones) {
         $schema = if ($c.dataBase) { "$($c.dataBase)" } else { Get-CsPart -Cadena $cadena -Clave "Database" }
     }
 
-    # Resolucion en lib-dbconfig.ps1, compartida con db-query.ps1: ese hook necesita la
-    # MISMA ruta para pasarsela a scripts/pii_cli.py (el modelo lleva la politica PII
-    # entera, no solo el esquema).
+    # Resolucion en lib-dbconfig.ps1: de aqui sale la ruta que usa db_query
+    # (scripts/rs_core.py) para aplicar la politica PII (el modelo la lleva entera).
     $modelPath   = Get-RsModelPath -Workspace $Workspace -Conexion $c -Proyecto $proyecto
     $modelExists = Test-Path $modelPath
     # model_declarado: si la ruta viene del campo "model" de la conexion o del convenio.

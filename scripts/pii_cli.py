@@ -1,4 +1,8 @@
-"""Envoltorio CLI de pii_mask para hooks/db-query.ps1.
+"""Envoltorio CLI de pii_mask (modo enmascarar y modo --clasificar de /rs-pii).
+
+Hasta la 3.29.0 lo usaba hooks/db-query.ps1 para enmascarar; desde la 3.30.0 ese hook delega
+entero en scripts/rs.py y el enmascarado va por rs_core.db_query. El modo enmascarar se conserva
+y tests/test_pii_caminos.py comprueba que da lo mismo que mask_resultset.
 
     echo '{"columns":[],"rows":[[]],"sql":"..."}' | python pii_cli.py <workspace> [<model_path>] [--convenio]
 

@@ -262,3 +262,4 @@ que es lo que impide arrancar al servidor MCP) y `/rs-env` el resto.
 - Visual Studio o Build Tools (msbuild.exe + vstest.console.exe, localizados por vswhere) para las soluciones .NET Framework — sin ellos, esos dos hooks fallan **cerrado** con `builder_error`/`runner_error` en vez de dar un falso "no compila"
 - TortoiseProc en `C:\Program Files\TortoiseSVN\bin\` (para svn-add nivel 2)
 - sqlcmd (SQL Server) o sqlplus (Oracle) para db_query
+- Python en el PATH para `db-query.ps1`: desde 3.30.0 delega en `scripts/rs.py`, y sin Python falla cerrado (no devuelve filas)
