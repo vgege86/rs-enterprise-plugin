@@ -229,10 +229,12 @@ Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
         Pester: quien lo invoca ahora es Python, que no ve las funciones de la sesion. En Windows
         subprocess no encuentra un .cmd sin extension, asi que esos casos solo corren fuera de
         Windows (la CI).
+        ⛔ La condicion de -Skip va escrita en cada It: Pester 5 la evalua al DESCUBRIR los tests,
+        antes de BeforeAll, asi que una variable que se fije en BeforeAll aun no existe y el test
+        se salta siempre (paso en la 3.30.0: CI en verde con estos cuatro sin ejecutar).
     #>
     BeforeAll {
         $script:hookQ   = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
-        $script:noWin   = [bool]($IsLinux -or $IsMacOS)
         $script:pathAnt = $env:PATH
 
         function New-RsWsConsulta {
@@ -326,7 +328,7 @@ Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
         $out.error   | Should -Match "Solo se permiten"
     }
 
-    It "enforce: enmascara las filas con el modelo de la conexion" -Skip:(-not $script:noWin) {
+    It "enforce: enmascara las filas con el modelo de la conexion" -Skip:(-not ($IsLinux -or $IsMacOS)) {
         Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', '"1024","Ana Lopez"', '"1025","Luis Gomez"')
 
         $out = & $script:hookQ -Workspace $script:wsEnf -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
@@ -340,7 +342,7 @@ Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
         ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
     }
 
-    It "un valor con acentos sobrevive al viaje PowerShell -> Python -> PowerShell" -Skip:(-not $script:noWin) {
+    It "un valor con acentos sobrevive al viaje PowerShell -> Python -> PowerShell" -Skip:(-not ($IsLinux -or $IsMacOS)) {
         $valor = "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " + [char]0x00C1 + "ngel " + [char]0x03A9
         Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', ('"1024","' + $valor + '"'))
 
@@ -350,7 +352,7 @@ Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
         $out.rows[0][1] | Should -Be $valor
     }
 
-    It "un modelo DECLARADO que no existe no devuelve filas" -Skip:(-not $script:noWin) {
+    It "un modelo DECLARADO que no existe no devuelve filas" -Skip:(-not ($IsLinux -or $IsMacOS)) {
         Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', '"1024","Ana Lopez"')
 
         $out = & $script:hookQ -Workspace $script:wsSin -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
@@ -360,7 +362,7 @@ Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
         ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
     }
 
-    It "un error de sqlplus a mitad de volcado no devuelve las filas ya emitidas" -Skip:(-not $script:noWin) {
+    It "un error de sqlplus a mitad de volcado no devuelve las filas ya emitidas" -Skip:(-not ($IsLinux -or $IsMacOS)) {
         Set-RsSqlplusFalso -Exit 1 -Csv @('"IDDEUDOR","DNI"', '"1","12345678Z"', 'ORA-01555: snapshot too old')
 
         $out = & $script:hookQ -Workspace $script:wsOff -Sql "SELECT IDDEUDOR, DNI FROM RDEUDORES" | ConvertFrom-Json
