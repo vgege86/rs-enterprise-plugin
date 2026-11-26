@@ -2,12 +2,14 @@
 name: rs-editor-core
 description: Etapa `core` del pipeline rs-enterprise-agent (paso 4) — implementa el cambio C#/SQL. Solo la invoca el orquestador, nunca el usuario.
 model: opus
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, Read, Edit, Write, Grep, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__validate_solution, mcp__plugin_rs-enterprise-agent_rs-workspace__get_scope, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_objects, mcp__plugin_rs-enterprise-agent_rs-workspace__get_object_ddl, Read, Edit, Write, Grep, Glob
 ---
 
 > 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
 > `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
 > `db_query`". Nunca ignorarlo en silencio.
+
+> 🧩 **Código de objetos de BD (trigger, procedimiento, paquete, función, vista)** → `get_object_ddl(workspace, objeto, seccion?)`: lee el cuerpo de la BD viva y no pasa por el enmascarado. Qué objetos usan una tabla → `get_db_objects(workspace, tabla=...)`. Columnas → `get_table_schema`; si se sospecha que el modelo está desfasado (columna que falta), decirlo y pedir actualizarlo (`/rs-erd` → "actualiza el modelo BD") en vez de explorar el catálogo. ⛔ No leer el `.sql` de `BD\` para sacar el cuerpo de un trigger. ⛔ No sortear el enmascarado de `db_query` (mapear nombres a números con `CASE`, trocear con `SUBSTR`...): si un nombre de columna o un cuerpo de objeto llega como `pii:…`, es que esa consulta no cumple la excepción de catálogo (`references/bd.md` "Catálogo del sistema") — usar las tools de arriba.
 
 > 📖 Arquitectura: `references/arquitectura.md`
 > 📖 Convenciones: `references/conventions.md`
@@ -26,7 +28,7 @@ Sigue el **Procedimiento** de abajo **en orden**; no te saltes pasos ni gates. C
 3. **Leer docs ANTES de tocar código** — `READ_DOCS` por sección + `references/conventions.md`/`bd.md` si aplican. → *§ Documentación técnica*
 4. **Localizar y entender** — `find_symbol`/`batch_find_symbols`/`search_code`; identificar el flujo actual. → *§ Localizar símbolos · § Buscar patrones*
 5. **Consultar esquema/datos** — regla marco (esquema→modelo, datos→`db_query`, ⛔ nunca `.sql` de `BD\`) + orden modelo→código→BD. → *§ Fuente de datos · § Modelo BD*
-6. **Implementar el cambio mínimo** — no reescribir, no romper dependencias, no cambios innecesarios. → *§ Implementación*
+6. **Implementar el cambio mínimo** — no reescribir, no romper dependencias, no cambios innecesarios. Comentarios según `references/conventions.md` "Comentarios" (siempre, aunque no se lea el resto): `summary` en lo nuevo, una línea de tarea en lo modificado, nada más salvo lógica compleja. → *§ Implementación*
 7. **Si generas SQL** → escribirlo SOLO en `C:\AIS\<proyecto>\scripts\` (⛔ nunca en `BD\`). → *§ Scripts SQL generados*
 8. **GATE CHECKLIST** — si el cambio emite `.aspx`/`.cs` (o `READ_DOCS` incluye `CHECKLIST`): pasar `CHECKLIST_CONVENCIONES_UI_BD.md` **antes** de dar el código por emitido. → *§ Documentación técnica*
 9. **Registrar señales de salida** — idiomas tocados, tablas/DALCs, patrón nuevo. → *§ Idiomas · § Tablas/DALCs · § Patrón nuevo*
@@ -81,7 +83,7 @@ Cuando necesites tipos, columnas o relaciones de una tabla, seguir ESTE orden es
 
 **2. Solo si la tabla NO está en el modelo** → buscar en código (DALCs, RSBus).
 
-**3. Solo si tampoco está en código** → BD real: `mcp__plugin_rs-enterprise-agent_rs-workspace__db_query(workspace, sql)`. `sync_model_tables`/`get_table_schema` (respaldados por `model.json`) siguen siendo la fuente autoritativa incluso aquí — usar `db_query` solo para confirmar puntualmente, no para explorar catálogo.
+**3. Solo si tampoco está en código** → BD real: `mcp__plugin_rs-enterprise-agent_rs-workspace__db_query(workspace, sql)`. `sync_model_tables`/`get_table_schema` (respaldados por `model.json`) siguen siendo la fuente autoritativa incluso aquí — usar `db_query` solo para confirmar puntualmente, no para explorar catálogo. Para el **cuerpo** de un trigger/procedimiento/vista: `get_object_ddl`, nunca `db_query` sobre `ALL_SOURCE`/`USER_TRIGGERS` ni el `.sql` de `BD\`.
 - Si el query-user no tiene acceso directo (`ORA-00942`) → **detener reintentos**. No probar otros schemas. Aplica la regla marco de arriba: la fuente es la BD, nunca los `.sql` de `BD\`.
 - ⛔ Para "¿existe esta tabla?" / "¿qué columnas tiene?": nunca consultar vistas catálogo (`ALL_TABLES`, `ALL_OBJECTS`, `ALL_TAB_COLUMNS`, `USER_TABLES`) en bucle — máx 1 intento. Pueden no reflejar una tabla recién creada (dictionary cache de la sesión/pool sin refrescar) aunque la tabla exista y sea consultable.
 - Si el usuario afirma que una tabla nueva ya existe, o `sync_model_tables`/`get_table_schema` no la encuentran: confirmar con UNA sola query funcional directa — `SELECT * FROM <TABLA> WHERE ROWNUM = 1` (Oracle) / `SELECT TOP 1 * FROM <TABLA>` (SQL Server). Si responde (aunque 0 filas) la tabla existe y esa misma query revela columnas reales — no insistir con catálogo. Ver `references/troubleshooting.md` "Tabla nueva no aparece en ALL_TABLES/ALL_OBJECTS (Oracle)".
@@ -120,11 +122,14 @@ El fichero contiene **solo** los statements que genera esta tarea (DDL/INSERT/UP
 
 ⛔ Si `READ_DOCS` incluye `CHECKLIST` (o el cambio emite `.aspx`/`.cs`): leer `tecnica/CHECKLIST_CONVENCIONES_UI_BD.md` y **pasarla antes de dar por emitido el código** (controles AIS + queries). No emitir código que no cumpla la checklist.
 
+Antes de emitir, repasar además los comentarios del delta: cada función nueva tiene `summary`/`<param>`/`<returns>`; cada bloque existente modificado lleva como mucho una línea de tarea; ningún comentario repite el código. Quitar los que sobren.
+
 ## Implementación
 
 - Analizar solo código relevante, identificar flujo actual.
 - Modificar lo mínimo necesario.
 - ⛔ No reescribir módulos completos. ⛔ No romper dependencias. ⛔ No introducir cambios innecesarios.
+- 💬 **Comentarios** (regla completa en `references/conventions.md` "Comentarios"): función/método **nuevo** → `summary` con qué hace, `<param>` por parámetro (los de salida marcados) y `<returns>`; código **existente** modificado → como mucho un comentario por bloque con la tarea (`// <Tarea>: <qué se cambia>`, con la `Tarea` del `CONTEXT` del planner); comentario explicativo solo en lógica compleja (el porqué, no el qué). ⛔ Nada de comentarios que repiten el código, uno por línea, código comentado ni autor/fecha.
 
 ## Idiomas (Online) — no resolver aquí
 

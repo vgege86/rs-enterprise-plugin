@@ -226,11 +226,150 @@ function Get-RsTestAssembly {
     return $null
 }
 
+# ---------------------------------------------------------------------------------------------------
+# MSBuild de Visual Studio CON la VisualStudioVersion que le corresponde. Para los hooks de entrega
+# (online-publish, installer-agendaweb, installer-batch, actualizador-build), que pasan
+# /p:VisualStudioVersion a mano.
+#
+# ⛔ POR QUÉ. Esos hooks hacían `vswhere -latest` y pasaban `/p:VisualStudioVersion=17.0` FIJO. Con
+# VS 2026 (18.x) instalado junto a VS 2022, `-latest` devuelve el MSBuild de VS 18, que con 17.0
+# busca MSBuild\Microsoft\VisualStudio\v17.0\WebApplications\Microsoft.WebApplication.targets — y en
+# VS 18 está en v18.0 —> MSB4226 y la entrega no sale. La versión NO se puede fijar: se deriva del
+# `installationVersion` de la MISMA instancia cuyo MSBuild se va a ejecutar (`<major>.0`).
+#
+# Elección de instancia:
+#   1. Si hay rango (-VersionRange o $env:RS_VS_VERSION, sintaxis de vswhere: "[17.0,18.0)"), se
+#      prefieren las instancias dentro del rango. Si no hay ninguna, aviso y se sigue con todas.
+#   2. Con -PreferWebTargets (proyectos web) se prefieren las instancias que SÍ traen
+#      Microsoft.WebApplication.targets en su v<major>.0 —un Build Tools sin la carga web no lo trae—.
+#      Si ninguna lo trae se devuelve la más nueva con web_targets=$false: que MSBuild dé el error real.
+#   3. Dentro de eso, la más nueva.
+# ---------------------------------------------------------------------------------------------------
+function ConvertTo-RsVisualStudioVersion {
+    param([string]$InstallationVersion)
+    if ($InstallationVersion -match '^\s*(\d+)\.') { return "$([int]$Matches[1]).0" }
+    if ($InstallationVersion -match '^\s*(\d+)\s*$') { return "$([int]$Matches[1]).0" }
+    return $null
+}
+
+# ¿Está $Version dentro de un rango de vswhere ("[17.0,18.0)", "17.0" = mínimo)? Para filtrar en
+# las pruebas igual que lo haría `vswhere -version`.
+function Test-RsVersionEnRango {
+    param([string]$Version, [string]$Rango)
+    if ([string]::IsNullOrWhiteSpace($Rango)) { return $true }
+    try { $v = [version]($Version -replace '[^\d\.].*$', '') } catch { return $false }
+    $r = $Rango.Trim()
+    if ($r -notmatch '^[\[\(]') {
+        try { return $v -ge [version]$r } catch { return $false }
+    }
+    if ($r -notmatch '^([\[\(])\s*([\d\.]*)\s*,\s*([\d\.]*)\s*([\]\)])$') { return $false }
+    $incMin = $Matches[1] -eq '['; $min = $Matches[2]
+    $max = $Matches[3]; $incMax = $Matches[4] -eq ']'
+    if ($min) { $vm = [version]$min; if ($incMin) { if ($v -lt $vm) { return $false } } elseif ($v -le $vm) { return $false } }
+    if ($max) { $vM = [version]$max; if ($incMax) { if ($v -gt $vM) { return $false } } elseif ($v -ge $vM) { return $false } }
+    return $true
+}
+
+# Decide entre instancias ya leídas (objetos con installationPath / installationVersion, como los
+# devuelve `vswhere -format json`). Pura salvo Test-Path: se prueba con carpetas falsas en un temp.
+function Select-RsVsMsBuildInstance {
+    param(
+        [object[]]$Instances,
+        [string]$VersionRange,
+        [switch]$PreferWebTargets
+    )
+
+    $candidatas = @()
+    foreach ($i in @($Instances)) {
+        if (-not $i -or -not $i.installationPath) { continue }
+        $vsVer = ConvertTo-RsVisualStudioVersion -InstallationVersion "$($i.installationVersion)"
+        if (-not $vsVer) { continue }
+
+        $mb = Join-Path $i.installationPath 'MSBuild\Current\Bin\MSBuild.exe'
+        if (-not (Test-Path -LiteralPath $mb)) {
+            $mb = Get-ChildItem -Path (Join-Path $i.installationPath 'MSBuild\*\Bin\MSBuild.exe') -ErrorAction SilentlyContinue |
+                  Select-Object -First 1 -ExpandProperty FullName
+        }
+        if (-not $mb) { continue }
+
+        $targets = Join-Path $i.installationPath "MSBuild\Microsoft\VisualStudio\v$vsVer\WebApplications\Microsoft.WebApplication.targets"
+        try { $orden = [version](("$($i.installationVersion)") -replace '[^\d\.].*$', '') } catch { $orden = [version]'0.0' }
+
+        $candidatas += [pscustomobject]@{
+            msbuild               = $mb
+            installation_path     = $i.installationPath
+            installation_version  = "$($i.installationVersion)"
+            display_name          = "$($i.displayName)"
+            visual_studio_version = $vsVer
+            web_targets           = [bool](Test-Path -LiteralPath $targets)
+            en_rango              = [bool](Test-RsVersionEnRango -Version "$($i.installationVersion)" -Rango $VersionRange)
+            orden                 = $orden
+            aviso                 = $null
+        }
+    }
+    if ($candidatas.Count -eq 0) { return $null }
+
+    $avisos = @()
+    $pool = $candidatas
+    if ($VersionRange) {
+        $enRango = @($pool | Where-Object { $_.en_rango })
+        if ($enRango.Count -gt 0) { $pool = $enRango }
+        else { $avisos += "ninguna instancia de Visual Studio en el rango '$VersionRange'; se usa la más nueva disponible" }
+    }
+    if ($PreferWebTargets) {
+        $conWeb = @($pool | Where-Object { $_.web_targets })
+        if ($conWeb.Count -gt 0) { $pool = $conWeb }
+        else { $avisos += "ninguna instancia trae Microsoft.WebApplication.targets (carga de trabajo de desarrollo web)" }
+    }
+
+    $elegida = $pool | Sort-Object orden -Descending | Select-Object -First 1
+    if ($avisos.Count -gt 0) { $elegida.aviso = ($avisos -join '; ') }
+    return $elegida
+}
+
+# Lee las instancias reales con vswhere y elige. $null si no hay ninguna con MSBuild (nunca lanza).
+function Find-RsVsMsBuild {
+    param(
+        [string]$VersionRange = $env:RS_VS_VERSION,
+        [switch]$PreferWebTargets
+    )
+
+    $instancias = @()
+    foreach ($vswhere in (Get-RsVsWherePaths)) {
+        try {
+            $json = (& $vswhere -products * -sort -requires Microsoft.Component.MSBuild -format json -utf8 2>$null) -join "`n"
+            # -InputObject y no pipeline: en PS 5.1 el array llega como UN objeto y @() lo anidaría.
+            if ($json) { $parsed = ConvertFrom-Json -InputObject $json; $instancias = @($parsed) }
+        }
+        catch { $instancias = @() }
+        if ($instancias.Count -gt 0) { break }
+    }
+
+    return Select-RsVsMsBuildInstance -Instances $instancias -VersionRange $VersionRange -PreferWebTargets:$PreferWebTargets
+}
+
+# Para los hooks: localiza, imprime y termina con exit 1 si no hay MSBuild. Devuelve el objeto de
+# Select-RsVsMsBuildInstance (.msbuild, .visual_studio_version, ...).
+function Resolve-RsVsMsBuildOrExit {
+    param([switch]$PreferWebTargets)
+
+    $vs = Find-RsVsMsBuild -PreferWebTargets:$PreferWebTargets
+    if (-not $vs) {
+        Write-Host "ERROR: msbuild de Visual Studio no encontrado via vswhere (ni VS ni Build Tools con MSBuild)"
+        exit 1
+    }
+    Write-Host "msbuild: $($vs.msbuild)"
+    Write-Host "Visual Studio: $($vs.display_name) $($vs.installation_version) -> /p:VisualStudioVersion=$($vs.visual_studio_version)"
+    if ($vs.aviso) { Write-Host "AVISO: $($vs.aviso)" }
+    return $vs
+}
+
 function Get-RsVsWherePaths {
-    return @(
-        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'),
-        (Join-Path $env:ProgramFiles        'Microsoft Visual Studio\Installer\vswhere.exe')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+    # Las variables se filtran ANTES de Join-Path: fuera de Windows no existen y Join-Path con
+    # $null revienta en vez de devolver "no hay vswhere" (fallaba la suite en la CI de Linux).
+    return @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ } |
+        ForEach-Object { Join-Path $_ 'Microsoft Visual Studio\Installer\vswhere.exe' } |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique
 }
 
 # ---------------------------------------------------------------------------------------------------

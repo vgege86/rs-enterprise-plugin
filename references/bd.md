@@ -127,26 +127,56 @@ informe ni una tabla de resultados que vaya a leer otra persona.
 
 `db_query` es la **única** tool que enmascara. Las que mantienen el modelo y leen estructura
 —`sync_from_db`, `sync_indexes`, `compare_model`, `analyze_dalc`, `generate_sql`,
-`generate_migration`, `export_dmd`, `render_erd`— van a su hook con conexión directa y no
+`generate_migration`, `export_dmd`, `render_erd`, `get_object_ddl`— van a su hook con conexión directa y no
 importan `pii_*`; `get_table_schema`, `search_model` y `get_model_index` leen el
 `model.json` y ni tocan la BD. Nombres de tabla, columna, vista, índice y objeto salen
 **siempre en claro**, también con `mode=enforce`. (`sync-from-db.ps1` menciona `pii` solo para
 **conservar** las marcas `pii`/`safe` que ya tenga el modelo al re-sincronizar.)
 
-⚠️ **El catálogo del sistema consultado con `db_query` sí sale enmascarado.** `ALL_TAB_COLUMNS`,
-`INFORMATION_SCHEMA.COLUMNS`, `USER_OBJECTS`… no están en el modelo → `clasificar()` devuelve
-`NO_RESUELTA/sin_definicion` → `resolver_no_resuelta()` ve texto, no números, y devuelve
-`MASCARA/valores_no_numericos`. Los nombres vuelven como `pii:xxxxxxxx`. Los patrones ni
-intervienen: la lista base es española (`NOMBRE*`, `TELEFON*`…) y `TABLE_NAME`/`COLUMN_NAME` no
-casan — pero el fallback por forma de valor los tapa igual.
+## Catálogo del sistema
 
-Para leer estructura, usar las tools de modelo, no `db_query`. Si aun así hace falta un cruce
-por SQL: **nombres en el `SELECT`, números de vuelta** (recuentos o códigos), que salen en claro
-por `valores_numericos`. Dos bordes: un entero de **9+ dígitos sin decimales** se enmascara
-(forma de identificador) y una columna que salga **entera vacía**, también.
+**Primero, la tool adecuada** (no pasan por el enmascarado):
 
-⛔ No abrir excepciones de catálogo en `pii_sqlscope`/`pii_policy` sin decisión explícita: cada
-una es un camino más por el que un `SELECT` puede salir sin filtrar.
+| Necesito | Tool |
+|---|---|
+| Cuerpo de un trigger, procedimiento, paquete, función o vista | `get_object_ddl(workspace, objeto, seccion?)` |
+| Qué objetos usan una tabla (impacto) | `get_db_objects(workspace, tabla=...)` |
+| Columnas, tipos, PK, índices | `get_table_schema` / `get_model_index` / `search_model` |
+| ¿El modelo está desfasado frente a la BD? | `compare_model` (o `/rs-erd` → "actualiza el modelo BD") |
+
+**Si aun así se consulta el catálogo con `db_query`** (desde 3.28.0, `scripts/pii_catalogo.py`):
+sale **en claro** cuando la consulta *solo* lee estructura. Se tienen que cumplir las cuatro:
+
+1. **Todas** las tablas del `FROM`/`JOIN` (subconsultas incluidas) son vistas de estructura de
+   una lista cerrada: Oracle `ALL_`/`USER_`/`DBA_` + `TABLES`, `TAB_COLUMNS`, `TAB_COLS`,
+   `COL_COMMENTS`, `TAB_COMMENTS`, `TRIGGERS`, `TRIGGER_COLS`, `SOURCE`, `OBJECTS`,
+   `CONSTRAINTS`, `CONS_COLUMNS`, `INDEXES`, `IND_COLUMNS`, `IND_EXPRESSIONS`, `VIEWS`,
+   `SEQUENCES`, `SYNONYMS`, `DEPENDENCIES`, `ARGUMENTS`, `PROCEDURES`, `ERRORS`, `TAB_PRIVS`
+   (sin esquema o con `SYS.`); SQL Server **calificadas**: `INFORMATION_SCHEMA.*` y `sys.*` de
+   estructura (`tables`, `columns`, `objects`, `triggers`, `sql_modules`, `indexes`…). Una
+   sola tabla de negocio en la consulta → reglas normales para todo.
+2. Ninguna está en el modelo (una tabla propia llamada `USER_OBJECTS` es de negocio).
+3. El `SELECT` es **simple**: `*`, `alias.*` o columnas de estructura sueltas, con alias
+   opcional. Funciones, expresiones, `||`, literales, `CASE`, subconsultas escalares, `WITH`
+   o `UNION`/`MINUS`/`INTERSECT` → no hay excepción (por ahí se sacarían datos de negocio con
+   un `FROM` de catálogo).
+4. Solo salen en claro las columnas de estructura de la lista (`COLUMN_NAME`, `DATA_TYPE`,
+   `TRIGGER_BODY`, `TEXT`, `NAME`, `DEFINITION`…).
+
+⛔ **Siguen enmascaradas aunque sean catálogo:** `LOW_VALUE`/`HIGH_VALUE` de `ALL_TAB_COLUMNS`
+(son el mínimo y el máximo **reales** de la columna), los histogramas (`ALL_TAB_HISTOGRAMS`) y
+`V$SQL` (`SQL_TEXT` lleva los literales de las consultas).
+
+🔎 **Dato personal dentro del código.** En las columnas de código (`TEXT`, `TRIGGER_BODY`,
+`DATA_DEFAULT`, `SEARCH_CONDITION`, `VIEW_DEFINITION`, `ROUTINE_DEFINITION`, `DEFINITION`,
+`COMMENTS`…) se buscan DNI/NIE (con letra de control válida), IBAN y correos **dentro** del
+texto, y se sustituye solo ese trozo por su `pii:…`: el código se sigue leyendo. La columna sale
+en `pii.redacted` y en `pii.suspect`.
+
+`pii.catalog = true` en la respuesta dice que se aplicó la excepción. Si un nombre de columna o
+un cuerpo de objeto llega como `pii:…`, la consulta no la cumple: ⛔ **no sortearlo**
+(`CASE`→números, `SUBSTR`, `ASCII`…) — reescribir la consulta como simple o usar las tools de
+la tabla de arriba.
 
 ---
 

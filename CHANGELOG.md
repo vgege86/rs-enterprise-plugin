@@ -1,5 +1,148 @@
 # RS Enterprise Agent — Changelog
 
+## 3.29.0 — 2026-11-26
+
+### El código generado traía demasiados comentarios, y los que importan faltaban
+
+No había ninguna regla sobre comentarios, así que el código que escribía el pipeline salía con
+comentarios en casi cada línea —repitiendo lo que la línea ya decía— y, en cambio, sin la
+documentación de las funciones nuevas. Nueva sección **"Comentarios"** en
+`references/conventions.md`, con tres reglas y una lista de prohibidos:
+
+1. **Función/método nuevo → `summary` obligatorio**: qué hace, un `<param>` por parámetro (los
+   `out`/`ref`/`OUT` marcados como salida) y `<returns>` si devuelve algo. C# `///`, VB.NET `'''`,
+   PL/SQL cabecera `/* */`.
+2. **Código existente modificado → como mucho un comentario por bloque** con la tarea y qué se
+   cambia (`// Mantis 48213: ...`). Dentro de una función nueva no hace falta: ya tiene su summary.
+3. **Comentario explicativo solo en lógica compleja**, y sobre el porqué, no el qué.
+
+⛔ Prohibido: comentarios que repiten el código, uno por línea, banners, código comentado,
+autor/fecha en el código, `TODO` no pedidos, y tocar comentarios existentes fuera del cambio.
+
+Para que la línea de tarea lleve el identificador real, `rs-editor-planner` añade `Tarea` al
+`CONTEXT` (el Mantis/Jira de la solicitud; vacío si no hay, ⛔ no se inventa). Lo aplican
+`rs-editor-core` (paso 6 y repaso antes de emitir), `rs-editor-fixer` (un fix no añade comentarios
+explicativos) y `rs-crear-tests` (`<summary>` de una línea por test, sin `// Arrange/Act/Assert`).
+`rs-editor-validator` lo revisa como `[mejora][bajo]`: avisa, no bloquea el pipeline.
+
+### La suite Pester fallaba en la CI de Linux (8 tests, ya en rojo en `main`)
+
+Dos supuestos de Windows en código que la CI ejecuta en `ubuntu-latest`:
+
+- `Get-RsVsWherePaths` (`hooks/lib-msbuild.ps1`) hacía `Join-Path` con
+  `${env:ProgramFiles(x86)}`, que fuera de Windows no existe: `Join-Path` con `$null` revienta
+  en vez de devolver "no hay vswhere". Ahora filtra las variables vacías antes. (3 tests de
+  `MsBuild.Tests.ps1`.)
+- `Get-RsFicherosDeScope` (`hooks/lib-buscar.ps1`) excluía `bin`/`obj` con la regex
+  `\\(bin|obj)\\`, que solo reconoce la barra de Windows: en Linux no excluía nada y
+  `find_symbol`/`search_code` devolvían también lo compilado. Ahora `[\\/]`. (5 tests de
+  `Search.Tests.ps1`.)
+
+En Windows no cambia nada.
+
+## 3.28.0 — 2026-11-26
+
+### El enmascarado tapaba nombres de columna y cuerpos de trigger, y el agente aprendió a sortearlo
+
+Con `pii_policy.mode = enforce`, al pedir modificar un trigger el agente consultaba
+`ALL_TAB_COLUMNS` / `USER_TRIGGERS` / `ALL_SOURCE` con `db_query`, y nombres de columna y cuerpo
+del trigger volvían como `pii:xxxx`: esas vistas no están en el modelo, sus columnas quedan
+"sin resolver" y, al ser texto, se enmascaran. Era una decisión documentada ("no abrir excepción
+de catálogo; preguntar por números"), y el agente hizo exactamente eso: mapear nombres a números
+con `CASE` para que pasaran. No protegía nada —un nombre de columna no es un dato personal— y
+le enseñaba a rodear el filtro, que es peor que la excepción que se quería evitar.
+
+**1. Herramienta correcta.** `rs-editor-core`, `rs-editor-planner` y `rs-editor-db-modeler`
+tienen ahora `get_object_ddl` (cuerpo de un trigger/procedimiento/vista desde la BD viva, sin
+enmascarado) y `get_db_objects` (qué objetos usan una tabla), con la regla de usarlas en vez
+de `db_query` sobre el catálogo o del `.sql` de `BD\`, y la prohibición explícita de sortear el
+enmascarado. `references/bd.md` cambia "nombres en el SELECT, números de vuelta" por una tabla
+de qué tool usar para cada cosa.
+
+**2. Excepción de catálogo acotada** (`scripts/pii_catalogo.py`, usada desde
+`pii_mask.mask_resultset`, así que aplica igual en la tool MCP y en `hooks/db-query.ps1`). Una
+consulta sale en claro si **todas** sus tablas son vistas de estructura de una lista cerrada,
+ninguna está en el modelo, el `SELECT` son columnas sueltas de estructura (sin funciones,
+expresiones, literales, `CASE`, subconsultas escalares, `WITH` ni `UNION`) y la columna está en
+la lista de columnas de estructura. Una sola tabla de negocio en la consulta → reglas normales.
+
+- ⛔ Siguen enmascaradas aunque sean catálogo: `LOW_VALUE`/`HIGH_VALUE` (mínimo y máximo reales
+  de cada columna), histogramas y `V$SQL`.
+- En las columnas de código (`TEXT`, `TRIGGER_BODY`, `DATA_DEFAULT`, definiciones…) se buscan
+  DNI/NIE con letra de control válida, IBAN y correos **dentro** del texto y se sustituye solo
+  ese trozo: el código se sigue leyendo. La red de seguridad anterior miraba el valor entero y
+  no lo habría visto dentro de una línea de código.
+- El bloque `pii` de la respuesta trae `catalog` (se aplicó la excepción) y `redacted`.
+
+`docs/proteccion-pii-consultas-bd.md` §4.5 recoge la revisión de la decisión.
+
+Tests: `tests/test_pii_catalogo.py` — lo que sí es catálogo, una veintena de intentos de colar
+datos de negocio por la excepción, `LOW_VALUE`/`HIGH_VALUE` con `SELECT *`, dato personal dentro
+del código y modo `audit`.
+
+## 3.27.0 — 2026-11-26
+
+### history.json daba conflicto en SVN en cuanto trabajaban dos desarrolladores
+
+Todas las ejecuciones del pipeline iban a un único `executions/history.json`, versionado en el
+trunk, y `log-execution.ps1` insertaba cada entrada nueva **al principio** del array (y lo
+reescribía entero al rotar). Con varios desarrolladores sobre el mismo trunk, todos tocaban las
+mismas primeras líneas del mismo fichero: conflicto en casi cada `svn update`.
+
+Añadir solo un campo "de quién es" no lo habría arreglado: SVN fusiona **por líneas**, no por
+campos, y dos entradas nuevas arriba del mismo array chocan aunque digan desarrolladores distintos.
+Lo que lo arregla es que **cada desarrollador escriba solo en su fichero**:
+
+- `log-execution.ps1` (y la tool `log_execution`) escriben en `executions/history/<developer>.json`
+  y cada entrada lleva el campo nuevo **`developer`**.
+- `developer` sale de `-Developer` / el parámetro `developer` de la tool; si no, de
+  `$env:RS_DEVELOPER`; si no, del usuario de Windows (`$env:USERNAME`). Se normaliza para que sirva
+  de nombre de fichero: `EMPRESA\Ana.Perez` → `ana.perez`.
+- La rotación (500 entradas) archiva a `<developer>-archive-AAAAMM.json`, también por desarrollador.
+- El fichero siempre es un array, también con una sola entrada (antes `ConvertTo-Json` por pipeline
+  lo escribía como objeto suelto).
+- `/rs-historial`, `/rs-stats`, `/rs-dashboard` y `/rs-deshacer` juntan todos los ficheros. Los dos
+  primeros y el dashboard enseñan y filtran por desarrollador.
+
+⚠️ **El `executions/history.json` antiguo no se toca ni se migra**: se sigue leyendo como histórico
+(sus entradas salen como `(sin registrar)` / `—`). Migrarlo automáticamente lo reescribiría cada
+desarrollador en su máquina, y eso es justo el conflicto que se quiere quitar. Si se quiere
+retirar, que lo borre **una** persona con un commit propio cuando ya no haga falta.
+
+Tests: `tests/LogExecution.Tests.ps1` (nuevo), `tests/test_history_por_desarrollador.py` (nuevo) y
+`tests/PiiGuard.Tests.ps1` adaptado a la nueva ruta.
+
+## 3.26.2 — 2026-11-26
+
+### Los hooks de entrega fallaban con MSB4226 en cuanto había VS 2026 instalado
+
+`online-publish.ps1`, `installer-agendaweb.ps1`, `installer-batch.ps1` y `actualizador-build.ps1`
+localizaban MSBuild con `vswhere -latest -requires Microsoft.Component.MSBuild` y le pasaban
+`/p:VisualStudioVersion=17.0` **fijo**. Con VS 2026 (18.x) junto a VS 2022, `-latest` devuelve el
+MSBuild de VS 18, que con 17.0 busca
+`MSBuild\Microsoft\VisualStudio\v17.0\WebApplications\Microsoft.WebApplication.targets` —en VS 18
+está en `v18.0`— y el publish/rebuild muere con `MSB4226`. Reproducido en 3.16.0, presente hasta la
+3.26.1.
+
+El fallo no era elegir VS 18: era **pasar una versión que no es la de la instancia elegida**. Ahora
+los cuatro hooks usan `Find-RsVsMsBuild` (`hooks/lib-msbuild.ps1`), que lee las instancias con
+`vswhere -products * -sort -format json` y devuelve el MSBuild **junto con** su `VisualStudioVersion`
+(`<major>.0` del `installationVersion` de esa misma instancia). Además:
+
+- `$env:RS_VS_VERSION` (rango de `vswhere -version`, p. ej. `"[17.0,18.0)"`) fija una versión
+  preferida; si ninguna instancia casa, se usa la más nueva y se avisa.
+- Los hooks web (`online-publish`, `installer-agendaweb`) prefieren una instancia que traiga
+  `Microsoft.WebApplication.targets` en su `v<major>.0` —un Build Tools sin la carga web no lo trae—;
+  si ninguna lo trae, siguen con la más nueva y lo dicen con `AVISO:`.
+- El output muestra la instancia y la versión pasada: `Visual Studio: ... -> /p:VisualStudioVersion=18.0`.
+
+Tests: `tests/MsBuild.Tests.ps1` añade `ConvertTo-RsVisualStudioVersion`, `Test-RsVersionEnRango` y
+`Select-RsVsMsBuildInstance` sobre instancias simuladas en un temp (VS 2022 + VS 2026, rango,
+Build Tools sin carga web, instancias sin MSBuild).
+
+`service-build.ps1` sigue con `-latest` para msbuild y devenv, pero no pasa `VisualStudioVersion`,
+así que no le afecta este fallo.
+
 ## 3.26.1 — 2026-08-14
 
 ### El README decía 3.23.0 con el plugin en la 3.26.0, y el proceso no tenía a quién culpar

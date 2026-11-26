@@ -53,7 +53,7 @@
   </header>
   <div class="sub" id="period"></div>
   <div id="app"></div>
-  <footer>Generado {generated_ts} · datos de <code>executions/history.json</code></footer>
+  <footer>Generado {generated_ts} · datos de <code>executions/history/</code></footer>
 </div>
 
 <script id="data" type="application/json">{data_json}</script>
@@ -66,7 +66,7 @@
   if(!D.total){
     app.innerHTML = '<div class="empty">Sin ejecuciones registradas todavía.<br>'
       + 'El pipeline (<code>&lt;Sln&gt;.sln - cambio</code>) las registra automáticamente en '
-      + '<code>executions/history.json</code>.</div>';
+      + '<code>executions/history/&lt;desarrollador&gt;.json</code>.</div>';
     return;
   }
   document.getElementById("period").textContent =
@@ -99,6 +99,15 @@
     + D.solutions.slice(0,10).map(s =>
         '<tr><td>' + esc(s.name) + '</td><td class="num">' + s.total
         + '</td><td class="num">' + pct(s.success, s.total) + '</td></tr>').join("")
+    + '</tbody></table></div>';
+
+  // Desarrolladores
+  const devs = D.developers || [];
+  html += '<h2>Por desarrollador</h2><div class="scroll"><table><thead><tr>'
+    + '<th>Desarrollador</th><th class="num">Ejec.</th><th class="num">Éxito</th></tr></thead><tbody>'
+    + devs.map(d =>
+        '<tr><td>' + esc(d.name) + '</td><td class="num">' + d.total
+        + '</td><td class="num">' + pct(d.success, d.total) + '</td></tr>').join("")
     + '</tbody></table></div>';
 
   // Agentes

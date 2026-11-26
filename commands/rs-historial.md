@@ -1,11 +1,11 @@
 ---
-description: "Muestra ejecuciones recientes del pipeline desde history.json."
+description: "Muestra ejecuciones recientes del pipeline (executions/history/, un fichero por desarrollador)."
 argument-hint: "[Solution.sln] [N]"
 ---
 
 ⛔ Self-contained — do NOT invoke the `rs-enterprise-agent` skill. Everything this mode needs is
 below; loading the skill costs ~7k tokens and adds nothing to a read-only dispatch. The solution
-is only a text filter over `history.json` here — it is not resolved to a path.
+is only a text filter over the execution history here — it is not resolved to a path.
 
 Usage: /rs-historial [Solution.sln] [N]
 Example: /rs-historial RSProcIN.sln 5

@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.26.1** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.29.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -203,7 +203,7 @@ resolver .sln → scope → planner → [APROBACIÓN HUMANA] → STAGES → chec
 | `build` ⚡ | Tras modificar código, con verificación de evidencia real |
 | `db-modeler` 🟣 | Si añade/modifica tablas o DALCs |
 | `documentar` 🔷 | Si el cambio cumple los criterios de documentación |
-| checklist + log | Siempre — verificación + registro en `history.json` |
+| checklist + log | Siempre — verificación + registro en `executions/history/<desarrollador>.json` |
 
 > La validación de tipos/longitudes/motor BD la hace el **planner** en la fase de análisis. Validator y Tester son **bloqueantes**: el build no se ejecuta si fallan.
 
@@ -337,8 +337,8 @@ Solo lectura, no modifican nada. Sirven para entender riesgo antes de tocar.
 | `/rs-init` 🔷 | Bootstrap de un workspace nuevo: crea `.rs-databases.json` (o migra `XMLConfig.xml`), el andamiaje de docs y el primer `model.json`. ⛔ Nunca sobrescribe. |
 | `/rs-env [workspace]` ⚡ | Valida los **requisitos del servidor MCP** (Python en el PATH + paquete `mcp` de la línea 1.x) y después `.rs-databases.json`, ruta AIS, dotnet, SVN/Git, modelo BD y docs agentic. Los requisitos se comprueban con PowerShell puro, sin pasar por el MCP — que es justo lo que está muerto cuando faltan —, y si falta el paquete `mcp` ofrece instalarlo previa confirmación. |
 | `/rs-pii [status\|bootstrap\|audit\|enforce\|off]` 🔷 | Protección de datos personales en consultas a BD: estado (`status`), inventario de columnas afectadas (`bootstrap`), y cambio de modo (`audit`/`enforce`/`off`). `enforce` registra las guardas `PreToolUse` en la configuración personal de Claude Code, previa confirmación. Ver `docs/proteccion-pii-consultas-bd.md`. |
-| `/rs-stats [solution]` ⚡ | Estadísticas de `history.json`: total ejecuciones, tasa de éxito, top soluciones, agentes más usados, tendencia 7 días. |
-| `/rs-dashboard` ⚡ | Dashboard HTML autónomo de `history.json` (KPIs, estados, top soluciones, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
+| `/rs-stats [solution]` ⚡ | Estadísticas del historial de ejecuciones: total ejecuciones, tasa de éxito, top soluciones, por desarrollador, agentes más usados, tendencia 7 días. |
+| `/rs-dashboard` ⚡ | Dashboard HTML autónomo del historial de ejecuciones (KPIs, estados, top soluciones, por desarrollador, tendencia), tema claro/oscuro. Versión visual de `/rs-stats`. |
 | `/rs-help` ⚡ | Renderiza **esta guía** (README) a un HTML navegable con formato (índice, tablas, tema claro/oscuro) y lo abre en el navegador. Ideal para pasar a usuarios. |
 | `/rs-cifrar` ⚡ | Cifra en reposo (DPAPI, cuenta de Windows) los secretos en texto plano: password de BD (`.rs-databases.json`) y tokens Jira/Mantis (`~/.claude`). Idempotente, no imprime secretos, retrocompatible (los valores sin cifrar siguen funcionando). |
 | `/rs-word <ficheros\|carpeta>` ⚡ | Convierte documentación Markdown del `agentic_manual` a un **Word `.docx`** sobre la plantilla corporativa `.dotx` del workspace (portada, historial de cambios, índice y estilos de la plantilla). Requiere Microsoft Word instalado. Ej: `/rs-word docs\agentic_manual\funcional\OPERACION` |
@@ -459,7 +459,7 @@ IDDEUDOR | NOMBRE           | DNI              | SALDO
 
 **Arranca apagada: si no haces nada, no cambia nada.** El modo por defecto es `off` mientras `BD\<proyecto>-model.json` no declare otra cosa, así que un workspace que actualiza sigue viendo exactamente los mismos resultados que antes. Nada se activa solo.
 
-Dos cosas sí aplican siempre, también con el modo en `off`, porque no dependen de la política del workspace: `executions/history.json` se sanea al escribirlo (un DNI/NIE, IBAN o correo en la descripción de una tarea se guarda como `[PII]`), y las guardas `PreToolUse` —**si** están registradas— bloquean `sqlplus`/`sqlcmd` directos y la escritura de datos personales en ficheros. Ninguna de las dos cambia lo que devuelve una consulta.
+Dos cosas sí aplican siempre, también con el modo en `off`, porque no dependen de la política del workspace: el historial de `executions/history/` se sanea al escribirlo (un DNI/NIE, IBAN o correo en la descripción de una tarea se guarda como `[PII]`), y las guardas `PreToolUse` —**si** están registradas— bloquean `sqlplus`/`sqlcmd` directos y la escritura de datos personales en ficheros. Ninguna de las dos cambia lo que devuelve una consulta.
 
 ### Los tres modos
 
@@ -499,7 +499,7 @@ La clasificación va por nombre, tipo y tabla — no adivina. Las dos direccione
 
 Resumen de `docs/proteccion-pii-consultas-bd.md` §5. Esta medida es **provisional**: el control definitivo (usuario de BD de solo lectura + redacción en el propio motor) está pedido a Sistemas en ese mismo documento.
 
-- **Solo filtra `db_query`.** Las tools que mantienen el modelo y leen estructura (`sync_from_db`, `compare_model`, `get_table_schema`, `render_erd`…) no pasan por el filtro: leen metadatos —nombres de tabla, columna, tipo, índice—, no datos de personas. Nombres en claro siempre, también en `enforce`. ⚠️ Reverso: si el **catálogo del sistema** se consulta con `db_query` (`ALL_TAB_COLUMNS`, `INFORMATION_SCHEMA.COLUMNS`), esos nombres **sí** vuelven enmascarados —esas tablas no están en el modelo—. Para leer estructura, usar las tools de modelo. Ver `docs/proteccion-pii-consultas-bd.md` §4.5.
+- **Solo filtra `db_query`.** Las tools que mantienen el modelo y leen estructura (`sync_from_db`, `compare_model`, `get_table_schema`, `render_erd`…) no pasan por el filtro: leen metadatos —nombres de tabla, columna, tipo, índice—, no datos de personas. Nombres en claro siempre, también en `enforce`. Si el **catálogo del sistema** se consulta con `db_query` (`ALL_TAB_COLUMNS`, `USER_TRIGGERS`, `INFORMATION_SCHEMA.COLUMNS`), desde 3.28.0 sale en claro cuando la consulta **solo** lee vistas de estructura con columnas sueltas (sin mezclar tablas de negocio ni usar funciones); `LOW_VALUE`/`HIGH_VALUE`, histogramas y `V$SQL` siguen enmascarados, y un DNI/IBAN/correo dentro del código de un trigger se sustituye. Para el código de un objeto, mejor `get_object_ddl`. Ver `references/bd.md` "Catálogo del sistema".
 - **El dato sale de la base de datos.** El motor sigue emitiendo el valor en claro y el filtro actúa después. Cualquier fallo, error de configuración o ruta no prevista lo expone. El control en BD no tiene esta propiedad.
 - **Es evitable.** El bloqueo de `sqlplus`/`sqlcmd` es un **guardarraíl frente al descuido, no una frontera de seguridad**: se elude con un script intermedio o invocando el binario por otra vía.
 - **Un `WHERE` sigue infiriendo el valor.** `SELECT COUNT(*) ... WHERE DNI LIKE '1234%'` devuelve un número, que sale en claro por diseño; repitiendo la consulta se reconstruye el dato sin haber visto un solo valor enmascarado. La medida **avisa** (`pii.predicate_warning`), no bloquea — bloquear rompería el filtrado legítimo.
@@ -627,6 +627,6 @@ docs/             plugin-architecture.md (fuente canónica) + manual-usuario/ (f
 scripts/          utilidades python (render-erd, render-dashboard, export-dmd…)
 runner/           runner.ps1 — ejecutor de builds (Stop hook)
 tests/            suite de tests del plugin (pytest + Pester)
-executions/       history.json — historial de ejecuciones
+executions/       history/<desarrollador>.json — historial de ejecuciones (uno por desarrollador; history.json = histórico anterior a 3.27.0)
 assets/           widget ERD inline
 ```

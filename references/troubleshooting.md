@@ -261,6 +261,24 @@ Solución:
 
 ---
 
+## MSB4226 en publish/rebuild de entrega con VS 2026 instalado
+
+✅ **Resuelto en 3.26.2.**
+
+Síntoma: `online-publish`, `installer-agendaweb`, `installer-batch` o `actualizador-build` fallan con `MSB4226` porque no encuentran `MSBuild\Microsoft\VisualStudio\v17.0\WebApplications\Microsoft.WebApplication.targets`, en una máquina con VS 2026 (18.x) junto a VS 2022.
+
+Causa: los hooks cogían el MSBuild con `vswhere -latest` —el de VS 18— y le pasaban `/p:VisualStudioVersion=17.0` fijo. En VS 18 los targets están en `v18.0`.
+
+---
+
+Solución:
+
+- Desde 3.26.2 los hooks derivan `VisualStudioVersion` (`<major>.0`) del `installationVersion` de la misma instancia cuyo MSBuild ejecutan (`Find-RsVsMsBuild` en `hooks/lib-msbuild.ps1`); la línea `Visual Studio: ... -> /p:VisualStudioVersion=18.0` del output lo muestra
+- Para fijar una versión concreta: `$env:RS_VS_VERSION = "[17.0,18.0)"` (sintaxis de rango de `vswhere -version`). Si no hay ninguna instancia en el rango, se usa la más nueva y se avisa
+- Los hooks web prefieren una instancia que traiga `Microsoft.WebApplication.targets`; si ninguna lo trae, sale `AVISO:` → instalar la carga de trabajo de desarrollo web (ASP.NET) en Visual Studio / Build Tools
+
+---
+
 ## Un hook falla con error de sintaxis en una línea que está bien escrita
 
 Síntomas: `Token '$(' inesperado en la expresión o la instrucción`, `Falta la cadena en el

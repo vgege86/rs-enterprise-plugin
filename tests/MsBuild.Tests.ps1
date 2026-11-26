@@ -276,3 +276,144 @@ Describe "Get-RsTestAssembly" {
         finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
+
+# ---------------------------------------------------------------------------------------------------
+# VisualStudioVersion derivada de la instancia. Regresión: con VS 2026 (18.x) junto a VS 2022 los
+# hooks de entrega cogían el MSBuild de VS 18 y le pasaban /p:VisualStudioVersion=17.0 fijo ->
+# MSB4226 (busca v17.0\WebApplications\Microsoft.WebApplication.targets, que en VS 18 está en v18.0).
+# Las instancias se simulan con carpetas en un temp con la misma estructura que deja el instalador.
+# ---------------------------------------------------------------------------------------------------
+Describe "ConvertTo-RsVisualStudioVersion" {
+
+    It "<v> -> <esperado>" -ForEach @(
+        @{ v = "17.14.36310.24";  esperado = "17.0" }
+        @{ v = "18.0.11205.157";  esperado = "18.0" }
+        @{ v = "16.11.5";         esperado = "16.0" }
+        @{ v = "18";              esperado = "18.0" }
+    ) {
+        ConvertTo-RsVisualStudioVersion -InstallationVersion $v | Should -Be $esperado
+    }
+
+    It "devuelve null si la versión no se puede leer" {
+        ConvertTo-RsVisualStudioVersion -InstallationVersion "" | Should -BeNullOrEmpty
+        ConvertTo-RsVisualStudioVersion -InstallationVersion "abc" | Should -BeNullOrEmpty
+    }
+}
+
+Describe "Test-RsVersionEnRango" {
+
+    It "'<v>' en '<r>' = <esperado>" -ForEach @(
+        @{ v = "18.0.11205.157"; r = "[18.0,19.0)"; esperado = $true  }
+        @{ v = "17.14.36310.24"; r = "[18.0,19.0)"; esperado = $false }
+        @{ v = "19.0.1";         r = "[18.0,19.0)"; esperado = $false }
+        @{ v = "17.14.36310.24"; r = "[17.0,18.0)"; esperado = $true  }
+        @{ v = "17.14.36310.24"; r = "17.0";        esperado = $true  }
+        @{ v = "16.11.5";        r = "17.0";        esperado = $false }
+        @{ v = "18.0.1";         r = "";            esperado = $true  }
+    ) {
+        Test-RsVersionEnRango -Version $v -Rango $r | Should -Be $esperado
+    }
+}
+
+Describe "Select-RsVsMsBuildInstance" {
+
+    BeforeAll {
+        # Instancia falsa: <raíz>\MSBuild\Current\Bin\MSBuild.exe y, si -Web, el WebApplication.targets
+        # en v<major>.0, igual que lo deja el instalador de Visual Studio.
+        function New-FakeVsInstance {
+            param([string]$Root, [string]$Version, [string]$Nombre = "Visual Studio", [switch]$Web)
+            $path = Join-Path $Root ("vs_" + $Version)
+            $bin  = Join-Path $path "MSBuild\Current\Bin"
+            New-Item -ItemType Directory -Path $bin -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $bin "MSBuild.exe") -Value "fake"
+            if ($Web) {
+                $major = ($Version -split '\.')[0]
+                $wa = Join-Path $path "MSBuild\Microsoft\VisualStudio\v$major.0\WebApplications"
+                New-Item -ItemType Directory -Path $wa -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $wa "Microsoft.WebApplication.targets") -Value "<Project/>"
+            }
+            return [pscustomobject]@{ installationPath = $path; installationVersion = $Version; displayName = $Nombre }
+        }
+    }
+
+    It "con VS 2026 y VS 2022 elige la más nueva y deriva 18.0 (no 17.0 fijo)" {
+        $d = New-TempDir
+        try {
+            # vswhere -sort las da de más nueva a más antigua, pero no se depende del orden de entrada.
+            $i = @(
+                (New-FakeVsInstance -Root $d -Version "17.14.36310.24" -Nombre "VS 2022" -Web),
+                (New-FakeVsInstance -Root $d -Version "18.0.11205.157" -Nombre "VS 2026" -Web)
+            )
+            $r = Select-RsVsMsBuildInstance -Instances $i -PreferWebTargets
+            $r.visual_studio_version | Should -Be "18.0"
+            $r.msbuild | Should -BeLike "*vs_18.0.11205.157*MSBuild.exe"
+            $r.web_targets | Should -BeTrue
+            $r.aviso | Should -BeNullOrEmpty
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "respeta el rango preferido: [17.0,18.0) elige VS 2022 aunque haya VS 2026" {
+        $d = New-TempDir
+        try {
+            $i = @(
+                (New-FakeVsInstance -Root $d -Version "18.0.11205.157" -Web),
+                (New-FakeVsInstance -Root $d -Version "17.14.36310.24" -Web)
+            )
+            $r = Select-RsVsMsBuildInstance -Instances $i -VersionRange "[17.0,18.0)"
+            $r.visual_studio_version | Should -Be "17.0"
+            $r.msbuild | Should -BeLike "*vs_17.14*"
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "si el rango no casa con nada, cae a la más nueva y lo avisa" {
+        $d = New-TempDir
+        try {
+            $i = @( (New-FakeVsInstance -Root $d -Version "17.14.36310.24") )
+            $r = Select-RsVsMsBuildInstance -Instances $i -VersionRange "[18.0,19.0)"
+            $r.visual_studio_version | Should -Be "17.0"
+            $r.aviso | Should -Match "rango"
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "con -PreferWebTargets prefiere la instancia que trae WebApplication.targets (Build Tools sin carga web)" {
+        $d = New-TempDir
+        try {
+            $i = @(
+                (New-FakeVsInstance -Root $d -Version "18.0.11205.157" -Nombre "Build Tools 2026"),
+                (New-FakeVsInstance -Root $d -Version "17.14.36310.24" -Nombre "VS 2022" -Web)
+            )
+            $r = Select-RsVsMsBuildInstance -Instances $i -PreferWebTargets
+            $r.visual_studio_version | Should -Be "17.0"
+            $r.web_targets | Should -BeTrue
+
+            # Sin la preferencia (batch, no web), la más nueva.
+            (Select-RsVsMsBuildInstance -Instances $i).visual_studio_version | Should -Be "18.0"
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "si ninguna trae los targets web, devuelve la más nueva con web_targets=false y aviso" {
+        $d = New-TempDir
+        try {
+            $i = @( (New-FakeVsInstance -Root $d -Version "18.0.11205.157") )
+            $r = Select-RsVsMsBuildInstance -Instances $i -PreferWebTargets
+            $r.visual_studio_version | Should -Be "18.0"
+            $r.web_targets | Should -BeFalse
+            $r.aviso | Should -Match "WebApplication"
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "descarta instancias sin MSBuild.exe y devuelve null si no queda ninguna" {
+        $d = New-TempDir
+        try {
+            $sinMsBuild = [pscustomobject]@{ installationPath = (Join-Path $d "nada"); installationVersion = "18.0.1"; displayName = "SSMS" }
+            Select-RsVsMsBuildInstance -Instances @($sinMsBuild) | Should -BeNullOrEmpty
+            Select-RsVsMsBuildInstance -Instances @() | Should -BeNullOrEmpty
+        }
+        finally { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}

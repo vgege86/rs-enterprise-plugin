@@ -82,12 +82,11 @@ if (-not $centralizado) {
     Write-Host "     convención:    references\batch-config.md"
 }
 
-# --- Localizar msbuild via vswhere (VS2022; no está en PATH) — mismo patrón que installer-agendaweb ---
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (!(Test-Path $vswhere)) { Write-Host "ERROR: vswhere no encontrado en $vswhere"; exit 1 }
-$msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
-if (!$msbuild -or !(Test-Path $msbuild)) { Write-Host "ERROR: msbuild no encontrado via vswhere"; exit 1 }
-Write-Host "msbuild: $msbuild"
+# --- Localizar msbuild via vswhere (no está en PATH) — mismo patrón que installer-agendaweb ---
+# VisualStudioVersion sale de la instancia elegida, no fija a 17.0 (MSB4226 con VS 2026). Ver lib-msbuild.ps1.
+. (Join-Path $PSScriptRoot "lib-msbuild.ps1")
+$vs = Resolve-RsVsMsBuildOrExit
+$msbuild = $vs.msbuild
 
 $exesDir = Join-Path $destino "EXES"
 New-Item -ItemType Directory -Path $exesDir -Force | Out-Null
@@ -191,7 +190,7 @@ foreach ($sln in ($exeCsprojBySln.Keys | Sort-Object)) {
     $ok = $true
     foreach ($csproj in $exeCsprojBySln[$sln]) {
         Write-Host "Rebuild: $([System.IO.Path]::GetFileName($csproj))"
-        & "$msbuild" "$csproj" /t:Rebuild /p:Configuration=Release /p:VisualStudioVersion=17.0 /verbosity:minimal /nologo
+        & "$msbuild" "$csproj" /t:Rebuild /p:Configuration=Release "/p:VisualStudioVersion=$($vs.visual_studio_version)" /verbosity:minimal /nologo
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Rebuild falló para $([System.IO.Path]::GetFileName($csproj)) (exit $LASTEXITCODE)"
             $ok = $false; break

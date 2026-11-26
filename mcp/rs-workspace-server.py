@@ -721,10 +721,13 @@ def scan_aspx(sln_path: str) -> str:
     return json.dumps(_run_ps("scan-aspx.ps1", "-SlnPath", sln_path), ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="Registra ejecución del pipeline en executions/history.json. status: success|fail|partial. Llamar al final del pipeline.")
-def log_execution(workspace: Workspace, solution: str, task: str, status: str = "success", agents: str = "") -> str:
+@mcp.tool(description="Registra ejecución del pipeline en executions/history/<desarrollador>.json (un fichero por desarrollador para que no choquen en SVN). status: success|fail|partial. developer: déjalo vacío salvo que el usuario lo diga — por defecto RS_DEVELOPER o el usuario de Windows. Llamar al final del pipeline.")
+def log_execution(workspace: Workspace, solution: str, task: str, status: str = "success", agents: str = "", developer: str = "") -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
-    return json.dumps(_run_ps("log-execution.ps1", workspace, solution, task, "-Status", status, "-Agents", agents), ensure_ascii=False, separators=_JSON_SEP)
+    args = [workspace, solution, task, "-Status", status, "-Agents", agents]
+    if developer:
+        args += ["-Developer", developer]
+    return json.dumps(_run_ps("log-execution.ps1", *args), ensure_ascii=False, separators=_JSON_SEP)
 
 
 @mcp.tool(description="Scripts SQL migración desde drift modelo→BD: CREATE TABLE+PK+FK+INDEX (tablas nuevas), ALTER TABLE ADD (columnas nuevas), ALTER TABLE MODIFY (tipo/nullable distinto), DROP COLUMN comentado (columnas en BD no en modelo).")
@@ -983,7 +986,7 @@ def render_erd(workspace: Workspace) -> str:
     return json.dumps(_run_ps("render-erd.ps1", workspace, "-Proyecto", _proyecto(workspace)), ensure_ascii=False, separators=_JSON_SEP)
 
 
-@mcp.tool(description="Genera un dashboard HTML de estadísticas del pipeline (executions/history.json: total, tasa de éxito, top soluciones, agentes, tendencia 7 días) y lo abre en el navegador. Devuelve la ruta — no carga el HTML en contexto.")
+@mcp.tool(description="Genera un dashboard HTML de estadísticas del pipeline (executions/history/*.json + el history.json antiguo: total, tasa de éxito, top soluciones, por desarrollador, agentes, tendencia 7 días) y lo abre en el navegador. Devuelve la ruta — no carga el HTML en contexto.")
 def render_dashboard(workspace: Workspace) -> str:
     if err := _check_workspace(workspace): return json.dumps(err, ensure_ascii=False)
     return json.dumps(_run_ps("render-dashboard.ps1", workspace), ensure_ascii=False, separators=_JSON_SEP)

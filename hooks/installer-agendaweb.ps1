@@ -48,12 +48,11 @@ if (-not $webCsproj) {
 }
 Write-Host "Proyecto web: $webCsproj"
 
-# Localizar msbuild via vswhere
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (!(Test-Path $vswhere)) { Write-Host "ERROR: vswhere no encontrado en $vswhere"; exit 1 }
-$msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
-if (!$msbuild -or !(Test-Path $msbuild)) { Write-Host "ERROR: msbuild no encontrado via vswhere"; exit 1 }
-Write-Host "msbuild: $msbuild"
+# Localizar msbuild via vswhere, con la VisualStudioVersion de ESA instancia (no 17.0 fija: con
+# VS 2026 instalado daba MSB4226). Ver lib-msbuild.ps1.
+. (Join-Path $PSScriptRoot "lib-msbuild.ps1")
+$vs = Resolve-RsVsMsBuildOrExit -PreferWebTargets
+$msbuild = $vs.msbuild
 
 $agendaDir = Join-Path $destino "AgendaWeb"
 if (Test-Path $agendaDir) { Remove-Item $agendaDir -Recurse -Force }
@@ -71,7 +70,7 @@ $msbuildArgs = @(
     "/p:WebPublishMethod=FileSystem",
     "/p:publishUrl=$agendaDir",
     "/p:DeleteExistingFiles=false",
-    "/p:VisualStudioVersion=17.0",
+    "/p:VisualStudioVersion=$($vs.visual_studio_version)",
     "/verbosity:minimal"
 )
 if ($publishProfile) {

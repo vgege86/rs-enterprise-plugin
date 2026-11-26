@@ -31,7 +31,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `db_query(workspace, sql, max_rows=200, conexion="")` | Consulta de solo-lectura: `SELECT` o CTE (`WITH ... SELECT`); un `WITH` con verbo de escritura (INSERT/UPDATE/DELETE/MERGE) se rechaza. `conexion` = id de `.rs-databases.json`; sin él, la principal. Devuelve `columns[]` (nombres, una sola vez) y `rows[]` (listas de valores en ese orden). Aplica la política PII del workspace (`pii_policy.mode` del modelo BD) y devuelve `pii` con el detalle de lo enmascarado — **el bloque `pii` hay que leerlo y trasladarlo al usuario, ver debajo**. Detalle en `docs/proteccion-pii-consultas-bd.md` |
 | `compare_model(workspace, conexion="")` | Diff model.json vs BD real → tablas/columnas nuevas/eliminadas. ⛔ "tabla eliminada" con una cuenta que solo ve por GRANT puede ser una tabla que existe y no se ve: contrastar con la `cobertura` de `sync_from_db` antes de borrar nada del modelo |
 | `scan_aspx(sln_path)` | Extrae controles AIS de .aspx → IDs y textos para RIDIOMA/RCONTROLES |
-| `log_execution(workspace, solution, task, status?, agents?)` | Registra en executions/history.json |
+| `log_execution(workspace, solution, task, status?, agents?, developer?)` | Registra en `executions/history/<developer>.json` (un fichero por desarrollador: sin conflictos SVN) |
 | `generate_migration(workspace)` | Scripts SQL migración desde drift modelo→BD |
 | `svn_log(workspace, solution?, limit?)` | Historial SVN → revisión, autor, fecha, mensaje |
 | `git_log(workspace, solution?, limit?)` | Historial Git → hash corto, autor, fecha, mensaje. Equivalente Git de `svn_log` |
@@ -50,7 +50,7 @@ Fallback: hook equivalente listado en `references/hooks.md`.
 | `sync_indexes(workspace, conexion="")` | Sincroniza índices desde BD al modelo — preserva source=manual. ⛔ **Solo toca las tablas que la lectura ve**: una tabla sin GRANT conserva sus índices en vez de quedarse a 0. Devuelve `tablas_intactas`, `cobertura`, `parcial` |
 | `analyze_dalc(workspace, sln_path?)` | Infiere relaciones entre tablas analizando código DALC |
 | `render_erd(workspace)` | Genera ERD HTML y abre navegador — sin cargar modelo en contexto |
-| `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (executions/history.json) y abre navegador — sin cargar el HTML en contexto |
+| `render_dashboard(workspace)` | Genera dashboard HTML de estadísticas (`executions/history/*.json` + `history.json` antiguo, con tabla por desarrollador) y abre navegador — sin cargar el HTML en contexto |
 | `render_help(workspace)` | Renderiza el README del plugin a un HTML navegable (guía de usuario) y abre navegador — sin cargar el HTML en contexto |
 | `secure_credentials(workspace?, skip_jira?, skip_mantis?)` | Cifra en reposo (DPAPI, cuenta Windows) el password de `.rs-databases.json` (si se da workspace) y los tokens Jira/Mantis de `~/.claude`. Idempotente, no imprime secretos. Para `/rs-cifrar` |
 | `render_word(workspace, sources, template?, output?, title?, objeto?, autor?, version?, strip_marks?, open_file?)` | Convierte `.md` del agentic_manual a Word `.docx` sobre una plantilla `.dotx` del workspace. `sources` = ficheros y/o carpetas separados por `;` (el orden es el de los capítulos). Requiere Microsoft Word (COM), sin fallback. Devuelve `{path, pages, tables, warnings}` — sin cargar el documento en contexto |

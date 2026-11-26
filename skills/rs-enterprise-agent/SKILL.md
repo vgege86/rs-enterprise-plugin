@@ -82,6 +82,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 
 - No parafrasear resultados de tools — actuar directamente sobre el JSON.
 - No cargar `model.json` completo (~180K tok): `search_model` (localizar) → `get_model_index` (nombres) → `get_table_schema` (tablas concretas). ⛔ Nunca leer/copiar `BD\*-model*.json` vía Bash/Python/PowerShell — usar las tools `mcp__plugin_rs-enterprise-agent_rs-workspace__*` o los hooks equivalentes.
+- Código de un trigger/procedimiento/paquete/vista → `get_object_ddl` (BD viva, sin enmascarado); qué objetos usan una tabla → `get_db_objects(tabla=...)`. ⛔ No sortear el enmascarado de `db_query` con `CASE`→números: ver `references/bd.md` "Catálogo del sistema".
 - `get_scope` una sola vez, en el orquestador (paso 1b) — reenviar `scope_dirs`/`tipo`/`workspace` en el header de cada subagente, no recalcular por etapa.
 - Contrato de salida obligatorio en cada subagente de pipeline (`FILES_CHANGED`/`SUMMARY`/`STATUS` + campos extra) — el orquestador reenvía SOLO ese bloque a la siguiente etapa, nunca código ni diffs completos.
 
@@ -210,7 +211,7 @@ Cada modo despacha a un subagente vía Task tool; el modelo se elige por lo que 
 | ERD / Modelo BD 🟣 | `/rs-erd`, "actualiza modelo BD", "muestra ERD" | `rs-editor-db-modeler` (mismo que la etapa `db-modeler`) |
 | Sincronizar índices 🟣 | `/rs-sync-indexes`, "sincroniza índices", "trae los índices de Oracle al modelo" | `rs-editor-db-modeler` (`sync_indexes`: ALL_INDEXES → modelo JSON; reemplaza `source="db"`, preserva `source="manual"`; **solo Oracle**) |
 | Estadísticas ⚡ | `/rs-stats`, "cuántas ejecuciones" | `rs-stats` |
-| Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde history.json y lo abre; versión visual de /rs-stats) |
+| Dashboard ⚡ | `/rs-dashboard`, "dashboard de ejecuciones", "estadísticas visuales" | `rs-dashboard` (genera un HTML de stats desde el historial de ejecuciones (`executions/history/`) y lo abre; versión visual de /rs-stats) |
 | Guía de usuario ⚡ | `/rs-help`, "guía del plugin", "manual de usuario", "cómo se usa el plugin" | `rs-help` (renderiza el README a un HTML navegable con formato y lo abre; no carga el HTML en contexto) |
 | Documentación a Word ⚡ | `/rs-word`, "pasa la documentación a Word", "genera el Word de los runbooks", "documento con la plantilla" | `rs-word` (convierte `.md` del agentic_manual a `.docx` sobre la plantilla `.dotx` del workspace; **requiere Microsoft Word**, sin fallback) |
 | Validar requerimiento 🟣 | `/rs-validar-req`, "valida que el commit X cumple" | `rs-validar-req` |

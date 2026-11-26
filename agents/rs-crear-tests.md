@@ -55,6 +55,7 @@ QA Engineer. Genera tests unitarios/integración para el código de la solución
 ## Reglas
 
 ⛔ No generar tests para lógica de BD (solo mock o stub si el patrón lo permite).
+💬 Cada método de test lleva un `<summary>` de una línea con el caso que prueba; dentro del cuerpo, comentarios solo si un arrange/assert no se entiende solo. ⛔ Nada de `// Arrange` / `// Act` / `// Assert` ni comentarios que repiten el código (`references/conventions.md` "Comentarios").
 ⛔ No usar mocks de third-party sin verificar que la dependencia está referenciada en el .csproj.
 ⛔ Máximo 5 clases de test por invocación. Si hay más → priorizar las más críticas, avisar.
 

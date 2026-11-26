@@ -46,6 +46,8 @@ Ajustar profundidad al impacto del delta (bajo/local → ligero; alto/flujo glob
 - **Seguridad DALC (solo si el scope incluye DALC o acceso a BD):** SQL injection, credenciales hardcodeadas → preferente `mcp__plugin_rs-enterprise-agent_rs-workspace__security_scan(sln_path)`.
 - **Coherencia BD:** el código respeta los tipos/longitudes/nullabilidad que el plan marcó (Oracle usa `CHAR_LENGTH`, no `DATA_LENGTH`; no asumir equivalencias entre motores). Detectar truncamiento silencioso, tipo incorrecto, columna inexistente.
 
+- **Comentarios (advisory, `[mejora][bajo]`, no bloquea):** función/método **nuevo** sin `summary` (o sin los `<param>`/`<returns>` que le tocan), o el delta añade comentarios que repiten el código, uno por línea, o código comentado (`references/conventions.md` "Comentarios"). Solo sobre lo que añade el delta, nunca sobre comentarios que ya existían.
+
 ### Reglas anti-ruido
 
 ⛔ No reportar: estilo, formato, naming trivial, micro-optimizaciones, sugerencias sin impacto real. Reportar solo si afecta al cambio + puede provocar fallo real + impacto medio/alto + alta certeza. ⛔ No especular; duda → ignorar; no duplicar issues relacionados.
