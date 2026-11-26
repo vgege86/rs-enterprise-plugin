@@ -1,5 +1,36 @@
 # RS Enterprise Agent — Changelog
 
+## 3.26.2 — 2026-11-26
+
+### Los hooks de entrega fallaban con MSB4226 en cuanto había VS 2026 instalado
+
+`online-publish.ps1`, `installer-agendaweb.ps1`, `installer-batch.ps1` y `actualizador-build.ps1`
+localizaban MSBuild con `vswhere -latest -requires Microsoft.Component.MSBuild` y le pasaban
+`/p:VisualStudioVersion=17.0` **fijo**. Con VS 2026 (18.x) junto a VS 2022, `-latest` devuelve el
+MSBuild de VS 18, que con 17.0 busca
+`MSBuild\Microsoft\VisualStudio\v17.0\WebApplications\Microsoft.WebApplication.targets` —en VS 18
+está en `v18.0`— y el publish/rebuild muere con `MSB4226`. Reproducido en 3.16.0, presente hasta la
+3.26.1.
+
+El fallo no era elegir VS 18: era **pasar una versión que no es la de la instancia elegida**. Ahora
+los cuatro hooks usan `Find-RsVsMsBuild` (`hooks/lib-msbuild.ps1`), que lee las instancias con
+`vswhere -products * -sort -format json` y devuelve el MSBuild **junto con** su `VisualStudioVersion`
+(`<major>.0` del `installationVersion` de esa misma instancia). Además:
+
+- `$env:RS_VS_VERSION` (rango de `vswhere -version`, p. ej. `"[17.0,18.0)"`) fija una versión
+  preferida; si ninguna instancia casa, se usa la más nueva y se avisa.
+- Los hooks web (`online-publish`, `installer-agendaweb`) prefieren una instancia que traiga
+  `Microsoft.WebApplication.targets` en su `v<major>.0` —un Build Tools sin la carga web no lo trae—;
+  si ninguna lo trae, siguen con la más nueva y lo dicen con `AVISO:`.
+- El output muestra la instancia y la versión pasada: `Visual Studio: ... -> /p:VisualStudioVersion=18.0`.
+
+Tests: `tests/MsBuild.Tests.ps1` añade `ConvertTo-RsVisualStudioVersion`, `Test-RsVersionEnRango` y
+`Select-RsVsMsBuildInstance` sobre instancias simuladas en un temp (VS 2022 + VS 2026, rango,
+Build Tools sin carga web, instancias sin MSBuild).
+
+`service-build.ps1` sigue con `-latest` para msbuild y devenv, pero no pasa `VisualStudioVersion`,
+así que no le afecta este fallo.
+
 ## 3.26.1 — 2026-08-14
 
 ### El README decía 3.23.0 con el plugin en la 3.26.0, y el proceso no tenía a quién culpar

@@ -57,7 +57,7 @@ Convenciones de entrega y modelo de `RVERSIONES`: `references/actualizador.md`.
 | `parse-sln.ps1 <sln>` | Parsea .sln → scope_dirs, tipo, workspace |
 | `find-symbol.ps1 <nombre> <scope_dirs>` · `find-symbol.ps1 -Symbols "A,B,C" -ScopeDirs <dirs>` | Localiza clase/método/propiedad → archivo:línea. Con `-Symbols`, los N en una sola pasada sobre el árbol |
 | `compile-check.ps1 <sln> [-NoRestore] [-Builder auto\|dotnet\|msbuild]` | Build real → errors[], warnings[], success, builder. Compilador autodetectado (`lib-msbuild.ps1`) |
-| `lib-msbuild.ps1` | Librería: decide MSBuild de VS vs CLI dotnet leyendo los .csproj de la .sln; localiza msbuild/vstest.console vía vswhere |
+| `lib-msbuild.ps1` | Librería: decide MSBuild de VS vs CLI dotnet leyendo los .csproj de la .sln; localiza msbuild/vstest.console vía vswhere; para los hooks de entrega (`online-publish`, `installer-*`, `actualizador-build`) da el msbuild con su `VisualStudioVersion` derivada de la instancia (`$env:RS_VS_VERSION` para fijar rango) |
 | `test-runner-check.ps1 <sln> [-NoBuild]` | Tests → has_test_project (bool), passed/failed/failures[], skipped (conteo), runner. Runner autodetectado (dotnet test / vstest.console). Sin proyecto → solo has_test_project=false |
 | `create-test-project.ps1 <sln> [-Framework xunit\|mstest\|nunit]` | Crea proyecto de test |
 | `scan-aspx.ps1 -SlnPath <sln>` | Extrae controles AIS de .aspx |

@@ -93,16 +93,12 @@ function Test-IsExeCsproj($csproj) {
     return ((Get-Content $csproj -Raw) -match '<OutputType>\s*(Exe|WinExe)\s*</OutputType>')
 }
 
-$msbuild = $null
+# msbuild + VisualStudioVersion de la MISMA instancia (no 17.0 fija: MSB4226 con VS 2026). Ver lib-msbuild.ps1.
+. (Join-Path $PSScriptRoot "lib-msbuild.ps1")
+$script:vs = $null
 function Get-MsBuild {
-    if ($script:msbuild) { return $script:msbuild }
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    if (!(Test-Path $vswhere)) { Write-Host "ERROR: vswhere no encontrado en $vswhere"; exit 1 }
-    $mb = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
-    if (!$mb -or !(Test-Path $mb)) { Write-Host "ERROR: msbuild no encontrado via vswhere"; exit 1 }
-    $script:msbuild = $mb
-    Write-Host "msbuild: $mb"
-    return $mb
+    if (-not $script:vs) { $script:vs = Resolve-RsVsMsBuildOrExit }
+    return $script:vs.msbuild
 }
 
 $buildStart = Get-Date
@@ -146,7 +142,7 @@ if ($batch.Count -gt 0) {
         $ok = $true
         foreach ($csproj in $exeCsprojBySln[$sln]) {
             Write-Host "Rebuild: $([System.IO.Path]::GetFileName($csproj))"
-            & "$mb" "$csproj" /t:Rebuild /p:Configuration=Release /p:VisualStudioVersion=17.0 /verbosity:minimal /nologo
+            & "$mb" "$csproj" /t:Rebuild /p:Configuration=Release "/p:VisualStudioVersion=$($script:vs.visual_studio_version)" /verbosity:minimal /nologo
             if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Rebuild fallo (exit $LASTEXITCODE)"; $ok = $false; break }
 
             $csprojDir = Split-Path $csproj -Parent
