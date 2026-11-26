@@ -107,9 +107,9 @@ function Select-RsConexion {
 function Get-RsModelPath {
     <# Ruta del modelo BD de UNA conexion. Unico sitio que resuelve el campo "model".
 
-       Lo usan get-config.ps1 (que la publica como model_path, y de ahi la consume la tool
-       MCP db_query) y db-query.ps1 (que se la pasa a scripts/pii_cli.py). Tiene que ser
-       una sola implementacion: el modelo NO es solo el esquema, lleva pii_policy entera
+       La publica get-config.ps1 como model_path, y de ahi la consume db_query
+       (scripts/rs_core.py, la misma para la tool MCP, la CLI y hooks/db-query.ps1). Tiene
+       que ser una sola implementacion: el modelo NO es solo el esquema, lleva pii_policy entera
        (mode, transform, patterns_add/remove y las tablas parametricas). Si los dos caminos
        resuelven modelos distintos, uno enmascara y el otro no, y la respuesta del que no
        enmascara es indistinguible de la de un workspace sin politica declarada.
@@ -145,9 +145,9 @@ function Test-RsModelDeclarado {
                                 workspace que actualiza no cambie de comportamiento.
 
        Unico sitio que conoce la regla, igual que Get-RsModelPath: la publica
-       get-config.ps1 como model_declarado (de ahi la consume la tool MCP db_query) y la
-       usa db-query.ps1 para decirselo a scripts/pii_cli.py. Si cada camino la dedujera
-       por su cuenta volverian a divergir. #>
+       get-config.ps1 como model_declarado y de ahi la consume db_query
+       (scripts/rs_core.py). Si cada camino la dedujera por su cuenta volverian a
+       divergir. #>
     param([Parameter(Mandatory=$true)]$Conexion)
     return [bool]"$($Conexion.model)"
 }

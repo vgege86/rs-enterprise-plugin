@@ -50,8 +50,8 @@ if ($comando -match $prohibidos) {
     # comando de un cliente de BD lleva casi siempre la credencial inline (ej. "sqlplus
     # -S usuario/contrasena@ORCL", "sqlcmd ... -P contrasena"), y ecoarlo aqui pondria
     # esa contrasena en un mensaje visible para el usuario y potencialmente logueado --
-    # justo lo que esta guarda existe para evitar. Mismo criterio que hooks/db-query.ps1
-    # y el servidor MCP, que pasan la credencial por fichero temporal, nunca en claro.
+    # justo lo que esta guarda existe para evitar. Mismo criterio que db_query
+    # (scripts/rs_core.py), que pasa la credencial por fichero temporal, nunca en claro.
     $cliente = $Matches[1]
     Write-Error @"
 BLOQUEADO: cliente de BD invocado directamente ($cliente).

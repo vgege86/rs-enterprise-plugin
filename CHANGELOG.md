@@ -1,5 +1,122 @@
 # RS Enterprise Agent — Changelog
 
+## 3.31.0 — 2026-11-26
+
+### `svn_add` añadió todo lo no versionado del working copy: 57 elementos, 1925 ficheros, `success: true`
+
+En una instalación de cliente, con la 3.26.1, una llamada a `svn_add` con dos rutas concretas
+programó para alta **todo** lo no versionado del working copy: 57 elementos que al expandirse
+dejaron 1925 ficheros en estado `A`. Entre ellos, `packages\`, `BD\`, `TestResults\`, un `.zip`,
+una base de datos SQLite, logs, un JSON de configuración y proyectos de otros desarrolladores
+del mismo working copy compartido. La respuesta fue `success: true`, sin un solo aviso.
+
+**Causa: tres defectos encadenados.**
+1. **FastMCP descarta en silencio los parámetros que la tool no declara.** La llamada usó
+   `paths=` en vez de `files=`; el modelo de argumentos de pydantic lo ignoró y la tool recibió
+   `files` vacío. Reproducido con `mcp` 1.30.
+2. **`files` vacío significaba "añadir todo"**, y la descripción de la tool lo anunciaba.
+   `svn-add.ps1` lanzaba `svn status` sobre el workspace y añadía cada `?`: una carpeta sin
+   versionar aparece como un solo `?`, de ahí los 57.
+3. **`svn add --force` es recursivo y el resultado solo listaba lo pedido**: cada carpeta
+   arrastró su contenido y `added` decía 57. Las exclusiones (`\\packages\\`…) exigían barra a
+   los dos lados, así que una carpeta en la raíz no se excluía. Y con `--force`, una carpeta ya
+   versionada en una lista explícita también se recorría.
+
+**Mismo patrón en otras dos tools.** `git_add` tenía el mismo "vacío = todo". `vcs_revert` no,
+porque su `files` ya era obligatorio, pero el punto 1 le afectaba peor:
+`vcs_revert(..., dryRun=True)` o `dry-run=True` se quedaba sin el parámetro y **revertía de
+verdad**, sin la previsualización que `/rs-deshacer` enseña antes de pedir confirmación. Y
+aceptaba carpetas: en Git, `git checkout HEAD -- <carpeta>` revierte el árbol entero, y `.`
+revierte todo.
+
+**Arreglo.**
+- **Las 51 tools rechazan los parámetros desconocidos** (`mcp/rs-workspace-server.py`:
+  `extra="forbid"` en el modelo de argumentos de FastMCP y `additionalProperties: false` en el
+  schema). Se toca una estructura interna de FastMCP: si cambia, el servidor no arranca, porque
+  arrancar ignorando parámetros es justo el fallo. La CLI `rs.py` ya los rechazaba.
+- **`svn_add` / `git_add`**: `files` pasa a ser obligatorio y desaparece la detección
+  automática. Separador `;` (la coma se sigue aceptando).
+  - Lista vacía, `.`, la raíz, rutas fuera del workspace o comodines → error, sin tocar nada.
+    La validación es común (`hooks/lib-vcsrutas.ps1`).
+  - Sin `--force`: lo ya versionado sale en `skipped` y no se recorre. Lo ignorado
+    (`svn:ignore`, `.gitignore`) no se fuerza.
+  - Una carpeta nueva solo entra si lo que arrastra no pasa de `max_files` (parámetro nuevo,
+    defecto 50). Si pasa, **no se añade nada** y `expanded` da el desglose: avisar después habría
+    dejado los 1925 programados igual. En Git el recuento es exacto
+    (`git ls-files --others --exclude-standard`); en SVN se cuentan los ficheros en disco.
+  - `added` / `added_count` son lo que quedó **realmente** programado (estado antes y después),
+    incluidas las carpetas padre que añade `svn add --parents`; `warning` si es más de lo pedido.
+  - TortoiseSVN/TortoiseGit solo con ficheros: con una carpeta abren un diálogo con todo su
+    contenido preseleccionado.
+- **`vcs_revert`**: solo ficheros; una carpeta, `.` o la raíz rechazan la llamada entera.
+- **`rs-commit`**:
+  - lista de add fichero a fichero, nunca carpetas ni la raíz;
+  - **después de cualquier add vuelve a mirar el estado** y se detiene si hay algo en `A` que
+    no pidió;
+  - commit SVN con `--depth empty` y lista explícita (`svn commit <carpeta>` sube todo lo
+    programado dentro);
+  - la alternativa con TortoiseSVN ya no abre el commit sobre la raíz del workspace, cuyo diálogo
+    habría preseleccionado los 1925.
+
+Tests:
+- `tests/VcsAdd.Tests.ps1` (nuevo), con working copies SVN y repos Git reales: lista vacía,
+  `.`, raíz, fuera del workspace, comodines, fichero en carpeta nueva, tope de `max_files`,
+  carpeta ya versionada que no se recorre, ignorados, y carpetas y `.` en `vcs_revert`.
+- `tests/test_rs_cli.py`: parámetros desconocidos rechazados (`paths`, `dryRun`, `dry-run`) sin
+  llegar al hook, el alias `path` sigue valiendo, `additionalProperties: false` en las 51, y
+  `files` obligatorio.
+- La CI instala `subversion`.
+
+## 3.30.0 — 2026-11-26
+
+### Una sola implementación de las tools: el MCP y una CLI nueva sobre el mismo núcleo
+
+Hasta la 3.29.0 toda la lógica de las 51 tools vivía dentro del servidor MCP, y la vía de
+respaldo —los hooks PowerShell— llevaba su propia copia de lo más delicado: `hooks/db-query.ps1`
+reimplementaba en PowerShell la guarda de solo lectura y el tratamiento de la salida de
+sqlplus/sqlcmd, con avisos de "⛔ PARIDAD" para que alguien recordase cambiar las dos. Una
+divergencia ahí no da un error: da un `UPDATE` que pasa por un camino, o una política PII que se
+aplica en uno y no en el otro. Y como la vía de respaldo solo se usa cuando el MCP falla, era el
+código que menos se ejercitaba.
+
+- **`scripts/rs_core.py`** (nuevo): las 51 tools, cada una con `@tool(description=...)`. No
+  importa `mcp`; pydantic es opcional. `_run_ps` busca `powershell` y, si no está, `pwsh`, y
+  devuelve un error JSON si no hay ninguno en vez de reventar.
+- **`mcp/rs-workspace-server.py`**: de 1.295 a ~35 líneas, solo registra las tools del núcleo. El
+  schema que ven los agentes es **idéntico** al de la 3.29.0 (nombre, descripción y parámetros de
+  las 51, comprobado una a una). Ningún agente, comando ni skill cambia.
+- **`scripts/rs.py`** (nuevo): CLI de las mismas tools con la misma salida JSON. `list`,
+  `help <tool>`, `<tool> --param valor`, `--args-json -` (JSON por stdin, para SQL y textos con
+  comillas sin pelearse con el escapado de Git Bash → PowerShell). Exit 0 / 1 (la tool devolvió
+  error) / 2 (llamada mal formada). No necesita el paquete `mcp`: es la vía de respaldo cuando el
+  servidor no arranca, y sirve a mano y en la CI.
+- **`hooks/db-query.ps1`**: envoltorio de `rs.py db_query`, sin lógica propia. Devuelve
+  exactamente la salida de la tool MCP. `$env:RS_PYTHON` elige el intérprete.
+
+⛔ **Cambio de política: sin Python, `db-query.ps1` falla cerrado.** Antes, si no podía ejecutar
+el filtro PII, devolvía los datos **sin enmascarar** con un aviso (fallo abierto deliberado, para
+no empujar al usuario a sqlplus directo). Con la política en `enforce` eso es exactamente la fuga
+que la medida evita, y sqlplus directo ya lo bloquea `pii-guard-bash.ps1`. Ahora: `success:
+false`, `pii.mode: "error"`, cero filas, exit 1. Igual si `python` es el alias de la Microsoft
+Store (no ejecuta nada). `docs/proteccion-pii-consultas-bd.md` §5.2g recoge la revisión.
+
+⚠️ La salida de `db-query.ps1` pasa a ser la de la tool MCP: `rows_truncated` en vez de
+`truncated`, `motor`, y ya no lleva el eco `sql`.
+
+El descifrado DPAPI sigue en dos lenguajes (`rs_core._unprotect_secret` y `lib-crypto.ps1`): los
+hooks PowerShell lo necesitan para conectar por su cuenta, así que no se puede quitar uno.
+`tests/test_dpapi_paridad.py` sigue vigilándolo.
+
+Tests:
+- `tests/test_rs_cli.py` (nuevo): argumentos, `--args-json` por stdin con BOM, códigos de
+  salida, la CLI sin `mcp` ni pydantic, y que el servidor registra exactamente el núcleo.
+- `tests/test_mcp.py` y `tests/test_dpapi_paridad.py` cargan el núcleo: ya no necesitan `mcp`.
+- `tests/PiiGuard.Tests.ps1`: los tests que simulaban sqlplus dentro de PowerShell se sustituyen
+  por tests del envoltorio. Fallo cerrado sin Python y con salida vacía; SQL intacto por stdin; y,
+  fuera de Windows, de extremo a extremo con un sqlplus falso en el PATH (enmascarado, acentos,
+  modelo ausente, error a mitad de volcado). Los caminos PII de `db_query` siguen en `test_mcp.py`.
+- La CI instala Python en el job de PowerShell.
+
 ## 3.29.0 — 2026-11-26
 
 ### El código generado traía demasiados comentarios, y los que importan faltaban

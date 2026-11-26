@@ -104,8 +104,9 @@ Crear/editar los ficheros del plan siguiendo las convenciones:
   (allowlist, prefijo `mcp__plugin_rs-enterprise-agent_rs-workspace__` para las MCP); cuerpo español, arranca con `# Rol`.
 - **Comandos**: frontmatter `description`+`Uso:`; cuerpo inglés "Invoke the skill in <mode> mode"
   + dispatch al subagente + tier (⚡/🔷/🟣) + "Relay verbatim".
-- **Tools MCP**: `@mcp.tool(description=...)` con `_run_ps` a un hook; añadir el hook equivalente
-  (Preferente/Fallback 1:1).
+- **Tools**: `@tool(description=...)` en `scripts/rs_core.py` (normalmente `_run_ps` a un hook). Con
+  eso queda en el MCP y en la CLI `scripts/rs.py` a la vez; ⛔ nunca lógica en
+  `mcp/rs-workspace-server.py`, que solo registra.
 - **Skills**: `skills/<x>/SKILL.md` con frontmatter `name`+`description` (triggers claros).
 No introducir cambios fuera del plan aprobado.
 

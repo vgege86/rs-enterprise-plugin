@@ -47,17 +47,24 @@ if ($vcs -eq "none" -or -not $root) {
     exit 1
 }
 
-$fileList = @($Files -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
-if ($fileList.Count -eq 0) {
-    @{ success = $false; error = "Lista de ficheros vacía" } | ConvertTo-Json
+# Lista validada ENTERA antes de tocar nada (lib-vcsrutas.ps1): vacia, '.', la raiz, fuera del
+# repo o comodines -> error. Y solo ficheros: una carpeta en Git es `git checkout HEAD -- <dir>`,
+# que revierte el arbol entero, y en SVN acababa en un borrado a medias.
+. (Join-Path $hooksDir "lib-vcsrutas.ps1")
+$rv = Resolve-RsRutasExplicitas -Files $Files -Raiz $root
+$rechazadas = @($rv.errores) + @($rv.rutas | Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+              ForEach-Object { @{ ruta = (Get-RsRutaRelativa $_ $root); error = "es una carpeta: vcs_revert solo acepta ficheros (en Git revertiria el arbol entero)" } })
+if (-not $rv.ok -or $rechazadas.Count -gt 0) {
+    @{ success = $false; error = "lista de ficheros no valida: no se ha revertido nada"; rejected = @($rechazadas) } | ConvertTo-Json -Depth 4
     exit 1
 }
+$fileList = @($rv.rutas | ForEach-Object { Get-RsRutaRelativa $_ $root })
 
 # Normaliza a ruta absoluta (las relativas cuelgan de la raíz del repo)
 function Resolve-Target {
     param([string]$f)
     if ([System.IO.Path]::IsPathRooted($f)) { return $f }
-    return (Join-Path $root ($f -replace '/', '\'))
+    return (Join-Path $root ($f -replace '[\\/]', [IO.Path]::DirectorySeparatorChar))
 }
 
 $planned = @()   # { file, action, reason }

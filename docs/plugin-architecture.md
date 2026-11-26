@@ -36,7 +36,10 @@ skills/
 agents/                  subagentes .md — pipeline (rs-editor-*) y modos directos (rs-*)
 commands/                slash commands .md — wrappers finos que despachan a un subagente/skill
 mcp/
-  rs-workspace-server.py FastMCP server; cada @mcp.tool hace shell-out a un hook
+  rs-workspace-server.py FastMCP server: solo registra las tools de scripts/rs_core.py
+scripts/
+  rs_core.py             implementacion UNICA de las 51 tools (la usan el MCP y la CLI)
+  rs.py                  CLI: las mismas tools por linea de comandos, sin el paquete mcp
 hooks/                   scripts PowerShell: worker (fallback 1:1 de tools MCP) + infra
   README.md              catálogo de hooks con parámetros
 runner/
@@ -458,9 +461,16 @@ encima de un comando que declara no necesitarla.
 
 ## 6. MCP server `rs-workspace`
 
-`mcp/rs-workspace-server.py` (FastMCP, `mcp = FastMCP("rs-workspace")`, transport stdio).
-**51 tools**, cada una decorada `@mcp.tool(description=...)`. La mayoría hace **shell-out a un
-`hooks/*.ps1` vía el helper `_run_ps`** (subprocess) → relación tool↔hook casi 1:1. Los nombres
+Desde 3.30.0 hay **una implementación y dos frontales**:
+
+| Pieza | Qué es |
+|---|---|
+| `scripts/rs_core.py` | Las **51 tools**, cada una decorada `@tool(description=...)` y registrada en `TOOLS`. La mayoría hace **shell-out a un `hooks/*.ps1` vía `_run_ps`** (busca `powershell` y, si no, `pwsh`); `db_query`, las de modelo y `ping` se resuelven en Python. No importa `mcp`; pydantic es opcional (solo da el alias `path` al schema). |
+| `mcp/rs-workspace-server.py` | FastMCP (`FastMCP("rs-workspace")`, stdio). **Sin lógica**: recorre `TOOLS` y registra cada función con su descripción. El schema que ven los agentes sale de la firma de la función, así que no cambió al separar el núcleo (comprobado tool a tool). ⛔ Desde 3.31.0 **rechaza los parámetros que la tool no declara** (`extra="forbid"` en el modelo de argumentos de FastMCP, y `additionalProperties: false` en el schema): FastMCP los descartaba en silencio. Si una versión de FastMCP cambia esa estructura interna, el servidor no arranca. |
+| `scripts/rs.py` | CLI: `rs.py list`, `rs.py help <tool>`, `rs.py <tool> --param valor` o `--args-json -` (JSON por stdin). Misma salida que la tool; exit 0 / 1 (la tool devolvió error) / 2 (llamada mal formada). Es la vía de respaldo cuando el MCP no arranca, y lo que usan `hooks/db-query.ps1`, las personas y la CI. |
+
+⛔ La firma de cada función de `rs_core.py` es el contrato de los dos frontales: renombrar un
+parámetro cambia la API de los agentes y la de la CLI a la vez. Los nombres
 se exponen a Claude como `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>` (y `mcp__plugin_rs-enterprise-agent_rs-workspace__<func>`
 bajo el namespace de plugin). Catálogo completo: `references/mcp.md`.
 
@@ -562,8 +572,10 @@ que el parser no las caza y hacen falta comprobaciones aparte. Las dos primeras 
 `tests/Encoding.Tests.ps1`. La suite se ejecuta con los dos intérpretes: `powershell` porque es el de
 producción, `pwsh` porque es el del CI.
 
-**Worker** (`hooks/*.ps1`) — **fallback 1:1 de las tools MCP** (convención Preferente/Fallback:
-usar siempre la tool MCP; si no responde, ejecutar el hook equivalente). Catálogo con parámetros
+**Worker** (`hooks/*.ps1`) — lo que ejecutan las tools por debajo, invocable también a mano
+(convención Preferente/Fallback: usar siempre la tool MCP; si no responde, la CLI `scripts/rs.py`,
+que corre la misma implementación; los hooks siguen disponibles). `hooks/db-query.ps1` es desde
+3.30.0 un envoltorio de la CLI: sin Python falla cerrado. Catálogo con parámetros
 en `hooks/README.md` y `references/hooks.md`. Categorías: build/deploy, análisis/scope, BD/modelo,
 VCS (SVN + Git), entorno/logging, Jira (`jira-attach.ps1`, fallback 1:1 de `jira_attach`).
 
@@ -646,9 +658,9 @@ spec y en la tabla de pasos del `README.md`.
 
 ### 9.3 Nueva tool MCP
 
-1. Función `@mcp.tool(description=...)` en `mcp/rs-workspace-server.py` que hace `_run_ps` sobre
-   un hook nuevo.
-2. Hook equivalente `hooks/<x>.ps1` (respeta la convención Preferente/Fallback 1:1).
+1. Función `@tool(description=...)` en `scripts/rs_core.py` que hace `_run_ps` sobre un hook
+   nuevo. Queda a la vez en el MCP y en la CLI; ⛔ no tocar `mcp/rs-workspace-server.py`.
+2. El hook `hooks/<x>.ps1`.
 3. Documentar en `references/mcp.md` **y** `references/hooks.md`.
 4. Si algún agente la usa, añadirla a su `tools:` (prefijo `mcp__plugin_rs-enterprise-agent_rs-workspace__`).
 
@@ -769,7 +781,7 @@ módulo, `scripts/pii_patterns.json`, no es código sino la lista base de patron
 | `scripts/pii_catalogo.py` | Excepción de catálogo (3.28.0): decide si una consulta **solo** lee estructura (todas sus tablas son vistas de una lista cerrada `ALL_*/USER_*/DBA_*`, `INFORMATION_SCHEMA.*`, `sys.*`; ninguna en el modelo; `SELECT` sin funciones ni expresiones) y qué columnas de estructura salen en claro. `LOW_VALUE`/`HIGH_VALUE`, histogramas y `V$SQL` quedan fuera. En las columnas de código (`TEXT`, `TRIGGER_BODY`…) sustituye solo los DNI/NIE/IBAN/correos que haya dentro del texto. Lo usa `pii_mask.mask_resultset`, así que aplica igual en la tool y en el hook. |
 | `scripts/pii_policy.py` | Clasifica cada columna del resultset como en claro, enmascarada o no resuelta, con la precedencia documentada en `docs/proteccion-pii-consultas-bd.md` §4.2: marca explícita del modelo → patrón de nombre → tabla paramétrica → tipo → resto de texto → no resuelta. Para las no resueltas, decide por la forma de los valores con una prueba numérica estricta (rechaza signo `+`, `inf`/`nan`, separadores de miles, y cualquier entero de 9+ dígitos sin parte decimal — forma de identificador, no de cantidad). Si `pii_patterns.json` no se puede leer, la lista de patrones falla **cerrada** a `["*"]` en vez de abrirse en silencio. |
 | `scripts/pii_mask.py` | Punto único de transformación (`mask_resultset`): combina `pii_policy` + `pii_detect` sobre un resultset y sustituye los valores marcados por un seudónimo HMAC-SHA256 (clave de 32 bytes en el perfil local del usuario, `%LOCALAPPDATA%\rs-enterprise-agent\pii.key`, nunca en el repositorio) o por `[PII]` si `transform=suppress`. Es el módulo que importa directamente la tool MCP `db_query` (`mcp/rs-workspace-server.py`, vía `importlib`). |
-| `scripts/pii_cli.py` | Envoltorio CLI de `pii_mask` (stdin JSON `{columns,rows,sql}` → stdout JSON `{columns,rows,pii}`) para que `hooks/db-query.ps1` pueda invocarlo como proceso — PowerShell no puede importar un módulo Python. El `model_path` se lo pasa el llamante (`Get-RsModelPath`), no lo busca él, y con él la marca `--convenio` (`Test-RsModelDeclarado`): sin ella una ruta cuyo fichero no existe se trata como **política declarada que no se aplica**, es decir error. Todo código de salida != 0 significa "corrí y no pude aplicar la política" → el hook falla cerrado. Modo `--clasificar` para `/rs-pii`. Nunca escribe un valor de dato personal en stderr, solo el nombre del problema (fichero, tipo de error). `stdin` se lee como `utf-8-sig` (PowerShell 5.1 antepone BOM al canalizar hacia un comando nativo) y `stdout`/`stderr` se reconfiguran a UTF-8: su salida es un pipe, no una consola, así que el encoding por defecto del proceso sería la página del sistema mientras el hook la descodifica como UTF-8. |
+| `scripts/pii_cli.py` | Envoltorio CLI de `pii_mask` (stdin JSON `{columns,rows,sql}` → stdout JSON `{columns,rows,pii}`) para invocarlo como proceso desde PowerShell, que no puede importar un módulo Python (hasta 3.29.0 lo usaba `hooks/db-query.ps1`; desde 3.30.0 ese hook delega en `scripts/rs.py`). El `model_path` se lo pasa el llamante (`Get-RsModelPath`), no lo busca él, y con él la marca `--convenio` (`Test-RsModelDeclarado`): sin ella una ruta cuyo fichero no existe se trata como **política declarada que no se aplica**, es decir error. Todo código de salida != 0 significa "corrí y no pude aplicar la política" → el hook falla cerrado. Modo `--clasificar` para `/rs-pii`. Nunca escribe un valor de dato personal en stderr, solo el nombre del problema (fichero, tipo de error). `stdin` se lee como `utf-8-sig` (PowerShell 5.1 antepone BOM al canalizar hacia un comando nativo) y `stdout`/`stderr` se reconfiguran a UTF-8: su salida es un pipe, no una consola, así que el encoding por defecto del proceso sería la página del sistema mientras el hook la descodifica como UTF-8. |
 
 **`model_path` no dice si hay política.** `Get-RsModelPath` (`hooks/lib-dbconfig.ps1`) devuelve
 siempre una ruta: sin campo `"model"` en la conexión cae al convenio `BD\<proyecto>-model.json`.

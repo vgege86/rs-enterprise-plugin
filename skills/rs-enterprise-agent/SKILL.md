@@ -161,7 +161,7 @@ Frases "actualiza el modelo BD", "muestra el ERD", "genera SQL de tablas", "rela
 # Utilidades
 
 Hooks → `<plugin_root>/references/hooks.md`. MCP rs-workspace (preferente) → `<plugin_root>/references/mcp.md`.
-**Preferente/Fallback:** toda tool `mcp__plugin_rs-enterprise-agent_rs-workspace__*` tiene un hook PowerShell equivalente. Usar siempre la tool MCP; si no responde → ejecutar el hook.
+**Preferente/Fallback:** usar siempre la tool `mcp__plugin_rs-enterprise-agent_rs-workspace__*`. Si el MCP no responde → la CLI, que ejecuta exactamente lo mismo y no necesita el paquete `mcp`: `python <plugin_root>/scripts/rs.py <tool> --args-json -` con los parámetros en JSON por stdin (`rs.py list` / `rs.py help <tool>`). Los hooks PowerShell de `references/hooks.md` siguen disponibles.
 
 # Detección de VCS (SVN / Git)
 

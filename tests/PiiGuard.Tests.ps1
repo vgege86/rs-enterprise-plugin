@@ -216,329 +216,159 @@ Describe "pii_cli.py" {
     }
 }
 
-Describe "db-query.ps1 camino sin filas" {
+Describe "db-query.ps1 (envoltorio de la CLI rs.py)" {
     <#
-        sqlplus mockeado: sin BD real no se puede provocar un resultset vacio de otra
-        forma. Cubre el hallazgo de revision: el camino sin filas (y el de error de
-        sqlplus) se saltaban tanto la forma nueva de respuesta (columns/pii) como el
-        saneado del eco de SQL, asi que una consulta que no encuentra filas -la forma
-        tipica de una busqueda dirigida a una persona concreta- devolvia el literal
-        (ej. un DNI) intacto.
+        Desde la 3.30.0 db-query.ps1 no lleva logica propia: pasa los parametros en JSON por
+        stdin a scripts/rs.py, que ejecuta la MISMA db_query que la tool MCP. Los caminos PII
+        (modelo declarado ausente, modelo roto, conexion seleccionada, error a mitad de volcado)
+        se prueban sobre esa implementacion en tests/test_mcp.py. Aqui se prueba el envoltorio:
+        que el viaje PowerShell -> Python -> PowerShell no pierde nada y que sin Python falla
+        CERRADO.
+
+        Los casos con filas usan un sqlplus falso que es un EJECUTABLE en el PATH, no un Mock de
+        Pester: quien lo invoca ahora es Python, que no ve las funciones de la sesion. En Windows
+        subprocess no encuentra un .cmd sin extension, asi que esos casos solo corren fuera de
+        Windows (la CI).
+        ⛔ La condicion de -Skip va escrita en cada It: Pester 5 la evalua al DESCUBRIR los tests,
+        antes de BeforeAll, asi que una variable que se fije en BeforeAll aun no existe y el test
+        se salta siempre (paso en la 3.30.0: CI en verde con estos cuatro sin ejecutar).
     #>
     BeforeAll {
-        $script:hook = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
+        $script:hookQ   = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
+        $script:pathAnt = $env:PATH
 
-        # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
-        # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
-        # test cae. Un stub vacio le da algo que sustituir, de modo que estos casos -- que son
-        # los que cubren los caminos PII de db-query.ps1, lo mas delicado del repo -- corren
-        # tambien donde no hay sqlplus (el runner de CI). Donde si lo hay, el Mock lo sustituye
-        # igual, asi que no cambia nada.
-        function sqlplus { }
-        $script:ws2  = Join-Path $TestDrive "trunk-sinfilas"
-        $docs2       = Join-Path $script:ws2 "docs"
-        New-Item -ItemType Directory -Path $docs2 -Force | Out-Null
-        @'
+        function New-RsWsConsulta {
+            <#
+            .SYNOPSIS
+                Crea un workspace de prueba con una conexion Oracle y, opcionalmente, su modelo.
+            .PARAMETER Nombre
+                Carpeta del workspace dentro de TestDrive.
+            .PARAMETER Modelo
+                Contenido del modelo BD/<Nombre>-model.json; sin el, no se crea el fichero.
+            .OUTPUTS
+                Ruta del workspace.
+            #>
+            param([string]$Nombre, [string]$Modelo = "")
+            $ws = Join-Path $TestDrive $Nombre
+            New-Item -ItemType Directory -Path (Join-Path $ws "docs") -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $ws "BD") -Force | Out-Null
+            @"
 {
+  "proyecto": "$Nombre",
   "conexiones": [
-    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p" }
+    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/$Nombre-model.json" }
   ]
 }
-'@ | Set-Content (Join-Path $docs2 ".rs-databases.json") -Encoding UTF8
-    }
-
-    It "sin filas: columns/rows/pii presentes y el eco de SQL sanea el literal (ej. un DNI)" {
-        # sqlplus real no emite nada -ni cabecera- cuando la consulta no devuelve filas.
-        Mock -CommandName sqlplus -MockWith { $global:LASTEXITCODE = 0 }
-
-        $sql = "SELECT * FROM RDEUDORES WHERE DNI = '12345678Z'"
-        $out = & $script:hook -Workspace $script:ws2 -Sql $sql | ConvertFrom-Json
-
-        $out.success                          | Should -Be $true
-        $out.row_count                        | Should -Be 0
-        $out.PSObject.Properties.Name          | Should -Contain "columns"
-        $out.PSObject.Properties.Name          | Should -Contain "rows"
-        $out.PSObject.Properties.Name          | Should -Contain "pii"
-        $out.pii.mode                          | Should -Be "off"
-        $out.sql                               | Should -Match "'\?'"
-        $out.sql                               | Should -Not -Match "12345678Z"
-    }
-
-    It "sin filas: el bloque pii tiene las mismas claves que el camino con filas" {
-        # Emitia solo {mode, reason} con mode="off" fijo, asi que un workspace en enforce
-        # reportaba "off" en cuanto una consulta no devolvia filas. Ahora el modo sale de
-        # la misma politica que el camino con filas (pii_cli con resultset vacio).
-        Mock -CommandName sqlplus -MockWith { $global:LASTEXITCODE = 0 }
-
-        $out = & $script:hook -Workspace $script:ws2 -Sql "SELECT NOMBRE FROM RDEUDORES" | ConvertFrom-Json
-        $claves = @($out.pii.PSObject.Properties.Name)
-        foreach ($k in @("mode", "masked", "unresolved", "suspect", "predicate_warning", "tables")) {
-            $claves | Should -Contain $k
-        }
-    }
-}
-
-Describe "db-query.ps1 camino CON filas (integracion PII)" {
-    <#
-        sqlplus mockeado emitiendo CSV real: cabecera + filas. Cubre lo que hasta ahora no
-        tenia ninguna cobertura Pester -- extraccion de cabeceras, construccion de la matriz,
-        invocacion de pii_cli con el model_path de la conexion SELECCIONADA, y las dos ramas
-        de fallo (abierto vs cerrado).
-    #>
-    BeforeAll {
-        $script:hook3 = Join-Path $PSScriptRoot "../hooks/db-query.ps1"
-
-        # Pester no puede mockear un comando que NO EXISTE en la sesion: sin cliente Oracle
-        # instalado, Mock -CommandName sqlplus aborta con "Could not find Command sqlplus" y el
-        # test cae. Un stub vacio le da algo que sustituir, de modo que estos casos -- que son
-        # los que cubren los caminos PII de db-query.ps1, lo mas delicado del repo -- corren
-        # tambien donde no hay sqlplus (el runner de CI). Donde si lo hay, el Mock lo sustituye
-        # igual, asi que no cambia nada.
-        function sqlplus { }
-
-        # Workspace con politica enforce y un modelo cuyo NOMBRE no casaria "*-model.json":
-        # fija de paso que la resolucion va por el campo "model" de la conexion, no por glob.
-        $script:ws3 = Join-Path $TestDrive "trunk-confilas"
-        $docs3      = Join-Path $script:ws3 "docs"
-        $bd3        = Join-Path $script:ws3 "BD"
-        New-Item -ItemType Directory -Path $docs3 -Force | Out-Null
-        New-Item -ItemType Directory -Path $bd3 -Force | Out-Null
-        @'
-{
-  "proyecto": "Proyecto",
-  "conexiones": [
-    { "id": "desa", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p" },
-    { "id": "prod", "motor": "ORACLE", "cadena": "Data Source=XP;User Id=u;Password=p", "model": "BD/uCollect-v2.json" }
-  ]
-}
-'@ | Set-Content (Join-Path $docs3 ".rs-databases.json") -Encoding UTF8
-        @'
-{
-  "pii_policy": { "mode": "enforce" },
-  "tables": {
-    "RDEUDORES": { "columns": {
-      "IDDEUDOR": { "type": "NUMBER(10)", "pk": true },
-      "NOMBRE":   { "type": "VARCHAR2(60)" }
-    }}
-  }
-}
-'@ | Set-Content (Join-Path $bd3 "uCollect-v2.json") -Encoding UTF8
-
-        # Workspace cuyo modelo declarado esta CORRUPTO: pii_cli corre y falla.
-        $script:ws4 = Join-Path $TestDrive "trunk-modelo-roto"
-        $docs4      = Join-Path $script:ws4 "docs"
-        $bd4        = Join-Path $script:ws4 "BD"
-        New-Item -ItemType Directory -Path $docs4 -Force | Out-Null
-        New-Item -ItemType Directory -Path $bd4 -Force | Out-Null
-        @'
-{
-  "proyecto": "Roto",
-  "conexiones": [
-    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Roto.json" }
-  ]
-}
-'@ | Set-Content (Join-Path $docs4 ".rs-databases.json") -Encoding UTF8
-        "{ esto no es json" | Set-Content (Join-Path $bd4 "Roto.json") -Encoding UTF8
-
-        # Workspace cuyo modelo esta DECLARADO y NO existe: la mitad peligrosa del
-        # hallazgo. Get-RsModelPath devuelve una ruta igualmente, asi que tenerla no dice
-        # nada sobre si alguien declaro politica.
-        $script:ws5 = Join-Path $TestDrive "trunk-modelo-declarado-ausente"
-        $docs5      = Join-Path $script:ws5 "docs"
-        New-Item -ItemType Directory -Path $docs5 -Force | Out-Null
-        @'
-{
-  "proyecto": "Ausente",
-  "conexiones": [
-    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Ausente-model.json" }
-  ]
-}
-'@ | Set-Content (Join-Path $docs5 ".rs-databases.json") -Encoding UTF8
-
-        # Workspace con modelo declarado en modo off: sirve para el viaje de ida y vuelta
-        # de codificacion (los valores tienen que volver intactos, sin enmascarar).
-        $script:ws6 = Join-Path $TestDrive "trunk-acentos"
-        $docs6      = Join-Path $script:ws6 "docs"
-        $bd6        = Join-Path $script:ws6 "BD"
-        New-Item -ItemType Directory -Path $docs6 -Force | Out-Null
-        New-Item -ItemType Directory -Path $bd6 -Force | Out-Null
-        @'
-{
-  "proyecto": "Acentos",
-  "conexiones": [
-    { "id": "principal", "motor": "ORACLE", "cadena": "Data Source=XE;User Id=u;Password=p", "model": "BD/Acentos-model.json" }
-  ]
-}
-'@ | Set-Content (Join-Path $docs6 ".rs-databases.json") -Encoding UTF8
-        '{ "pii_policy": { "mode": "off" }, "tables": {} }' |
-            Set-Content (Join-Path $bd6 "Acentos-model.json") -Encoding UTF8
-    }
-
-    It "un modelo DECLARADO que no existe no devuelve filas (no es un workspace sin politica)" {
-        # La tool MCP devolvia aqui TODAS las filas en claro etiquetadas mode="off",
-        # indistinguible de un workspace que nunca configuro nada. Los dos caminos tienen
-        # que dar lo mismo: success=false, cero filas y como generar el modelo.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024,`"Ana Lopez`""
+"@ | Set-Content (Join-Path $ws "docs/.rs-databases.json") -Encoding UTF8
+            if ($Modelo) { $Modelo | Set-Content (Join-Path $ws "BD/$Nombre-model.json") -Encoding UTF8 }
+            return $ws
         }
 
-        $out = & $script:hook3 -Workspace $script:ws5 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
-               ConvertFrom-Json
+        function Set-RsSqlplusFalso {
+            <#
+            .SYNOPSIS
+                Pone en el PATH un sqlplus falso que imprime el CSV indicado.
+            .PARAMETER Csv
+                Lineas que emite el falso sqlplus (cabecera + filas).
+            .PARAMETER Exit
+                Codigo de salida del falso sqlplus.
+            #>
+            param([string[]]$Csv, [int]$Exit = 0)
+            $dir = Join-Path $TestDrive ("bin_" + [Guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            $datos = Join-Path $dir "salida.csv"
+            [IO.File]::WriteAllText($datos, (($Csv -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+            $exe = Join-Path $dir "sqlplus"
+            [IO.File]::WriteAllText($exe, "#!/bin/sh`ncat '$datos'`nexit $Exit`n")
+            & chmod +x $exe
+            $env:PATH = $dir + [IO.Path]::PathSeparator + $script:pathAnt
+        }
 
+        $script:wsEnf = New-RsWsConsulta "Enforce" '{ "pii_policy": { "mode": "enforce" }, "tables": { "RDEUDORES": { "columns": { "IDDEUDOR": { "type": "NUMBER(10)", "pk": true }, "NOMBRE": { "type": "VARCHAR2(60)" } } } } }'
+        $script:wsOff = New-RsWsConsulta "Claro" '{ "pii_policy": { "mode": "off" }, "tables": {} }'
+        $script:wsSin = New-RsWsConsulta "Ausente"
+    }
+
+    AfterEach { $env:PATH = $script:pathAnt }
+
+    It "sin Python falla CERRADO: success=false, sin filas y lo dice" {
+        # RS_PYTHON a un ejecutable que no existe: mismo camino que no tener Python, sin
+        # depender del Python real de la maquina que corre la suite.
+        $antes = $env:RS_PYTHON
+        try {
+            $env:RS_PYTHON = Join-Path $TestDrive "no-existe-python"
+            $salida = & $script:hookQ -Workspace $script:wsOff -Sql "SELECT 1 FROM dual"
+            $codigo = $LASTEXITCODE
+        }
+        finally { $env:RS_PYTHON = $antes }
+        $out = $salida | ConvertFrom-Json
+
+        $codigo            | Should -Be 1
         $out.success       | Should -Be $false
-        $out.row_count     | Should -Be 0
+        $out.error         | Should -Match "RS_PYTHON"
         @($out.rows).Count | Should -Be 0
-        $out.pii.error     | Should -Not -BeNullOrEmpty
-        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
-    }
-
-    It "un modelo por CONVENIO que no existe mantiene el comportamiento de 3.0.0 (mode=off)" {
-        # ws3/desa no declara "model" y BD\Proyecto-model.json no existe: workspace que
-        # nunca declaro politica. La consulta corre y los datos salen en claro. Es la
-        # garantia de que un workspace que actualiza no cambia de comportamiento.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024,`"Ana Lopez`""
-        }
-
-        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "desa" `
-                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
-
-        $out.success    | Should -Be $true
-        $out.pii.mode   | Should -Be "off"
-        $out.rows[0][1] | Should -Be "Ana Lopez"
-    }
-
-    It "si pii_cli sale con 0 pero su salida no es JSON, no devuelve filas ni un pii nulo" {
-        # El parseo estaba FUERA del try/catch que envuelve la invocacion: un CLI que sale
-        # con 0 y emite algo no parseable dejaba $obj a $null y el hook respondia ok con
-        # columns/rows vacios y pii = $null. Once agentes tienen instruccion de leer ese
-        # bloque pii. Ocurria de verdad: antes del arreglo de codificacion, un valor con
-        # un caracter fuera de cp1252 hacia que el CLI emitiera JSON a medias.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024,`"Ana Lopez`""
-        }
-        Mock -CommandName python -MockWith { $global:LASTEXITCODE = 0; '{"columns": ["NOMBRE"], "rows": [' }
-
-        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "prod" `
-                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
-
-        $out.success       | Should -Be $false
-        $out.row_count     | Should -Be 0
-        @($out.rows).Count | Should -Be 0
-        $out.pii           | Should -Not -BeNullOrEmpty
         $out.pii.mode      | Should -Be "error"
-        $out.pii.error     | Should -Not -BeNullOrEmpty
+    }
+
+    It "si Python no ejecuta la CLI (salida vacia) tambien falla cerrado" {
+        function python { }
+        Mock -CommandName python -MockWith { $global:LASTEXITCODE = 9009 }
+
+        $out = & $script:hookQ -Workspace $script:wsOff -Sql "SELECT 1 FROM dual" | ConvertFrom-Json
+
+        $out.success       | Should -Be $false
+        $out.error         | Should -Match "no ejecuto"
+        @($out.rows).Count | Should -Be 0
+    }
+
+    It "el SQL llega intacto a la guarda (comillas, `$ y saltos de linea)" {
+        $sql = "UPDATE x`nSET a = 'O''Brien `$HOME `"z`"'"
+        $out = & $script:hookQ -Workspace $script:wsOff -Sql $sql | ConvertFrom-Json
+        $out.success | Should -Be $false
+        $out.error   | Should -Match "Solo se permiten"
+    }
+
+    It "enforce: enmascara las filas con el modelo de la conexion" -Skip:(-not ($IsLinux -or $IsMacOS)) {
+        Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', '"1024","Ana Lopez"', '"1025","Luis Gomez"')
+
+        $out = & $script:hookQ -Workspace $script:wsEnf -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+
+        $out.success    | Should -Be $true
+        $out.row_count  | Should -Be 2
+        $out.pii.mode   | Should -Be "enforce"
+        $out.pii.masked | Should -Contain "NOMBRE"
+        $out.rows[0][0] | Should -Be "1024"
+        $out.rows[0][1] | Should -Match "^pii:[0-9a-f]{12}$"
         ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
     }
 
-    It "un valor con acentos sobrevive intacto al viaje PowerShell -> Python -> PowerShell" {
-        # La stdout de pii_cli es un pipe, asi que Python la codificaba con el encoding por
-        # defecto de la plataforma (cp1252 en un Windows con locale espanola) mientras este
-        # hook la descodifica como UTF-8. Los acentos volvian destrozados y un caracter
-        # fuera de cp1252 reventaba el CLI. El valor se compone por codigo de caracter para
-        # que la prueba no dependa de como este guardado ESTE fichero.
-        $valor = "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " +
-                 [char]0x00C1 + "ngel " + [char]0x03A9
-        # El cuerpo del Mock corre en otro ambito, asi que compone el valor por su cuenta
-        # en vez de capturar $valor: son la misma cadena por construccion.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024," + [char]0x22 + "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " +
-                      [char]0x00C1 + "ngel " + [char]0x03A9 + [char]0x22
-        }
+    It "un valor con acentos sobrevive al viaje PowerShell -> Python -> PowerShell" -Skip:(-not ($IsLinux -or $IsMacOS)) {
+        $valor = "Jos" + [char]0x00E9 + " Mu" + [char]0x00F1 + "oz " + [char]0x00C1 + "ngel " + [char]0x03A9
+        Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', ('"1024","' + $valor + '"'))
 
-        $out = & $script:hook3 -Workspace $script:ws6 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
-               ConvertFrom-Json
+        $out = & $script:hookQ -Workspace $script:wsOff -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
 
         $out.success    | Should -Be $true
-        $out.pii.mode   | Should -Be "off"
         $out.rows[0][1] | Should -Be $valor
     }
 
-    It "enmascara las filas usando el modelo de la conexion seleccionada" {
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024,`"Ana Lopez`""
-            "1025,`"Luis Gomez`""
-        }
+    It "un modelo DECLARADO que no existe no devuelve filas" -Skip:(-not ($IsLinux -or $IsMacOS)) {
+        Set-RsSqlplusFalso -Csv @('"IDDEUDOR","NOMBRE"', '"1024","Ana Lopez"')
 
-        $out = & $script:hook3 -Workspace $script:ws3 -Conexion "prod" `
-                    -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
+        $out = & $script:hookQ -Workspace $script:wsSin -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" | ConvertFrom-Json
 
-        $out.success       | Should -Be $true
-        $out.row_count     | Should -Be 2
-        $out.columns       | Should -Contain "NOMBRE"
-        $out.pii.mode      | Should -Be "enforce"
-        $out.pii.masked    | Should -Contain "NOMBRE"
-        $out.rows[0][0]    | Should -Be "1024"
-        $out.rows[0][1]    | Should -Match "^pii:[0-9a-f]{12}$"
-        $out.rows[1][1]    | Should -Match "^pii:[0-9a-f]{12}$"
-        ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
-    }
-
-    It "si pii_cli corre y falla NO devuelve filas (fallo cerrado)" {
-        # Antes cualquier salida != 0 de pii_cli caia en la rama de fallo abierto y devolvia
-        # las filas EN CLARO con pii.mode = "error". El fallo abierto solo es legitimo cuando
-        # el filtro no se puede ni ejecutar; si corrio y fallo, tenia los datos en la mano.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 0
-            "IDDEUDOR,NOMBRE"
-            "1024,`"Ana Lopez`""
-        }
-
-        $out = & $script:hook3 -Workspace $script:ws4 -Sql "SELECT IDDEUDOR, NOMBRE FROM RDEUDORES" |
-               ConvertFrom-Json
-
-        $out.success   | Should -Be $false
-        $out.row_count | Should -Be 0
+        $out.success       | Should -Be $false
         @($out.rows).Count | Should -Be 0
-        $out.pii.error | Should -Not -BeNullOrEmpty
         ($out | ConvertTo-Json -Depth 6) | Should -Not -Match "Ana Lopez"
     }
 
-    It "un error de sqlplus a mitad de volcado no devuelve las filas ya emitidas como error" {
-        # sqlplus emite las filas segun las trae; un ORA- a mitad de fetch deja datos en lo
-        # capturado. La rama de error NO pasa por el enmascarado, asi que volcar la salida
-        # entera metia esas filas en el contexto en claro. Ademas el filtro anterior
-        # ('ORA-|SP2-|ERROR', sin anclar) casaba con la palabra "error" DENTRO de los datos.
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 1
-            "IDINCIDENCIA,DESCRIPCION,DNI"
-            "1,`"error al cobrar`",12345678Z"
-            "2,`"ERROR de conexion`",87654321X"
-            "ORA-01555: snapshot too old"
-        }
+    It "un error de sqlplus a mitad de volcado no devuelve las filas ya emitidas" -Skip:(-not ($IsLinux -or $IsMacOS)) {
+        Set-RsSqlplusFalso -Exit 1 -Csv @('"IDDEUDOR","DNI"', '"1","12345678Z"', 'ORA-01555: snapshot too old')
 
-        $out = & $script:hook3 -Workspace $script:ws3 `
-                    -Sql "SELECT IDINCIDENCIA, DESCRIPCION, DNI FROM RINCIDENCIAS" | ConvertFrom-Json
+        $out = & $script:hookQ -Workspace $script:wsOff -Sql "SELECT IDDEUDOR, DNI FROM RDEUDORES" | ConvertFrom-Json
 
         $out.success | Should -Be $false
         $out.error   | Should -Match "ORA-01555"
-        $out.error   | Should -Not -Match "12345678Z"
-        $out.error   | Should -Not -Match "87654321X"
-        $out.error   | Should -Not -Match "al cobrar"
-    }
-
-    It "un error sin lineas de diagnostico devuelve un mensaje fijo, no la salida capturada" {
-        Mock -CommandName sqlplus -MockWith {
-            $global:LASTEXITCODE = 1
-            "IDDEUDOR,DNI"
-            "1024,12345678Z"
-        }
-
-        $out = & $script:hook3 -Workspace $script:ws3 -Sql "SELECT IDDEUDOR, DNI FROM RDEUDORES" |
-               ConvertFrom-Json
-
-        $out.success | Should -Be $false
-        $out.error   | Should -Match "sin lineas de diagnostico"
         $out.error   | Should -Not -Match "12345678Z"
     }
 }

@@ -108,7 +108,7 @@ del caché lleva la versión: cada actualización las dejaba muertas). Los resto
 | `svn-diff-revision.ps1 <workspace> <revisions>` | Diff de revisiones específicas → combined_diff filtrado |
 | `svn-log.ps1 <workspace> [-Solution <nombre>] [-Limit 10]` | Historial commits → JSON |
 | `vcs-delta.ps1 <workspace> -Desde <fecha> [-Hasta <fecha>] [-Ruta <subruta>] [-Limit 500]` | Delta de commits entre dos fechas (SVN o Git, autodetectado) → commits + tareas Mantis/Jira + ficheros tocados |
-| `svn-add.ps1 <workspace> [-Files <lista>]` | Añade ficheros ?: CLI → TortoiseProc → instrucciones manuales |
+| `svn-add.ps1 <workspace> -Files <lista> [-MaxFiles 50]` | Añade una lista **explícita** de ficheros a SVN (vacía/raíz/`.` → error; carpetas con tope de `-MaxFiles`; `added` = lo realmente programado). `git-add.ps1` igual para Git |
 
 ### Entorno y logging
 | Script | Uso |
@@ -262,3 +262,4 @@ que es lo que impide arrancar al servidor MCP) y `/rs-env` el resto.
 - Visual Studio o Build Tools (msbuild.exe + vstest.console.exe, localizados por vswhere) para las soluciones .NET Framework — sin ellos, esos dos hooks fallan **cerrado** con `builder_error`/`runner_error` en vez de dar un falso "no compila"
 - TortoiseProc en `C:\Program Files\TortoiseSVN\bin\` (para svn-add nivel 2)
 - sqlcmd (SQL Server) o sqlplus (Oracle) para db_query
+- Python en el PATH para `db-query.ps1`: desde 3.30.0 delega en `scripts/rs.py`, y sin Python falla cerrado (no devuelve filas)

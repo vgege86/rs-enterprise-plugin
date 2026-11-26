@@ -738,18 +738,24 @@ direcciones no tienen patrón reconocible. Si alguien los declara seguros, ningu
 comprobación automática lo advierte. Solo lo detecta la revisión del cambio en el
 control de versiones.
 
-**g) La vía alternativa de consulta puede devolver datos sin filtrar.** Además de la
-herramienta principal existe una vía de respaldo, que se usa cuando aquella no está
-disponible. Si en ese camino el filtro **no se puede ni ejecutar** (falta el intérprete
-o el fichero del filtro en el puesto), la consulta devuelve los datos **sin enmascarar**,
-señalándolo en la respuesta. Es una decisión deliberada: dejar sin servicio la consulta
-empujaría al desarrollador a usar el cliente de base de datos directamente, que no pasa
-por ningún filtro y es peor. Es el único punto de la medida donde un componente capaz de
-enmascarar decide no hacerlo. Si el filtro **sí se ejecuta** y falla —modelo corrupto,
-política ilegible, error interno— la consulta **no devuelve ninguna fila**.
+**g) La vía alternativa de consulta no tiene excepción: sin el filtro, no hay consulta.**
+Además de la herramienta principal existe una vía de respaldo, que se usa cuando aquella no
+está disponible. Desde la versión 3.30.0 las dos ejecutan **el mismo código**: la vía de
+respaldo ya no tiene su propia copia de la comprobación de solo lectura ni del tratamiento de
+la salida, sino que llama a la misma implementación que la herramienta principal.
 
-Las dos vías aplican la misma regla ante una política declarada que no se puede cargar: la
-consulta falla y no devuelve filas (§4.4). Hasta la versión 3.1.0 la vía principal no lo hacía
+Hasta esa versión, si en la vía de respaldo el filtro **no se podía ni ejecutar** (faltaba el
+intérprete en el puesto), la consulta devolvía los datos **sin enmascarar**, señalándolo en la
+respuesta. Era una decisión deliberada —dejar sin servicio la consulta podía empujar al
+desarrollador al cliente de base de datos directo— y el único punto de la medida donde un
+componente capaz de enmascarar decidía no hacerlo. Se ha revisado: con la política activa,
+devolver los datos en claro es exactamente lo que la medida existe para evitar, y el uso
+directo del cliente de base de datos ya lo bloquea la guarda de comandos. Ahora, sin
+intérprete, la consulta **falla y no devuelve ninguna fila**, igual que cuando el filtro se
+ejecuta y falla (modelo corrupto, política ilegible, error interno).
+
+Las dos vías aplican la misma regla —son el mismo código— ante una política declarada que no
+se puede cargar: la consulta falla y no devuelve filas (§4.4). Hasta la versión 3.1.0 la vía principal no lo hacía
 —devolvía los datos en claro etiquetados como "sin política"—, que era la forma más silenciosa
 que podía tomar el fallo descrito en el apartado (a).
 

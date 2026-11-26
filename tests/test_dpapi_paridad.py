@@ -2,7 +2,7 @@
 Paridad DPAPI entre las TRES implementaciones que manejan secretos cifrados del plugin:
 
     hooks/lib-crypto.ps1            Protect-RsSecret / Unprotect-RsSecret  (la UNICA que cifra)
-    mcp/rs-workspace-server.py      _unprotect_secret                      (solo descifra)
+    scripts/rs_core.py              _unprotect_secret                      (solo descifra)
     scripts/installer-inserts.py    _unprotect_secret                      (solo descifra)
 
 El cruce real en produccion es asimetrico: /rs-cifrar cifra desde PowerShell y db_query descifra
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 _RAIZ = Path(__file__).resolve().parent.parent
-_SERVER = _RAIZ / "mcp" / "rs-workspace-server.py"
+_SERVER = _RAIZ / "scripts" / "rs_core.py"
 _INSTALADOR = _RAIZ / "scripts" / "installer-inserts.py"
 _LIB_CRYPTO = _RAIZ / "hooks" / "lib-crypto.ps1"
 
@@ -52,7 +52,7 @@ def _cargar(nombre, ruta):
     return mod
 
 
-_srv = _cargar("rs_workspace_server_paridad", _SERVER)
+_srv = _cargar("rs_core_paridad", _SERVER)
 _inst = _cargar("installer_inserts_paridad", _INSTALADOR)
 
 
