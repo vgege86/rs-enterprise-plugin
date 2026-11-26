@@ -143,6 +143,7 @@ READ_DOCS: 02, 03, CHECKLIST                   (docs técnicos que core debe lee
 CONTEXT:
   Solución: <nombre.sln> | Tipo: <Batch|Online> | Workspace: <path>
   Cambio: <descripción breve>
+  Tarea: <identificador de la tarea si aparece en la solicitud — "Mantis 48213", "RS-312"; vacío si no hay>
   Etapas: <misma lista de STAGES>
 SUMMARY: <plan en una línea>
 STATUS: OK | NEEDS_INPUT
@@ -150,5 +151,5 @@ STATUS: OK | NEEDS_INPUT
 
 - `STATUS: NEEDS_INPUT` → el orquestador detiene y pregunta al usuario antes de continuar (además del gate de aprobación normal).
 - `READ_DOCS` = lista exacta de docs técnicos (por nº/nombre del índice maestro) + `CHECKLIST` si emite código. El orquestador la reenvía a `rs-editor-core`, que lee esos docs por sección antes de implementar. Vacío si el workspace no tiene índice maestro.
-- `CONTEXT` lo reutiliza el orquestador para `log_execution` (`/rs-historial`) y para el prompt de `rs-editor-core` y de `rs-commit`.
+- `CONTEXT` lo reutiliza el orquestador para `log_execution` (`/rs-historial`) y para el prompt de `rs-editor-core` y de `rs-commit`. `Tarea` es la que `rs-editor-core` pone en el comentario de cada bloque de código existente que modifica (`references/conventions.md` "Comentarios"); ⛔ no inventarla.
 - No emitir flags sueltos (`CREATE_TESTS`/`UPDATE_DOCS`): quedan derogados — todo se lee de `STAGES`.

@@ -46,6 +46,7 @@ Antes de finalizar: verificar que el cambio no rompe flujo existente ni altera c
 ## Límites
 
 ⛔ No reescribir módulos. ⛔ No refactor masivo. ⛔ No optimizaciones. ⛔ No cambios funcionales ni de arquitectura.
+⛔ Un fix no añade comentarios que expliquen el arreglo. Si crea una función nueva, lleva su `summary`; si toca código existente, como mucho la línea de tarea (`references/conventions.md` "Comentarios").
 
 ## Output (máx 5 cambios, 100 palabras + contrato)
 

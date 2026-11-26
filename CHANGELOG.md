@@ -1,5 +1,30 @@
 # RS Enterprise Agent — Changelog
 
+## 3.29.0 — 2026-11-26
+
+### El código generado traía demasiados comentarios, y los que importan faltaban
+
+No había ninguna regla sobre comentarios, así que el código que escribía el pipeline salía con
+comentarios en casi cada línea —repitiendo lo que la línea ya decía— y, en cambio, sin la
+documentación de las funciones nuevas. Nueva sección **"Comentarios"** en
+`references/conventions.md`, con tres reglas y una lista de prohibidos:
+
+1. **Función/método nuevo → `summary` obligatorio**: qué hace, un `<param>` por parámetro (los
+   `out`/`ref`/`OUT` marcados como salida) y `<returns>` si devuelve algo. C# `///`, VB.NET `'''`,
+   PL/SQL cabecera `/* */`.
+2. **Código existente modificado → como mucho un comentario por bloque** con la tarea y qué se
+   cambia (`// Mantis 48213: ...`). Dentro de una función nueva no hace falta: ya tiene su summary.
+3. **Comentario explicativo solo en lógica compleja**, y sobre el porqué, no el qué.
+
+⛔ Prohibido: comentarios que repiten el código, uno por línea, banners, código comentado,
+autor/fecha en el código, `TODO` no pedidos, y tocar comentarios existentes fuera del cambio.
+
+Para que la línea de tarea lleve el identificador real, `rs-editor-planner` añade `Tarea` al
+`CONTEXT` (el Mantis/Jira de la solicitud; vacío si no hay, ⛔ no se inventa). Lo aplican
+`rs-editor-core` (paso 6 y repaso antes de emitir), `rs-editor-fixer` (un fix no añade comentarios
+explicativos) y `rs-crear-tests` (`<summary>` de una línea por test, sin `// Arrange/Act/Assert`).
+`rs-editor-validator` lo revisa como `[mejora][bajo]`: avisa, no bloquea el pipeline.
+
 ## 3.28.0 — 2026-11-26
 
 ### El enmascarado tapaba nombres de columna y cuerpos de trigger, y el agente aprendió a sortearlo

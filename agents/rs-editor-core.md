@@ -28,7 +28,7 @@ Sigue el **Procedimiento** de abajo **en orden**; no te saltes pasos ni gates. C
 3. **Leer docs ANTES de tocar código** — `READ_DOCS` por sección + `references/conventions.md`/`bd.md` si aplican. → *§ Documentación técnica*
 4. **Localizar y entender** — `find_symbol`/`batch_find_symbols`/`search_code`; identificar el flujo actual. → *§ Localizar símbolos · § Buscar patrones*
 5. **Consultar esquema/datos** — regla marco (esquema→modelo, datos→`db_query`, ⛔ nunca `.sql` de `BD\`) + orden modelo→código→BD. → *§ Fuente de datos · § Modelo BD*
-6. **Implementar el cambio mínimo** — no reescribir, no romper dependencias, no cambios innecesarios. → *§ Implementación*
+6. **Implementar el cambio mínimo** — no reescribir, no romper dependencias, no cambios innecesarios. Comentarios según `references/conventions.md` "Comentarios" (siempre, aunque no se lea el resto): `summary` en lo nuevo, una línea de tarea en lo modificado, nada más salvo lógica compleja. → *§ Implementación*
 7. **Si generas SQL** → escribirlo SOLO en `C:\AIS\<proyecto>\scripts\` (⛔ nunca en `BD\`). → *§ Scripts SQL generados*
 8. **GATE CHECKLIST** — si el cambio emite `.aspx`/`.cs` (o `READ_DOCS` incluye `CHECKLIST`): pasar `CHECKLIST_CONVENCIONES_UI_BD.md` **antes** de dar el código por emitido. → *§ Documentación técnica*
 9. **Registrar señales de salida** — idiomas tocados, tablas/DALCs, patrón nuevo. → *§ Idiomas · § Tablas/DALCs · § Patrón nuevo*
@@ -122,11 +122,14 @@ El fichero contiene **solo** los statements que genera esta tarea (DDL/INSERT/UP
 
 ⛔ Si `READ_DOCS` incluye `CHECKLIST` (o el cambio emite `.aspx`/`.cs`): leer `tecnica/CHECKLIST_CONVENCIONES_UI_BD.md` y **pasarla antes de dar por emitido el código** (controles AIS + queries). No emitir código que no cumpla la checklist.
 
+Antes de emitir, repasar además los comentarios del delta: cada función nueva tiene `summary`/`<param>`/`<returns>`; cada bloque existente modificado lleva como mucho una línea de tarea; ningún comentario repite el código. Quitar los que sobren.
+
 ## Implementación
 
 - Analizar solo código relevante, identificar flujo actual.
 - Modificar lo mínimo necesario.
 - ⛔ No reescribir módulos completos. ⛔ No romper dependencias. ⛔ No introducir cambios innecesarios.
+- 💬 **Comentarios** (regla completa en `references/conventions.md` "Comentarios"): función/método **nuevo** → `summary` con qué hace, `<param>` por parámetro (los de salida marcados) y `<returns>`; código **existente** modificado → como mucho un comentario por bloque con la tarea (`// <Tarea>: <qué se cambia>`, con la `Tarea` del `CONTEXT` del planner); comentario explicativo solo en lógica compleja (el porqué, no el qué). ⛔ Nada de comentarios que repiten el código, uno por línea, código comentado ni autor/fecha.
 
 ## Idiomas (Online) — no resolver aquí
 
