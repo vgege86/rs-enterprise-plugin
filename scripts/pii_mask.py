@@ -26,6 +26,7 @@ def _cargar_modulo(nombre):
 _pol = _cargar_modulo("pii_policy")
 _scope = _cargar_modulo("pii_sqlscope")
 _det = _cargar_modulo("pii_detect")
+_cat = _cargar_modulo("pii_catalogo")
 
 PREFIJO = "pii:"
 LONGITUD_HEX = 12
@@ -79,7 +80,11 @@ def _columna(filas, i):
 def mask_resultset(columns, rows, sql, modelo, clave=None):
     """(columns, rows, meta). No muta las listas de entrada.
 
-    meta = {mode, masked, unresolved, suspect, predicate_warning, tables}
+    meta = {mode, catalog, masked, unresolved, suspect, predicate_warning, tables}
+      catalog           la consulta solo lee vistas de estructura (pii_catalogo.py): sus
+                        columnas de estructura salen en claro, salvo forma personal
+      redacted          columnas de codigo del catalogo con datos personales DENTRO del
+                        texto: se sustituye solo el trozo (en audit: se habria sustituido)
       masked            columnas enmascaradas (en audit: las que se HABRIAN enmascarado)
       unresolved        columnas que no resuelven contra el modelo
       suspect           columnas en claro cuyos VALORES tienen forma personal -> revisar
@@ -89,8 +94,14 @@ def mask_resultset(columns, rows, sql, modelo, clave=None):
     modo = politica["mode"]
     tablas = _scope.tablas(sql)
 
+    # Consulta que SOLO lee estructura (ALL_TAB_COLUMNS, ALL_TRIGGERS, INFORMATION_SCHEMA...).
+    # Ver pii_catalogo.py: lista cerrada de vistas y columnas, SELECT sin expresiones.
+    catalogo = modo != "off" and _cat.es_consulta_catalogo(sql, modelo, _scope._strip_comments)
+
     meta = {
         "mode": modo,
+        "catalog": bool(catalogo),
+        "redacted": [],
         "masked": [],
         "unresolved": [],
         "suspect": [],
@@ -102,8 +113,21 @@ def mask_resultset(columns, rows, sql, modelo, clave=None):
         return list(columns), [list(f) for f in rows], meta
 
     a_enmascarar = []
+    a_redactar = []
     for i, col in enumerate(columns):
-        veredicto, motivo = _pol.clasificar(col, tablas, modelo, politica)
+        if catalogo and _cat.columna_de_codigo(col):
+            # Codigo/texto libre del catalogo (cuerpo de trigger, ALL_SOURCE.TEXT, DEFAULT...):
+            # en claro, pero con los datos personales que haya DENTRO sustituidos uno a uno.
+            # La red de valor entero no sirve aqui: un DNI va dentro de una linea de codigo.
+            if any(_cat.buscar_en_texto(v) for v in _columna(rows, i)):
+                meta["suspect"].append(col)
+                meta["redacted"].append(col)
+                a_redactar.append(i)
+            continue
+        if catalogo and _cat.columna_de_catalogo(col):
+            veredicto, motivo = _pol.CLARO, "catalogo"
+        else:
+            veredicto, motivo = _pol.clasificar(col, tablas, modelo, politica)
 
         if veredicto == _pol.NO_RESUELTA:
             meta["unresolved"].append(col)
@@ -143,6 +167,12 @@ def mask_resultset(columns, rows, sql, modelo, clave=None):
         for i in a_enmascarar:
             if i < len(nueva) and nueva[i] is not None and str(nueva[i]).strip():
                 nueva[i] = MARCA_SUPRESION if suprimir else seudonimo(nueva[i], columns[i], clave)
+        for i in a_redactar:
+            if i < len(nueva) and nueva[i] is not None:
+                dom = columns[i]
+                nueva[i], _ = _cat.redactar_texto(
+                    nueva[i],
+                    (lambda _t: MARCA_SUPRESION) if suprimir else (lambda t, d=dom: seudonimo(t, d, clave)))
         salida.append(nueva)
 
     return list(columns), salida, meta

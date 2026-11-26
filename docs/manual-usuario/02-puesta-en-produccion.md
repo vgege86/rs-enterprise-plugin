@@ -262,9 +262,11 @@ El remedio de un enmascarado que molesta nunca es rodear el filtro.
   el estado describe el fichero de configuración, no la sesión en curso.
 - **El inventario sale vacío o sin sentido.** Se ha generado con el enmascarado ya activo. Hay que
   bajar a `audit`, regenerarlo y volver a subir.
-- **Una consulta al catálogo del sistema devuelve nombres de tabla enmascarados.** Esas tablas no
-  están en el modelo, así que el filtro las trata como datos. Para leer estructura hay que usar las
-  herramientas de modelo, no la consulta directa.
+- **Una consulta al catálogo del sistema devuelve nombres de tabla enmascarados.** Desde la 3.28.0
+  el catálogo sale en claro si la consulta solo lee vistas de estructura y pide columnas sueltas.
+  Si aun así sale enmascarado, la consulta mezcla una tabla de negocio o usa funciones o
+  expresiones: para leer estructura, usar las herramientas de modelo y, para el código de un
+  trigger o procedimiento, la lectura del objeto de BD (`get_object_ddl`).
 - **Tras cambiar de equipo, las credenciales no funcionan.** El cifrado está ligado a la cuenta de
   Windows y a la máquina anterior. Hay que reintroducir los secretos y ejecutar `/rs-cifrar`.
 

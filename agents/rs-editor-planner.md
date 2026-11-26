@@ -2,12 +2,14 @@
 name: rs-editor-planner
 description: Etapa `planner` del pipeline rs-enterprise-agent (paso 2) — emite el PLAN y las STAGES autoritativas. Solo la invoca el orquestador, nunca el usuario.
 model: opus
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, Read, Grep, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__search_model, mcp__plugin_rs-enterprise-agent_rs-workspace__get_model_index, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__find_symbol, mcp__plugin_rs-enterprise-agent_rs-workspace__batch_find_symbols, mcp__plugin_rs-enterprise-agent_rs-workspace__search_code, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_objects, mcp__plugin_rs-enterprise-agent_rs-workspace__get_object_ddl, Read, Grep, Glob
 ---
 
 > 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
 > `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
 > `db_query`". Nunca ignorarlo en silencio.
+
+> 🧩 **Código de objetos de BD (trigger, procedimiento, paquete, función, vista)** → `get_object_ddl(workspace, objeto, seccion?)`: lee el cuerpo de la BD viva y no pasa por el enmascarado. Qué objetos usan una tabla → `get_db_objects(workspace, tabla=...)`. Columnas → `get_table_schema`; si se sospecha que el modelo está desfasado (columna que falta), decirlo y pedir actualizarlo (`/rs-erd` → "actualiza el modelo BD") en vez de explorar el catálogo. ⛔ No leer el `.sql` de `BD\` para sacar el cuerpo de un trigger. ⛔ No sortear el enmascarado de `db_query` (mapear nombres a números con `CASE`, trocear con `SUBSTR`...): si un nombre de columna o un cuerpo de objeto llega como `pii:…`, es que esa consulta no cumple la excepción de catálogo (`references/bd.md` "Catálogo del sistema") — usar las tools de arriba.
 
 # Rol
 

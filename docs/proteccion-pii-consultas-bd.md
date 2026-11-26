@@ -620,23 +620,29 @@ DDL, dibujar el diagrama—. No es una omisión: esas funciones leen del **catá
 modelo. Ahí no hay datos de personas: hay metadatos de la estructura. Filtrarlos no protegería
 nada y dejaría el mapa inservible.
 
-**La consecuencia práctica, y es contraintuitiva.** Si en lugar de usar esas funciones se
-interroga el catálogo del sistema **con la consulta libre** (`ALL_TAB_COLUMNS`,
-`INFORMATION_SCHEMA.COLUMNS`, `USER_OBJECTS`), el resultado sale **enmascarado** con la medida
-activa: esas tablas no están en el modelo de datos, así que sus columnas caen en "no se puede
-resolver" (§4.2) y sus valores son texto, no números. Los nombres de tabla y de columna vuelven
-convertidos en pseudónimos.
+**El catálogo del sistema consultado con la consulta libre.** Hasta la versión 3.27.0, si en
+lugar de usar esas funciones se interrogaba el catálogo del sistema con la consulta libre
+(`ALL_TAB_COLUMNS`, `ALL_TRIGGERS`, `ALL_SOURCE`, `INFORMATION_SCHEMA.COLUMNS`), el resultado
+salía **enmascarado**: esas vistas no están en el modelo de datos, sus columnas caían en "no se
+puede resolver" (§4.2) y sus valores son texto. Nombres de columna y cuerpos de trigger volvían
+convertidos en pseudónimos. La decisión entonces fue no abrir excepción y "preguntar por
+números".
 
-No es un fallo del filtro sino su regla general aplicada a un caso donde sobra, y la decisión
-consciente es **no** abrir una excepción: cada excepción es un camino más por el que una
-consulta puede salir sin filtrar, y el rodeo es barato —para leer estructura están las funciones
-de mapa del esquema, que no pasan por aquí—.
+**Revisión (3.28.0).** En la práctica, esa regla no protegía nada —un nombre de columna o el
+código de un trigger no es un dato de una persona— y empujaba a la herramienta a **sortear el
+filtro** (traducir nombres a números con `CASE` para que pasaran en claro). Enseñar ese hábito es
+peor que la excepción que se quería evitar. Se abre, por tanto, una excepción **acotada**: la
+consulta sale en claro solo si (a) todas las tablas consultadas son vistas de estructura de una
+lista cerrada y ninguna es de negocio ni del modelo, (b) lo que se pide son columnas sueltas de
+estructura, sin funciones, expresiones ni subconsultas, y (c) la columna está en una lista
+cerrada de columnas de estructura. Quedan fuera, aunque sean catálogo, las que contienen datos
+reales: el mínimo y máximo de cada columna que guardan las estadísticas, los histogramas y el
+texto de las consultas recientes. Y en las columnas que contienen código (cuerpos de trigger,
+fuentes, valores por defecto) se buscan DNI/NIE, IBAN y correos dentro del texto y se sustituye
+solo ese trozo. El detalle técnico está en `references/bd.md`, "Catálogo del sistema".
 
-Si aun así hace falta cruzar estructura con la consulta libre, la salida es **preguntar por
-números**: los nombres viajan dentro del `SELECT` y de vuelta solo vienen recuentos o códigos
-numéricos, que salen en claro por la prueba del §4.2. Con dos cuidados: un entero de nueve o más
-dígitos sin decimales se enmascara igual (tiene forma de identificador), y una columna que salga
-entera vacía también.
+La vía preferida sigue siendo la misma: para leer estructura, las funciones de mapa del esquema
+y la lectura del código de un objeto (`get_object_ddl`), que no pasan por aquí.
 
 ---
 

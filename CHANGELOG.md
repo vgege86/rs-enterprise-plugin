@@ -1,5 +1,45 @@
 # RS Enterprise Agent — Changelog
 
+## 3.28.0 — 2026-11-26
+
+### El enmascarado tapaba nombres de columna y cuerpos de trigger, y el agente aprendió a sortearlo
+
+Con `pii_policy.mode = enforce`, al pedir modificar un trigger el agente consultaba
+`ALL_TAB_COLUMNS` / `USER_TRIGGERS` / `ALL_SOURCE` con `db_query`, y nombres de columna y cuerpo
+del trigger volvían como `pii:xxxx`: esas vistas no están en el modelo, sus columnas quedan
+"sin resolver" y, al ser texto, se enmascaran. Era una decisión documentada ("no abrir excepción
+de catálogo; preguntar por números"), y el agente hizo exactamente eso: mapear nombres a números
+con `CASE` para que pasaran. No protegía nada —un nombre de columna no es un dato personal— y
+le enseñaba a rodear el filtro, que es peor que la excepción que se quería evitar.
+
+**1. Herramienta correcta.** `rs-editor-core`, `rs-editor-planner` y `rs-editor-db-modeler`
+tienen ahora `get_object_ddl` (cuerpo de un trigger/procedimiento/vista desde la BD viva, sin
+enmascarado) y `get_db_objects` (qué objetos usan una tabla), con la regla de usarlas en vez
+de `db_query` sobre el catálogo o del `.sql` de `BD\`, y la prohibición explícita de sortear el
+enmascarado. `references/bd.md` cambia "nombres en el SELECT, números de vuelta" por una tabla
+de qué tool usar para cada cosa.
+
+**2. Excepción de catálogo acotada** (`scripts/pii_catalogo.py`, usada desde
+`pii_mask.mask_resultset`, así que aplica igual en la tool MCP y en `hooks/db-query.ps1`). Una
+consulta sale en claro si **todas** sus tablas son vistas de estructura de una lista cerrada,
+ninguna está en el modelo, el `SELECT` son columnas sueltas de estructura (sin funciones,
+expresiones, literales, `CASE`, subconsultas escalares, `WITH` ni `UNION`) y la columna está en
+la lista de columnas de estructura. Una sola tabla de negocio en la consulta → reglas normales.
+
+- ⛔ Siguen enmascaradas aunque sean catálogo: `LOW_VALUE`/`HIGH_VALUE` (mínimo y máximo reales
+  de cada columna), histogramas y `V$SQL`.
+- En las columnas de código (`TEXT`, `TRIGGER_BODY`, `DATA_DEFAULT`, definiciones…) se buscan
+  DNI/NIE con letra de control válida, IBAN y correos **dentro** del texto y se sustituye solo
+  ese trozo: el código se sigue leyendo. La red de seguridad anterior miraba el valor entero y
+  no lo habría visto dentro de una línea de código.
+- El bloque `pii` de la respuesta trae `catalog` (se aplicó la excepción) y `redacted`.
+
+`docs/proteccion-pii-consultas-bd.md` §4.5 recoge la revisión de la decisión.
+
+Tests: `tests/test_pii_catalogo.py` — lo que sí es catálogo, una veintena de intentos de colar
+datos de negocio por la excepción, `LOW_VALUE`/`HIGH_VALUE` con `SELECT *`, dato personal dentro
+del código y modo `audit`.
+
 ## 3.27.0 — 2026-11-26
 
 ### history.json daba conflicto en SVN en cuanto trabajaban dos desarrolladores

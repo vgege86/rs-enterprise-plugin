@@ -82,6 +82,7 @@ En ambos casos avisar: "MCP servido desde `<server_path>` (v`<version>`), no des
 
 - No parafrasear resultados de tools — actuar directamente sobre el JSON.
 - No cargar `model.json` completo (~180K tok): `search_model` (localizar) → `get_model_index` (nombres) → `get_table_schema` (tablas concretas). ⛔ Nunca leer/copiar `BD\*-model*.json` vía Bash/Python/PowerShell — usar las tools `mcp__plugin_rs-enterprise-agent_rs-workspace__*` o los hooks equivalentes.
+- Código de un trigger/procedimiento/paquete/vista → `get_object_ddl` (BD viva, sin enmascarado); qué objetos usan una tabla → `get_db_objects(tabla=...)`. ⛔ No sortear el enmascarado de `db_query` con `CASE`→números: ver `references/bd.md` "Catálogo del sistema".
 - `get_scope` una sola vez, en el orquestador (paso 1b) — reenviar `scope_dirs`/`tipo`/`workspace` en el header de cada subagente, no recalcular por etapa.
 - Contrato de salida obligatorio en cada subagente de pipeline (`FILES_CHANGED`/`SUMMARY`/`STATUS` + campos extra) — el orquestador reenvía SOLO ese bloque a la siguiente etapa, nunca código ni diffs completos.
 

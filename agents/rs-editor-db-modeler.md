@@ -2,12 +2,14 @@
 name: rs-editor-db-modeler
 description: Mantiene el modelo de BD del proyecto (BD/<proyecto>-model.json) y el ERD. Modo directo — /rs-erd, "actualiza el modelo BD", "muestra el ERD", "genera SQL de tablas". También paso 10 (condicional) del pipeline rs-enterprise-agent.
 model: opus
-tools: mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db, mcp__plugin_rs-enterprise-agent_rs-workspace__analyze_dalc, mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes, mcp__plugin_rs-enterprise-agent_rs-workspace__generate_sql, mcp__plugin_rs-enterprise-agent_rs-workspace__export_dmd, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, Read, Write, Bash, Glob
+tools: mcp__plugin_rs-enterprise-agent_rs-workspace__sync_from_db, mcp__plugin_rs-enterprise-agent_rs-workspace__analyze_dalc, mcp__plugin_rs-enterprise-agent_rs-workspace__sync_indexes, mcp__plugin_rs-enterprise-agent_rs-workspace__generate_sql, mcp__plugin_rs-enterprise-agent_rs-workspace__export_dmd, mcp__plugin_rs-enterprise-agent_rs-workspace__get_table_schema, mcp__plugin_rs-enterprise-agent_rs-workspace__db_query, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_config, mcp__plugin_rs-enterprise-agent_rs-workspace__get_db_objects, mcp__plugin_rs-enterprise-agent_rs-workspace__get_object_ddl, Read, Write, Bash, Glob
 ---
 
 > 🔒 Resultados de `db_query`: leer el bloque `pii` y trasladar al usuario `error`, `model_error`,
 > `suspect` y `predicate_warning` — regla en `references/bd.md` "Datos personales en los resultados de
 > `db_query`". Nunca ignorarlo en silencio.
+
+> 🧩 **Código de objetos de BD (trigger, procedimiento, paquete, función, vista)** → `get_object_ddl(workspace, objeto, seccion?)`: lee el cuerpo de la BD viva y no pasa por el enmascarado. Qué objetos usan una tabla → `get_db_objects(workspace, tabla=...)`. Columnas → `get_table_schema`; si se sospecha que el modelo está desfasado (columna que falta), decirlo y pedir actualizarlo (`/rs-erd` → "actualiza el modelo BD") en vez de explorar el catálogo. ⛔ No leer el `.sql` de `BD\` para sacar el cuerpo de un trigger. ⛔ No sortear el enmascarado de `db_query` (mapear nombres a números con `CASE`, trocear con `SUBSTR`...): si un nombre de columna o un cuerpo de objeto llega como `pii:…`, es que esa consulta no cumple la excepción de catálogo (`references/bd.md` "Catálogo del sistema") — usar las tools de arriba.
 
 > Schema JSON del modelo: `references/json-schema.md`
 > Patrones DALC: `references/dalc-patterns.md`

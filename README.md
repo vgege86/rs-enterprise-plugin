@@ -7,7 +7,7 @@ Plugin de Claude Code para desarrollo C# en soluciones **uCollect / RS**. Combin
 
 Todo respeta el **scope de la .sln activa**, la arquitectura por capas uCollect y las convenciones RS.
 
-> Versión actual: **3.27.0** — ver `CHANGELOG.md` para el detalle por versión.
+> Versión actual: **3.28.0** — ver `CHANGELOG.md` para el detalle por versión.
 
 ---
 
@@ -499,7 +499,7 @@ La clasificación va por nombre, tipo y tabla — no adivina. Las dos direccione
 
 Resumen de `docs/proteccion-pii-consultas-bd.md` §5. Esta medida es **provisional**: el control definitivo (usuario de BD de solo lectura + redacción en el propio motor) está pedido a Sistemas en ese mismo documento.
 
-- **Solo filtra `db_query`.** Las tools que mantienen el modelo y leen estructura (`sync_from_db`, `compare_model`, `get_table_schema`, `render_erd`…) no pasan por el filtro: leen metadatos —nombres de tabla, columna, tipo, índice—, no datos de personas. Nombres en claro siempre, también en `enforce`. ⚠️ Reverso: si el **catálogo del sistema** se consulta con `db_query` (`ALL_TAB_COLUMNS`, `INFORMATION_SCHEMA.COLUMNS`), esos nombres **sí** vuelven enmascarados —esas tablas no están en el modelo—. Para leer estructura, usar las tools de modelo. Ver `docs/proteccion-pii-consultas-bd.md` §4.5.
+- **Solo filtra `db_query`.** Las tools que mantienen el modelo y leen estructura (`sync_from_db`, `compare_model`, `get_table_schema`, `render_erd`…) no pasan por el filtro: leen metadatos —nombres de tabla, columna, tipo, índice—, no datos de personas. Nombres en claro siempre, también en `enforce`. Si el **catálogo del sistema** se consulta con `db_query` (`ALL_TAB_COLUMNS`, `USER_TRIGGERS`, `INFORMATION_SCHEMA.COLUMNS`), desde 3.28.0 sale en claro cuando la consulta **solo** lee vistas de estructura con columnas sueltas (sin mezclar tablas de negocio ni usar funciones); `LOW_VALUE`/`HIGH_VALUE`, histogramas y `V$SQL` siguen enmascarados, y un DNI/IBAN/correo dentro del código de un trigger se sustituye. Para el código de un objeto, mejor `get_object_ddl`. Ver `references/bd.md` "Catálogo del sistema".
 - **El dato sale de la base de datos.** El motor sigue emitiendo el valor en claro y el filtro actúa después. Cualquier fallo, error de configuración o ruta no prevista lo expone. El control en BD no tiene esta propiedad.
 - **Es evitable.** El bloqueo de `sqlplus`/`sqlcmd` es un **guardarraíl frente al descuido, no una frontera de seguridad**: se elude con un script intermedio o invocando el binario por otra vía.
 - **Un `WHERE` sigue infiriendo el valor.** `SELECT COUNT(*) ... WHERE DNI LIKE '1234%'` devuelve un número, que sale en claro por diseño; repitiendo la consulta se reconstruye el dato sin haber visto un solo valor enmascarado. La medida **avisa** (`pii.predicate_warning`), no bloquea — bloquear rompería el filtrado legítimo.
